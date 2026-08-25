@@ -19,7 +19,9 @@ Amazon 低竞争 → eBay 已观察销量 → 1688 精确供应 + 只读下单�
 - Amazon B2B CSV 的候选发现、标识符优先级、规范化、去重和行级来源追踪；
 - Amazon → eBay → 1688 串行短路；上游不通过时不调用下游；
 - Nexscope Amazon/eBay/1688 托管 REST adapters，失败保持显式状态；
+- SerpApi eBay `Sold` adapter，固定 US、新品、禁用缓存并保留 sold count；
 - HioBuy 1688 `search → detail → order preview` 只读验证；代码没有 create/pay 路径；
+- provider-neutral contract、显式 registry、逐阶段 provider 选择和脱敏 canary；
 - V0.2 schemas、`automation_qualified` 与 V0.1 JSON 输入兼容。
 
 尚未完成产品验收：
@@ -27,7 +29,7 @@ Amazon 低竞争 → eBay 已观察销量 → 1688 精确供应 + 只读下单�
 - 当前 `--amazon-b2b-report` 是已下载报告的自动解析，不是 SP-API 自动拉取；
 - 当前 parser 每行只选择一个 primary identifier；保留 MPN/model/UPC 并按冻结优先级
   分别查询，仍属于产品验收前的开放项；
-- 本机没有 Amazon、Nexscope、HioBuy 的获准生产凭证和真实 20-item benchmark；
+- 本机没有 Amazon、Nexscope、SerpApi、HioBuy 的获准生产凭证和真实 20-item benchmark；
 - Nexscope 的实时覆盖、数据来源、freshness 和价格尚未通过本项目的 provider gate；
 - 因此当前托管/回放报告会明确输出 `automation_qualified: false`，不得宣称已找到
   真实、全自动、产品验收合格的商机。
@@ -43,8 +45,10 @@ Amazon 低竞争 → eBay 已观察销量 → 1688 精确供应 + 只读下单�
   [`contracts/v0_2_acquisition.schema.json`](contracts/v0_2_acquisition.schema.json)
   和
   [`contracts/v0_2_opportunity_report.schema.json`](contracts/v0_2_opportunity_report.schema.json)；
-- 已预留的代码扩展点是 `proteus.providers` 中的 provider 函数和可注入 transport，
-  但这还不是一个稳定的 Web API 或插件协议。
+- 代码扩展点已收敛为 `proteus.providers.base` 的 provider contract、
+  `ProviderRegistry`、薄 adapter 和可注入 transport；业务漏斗只依赖
+  `FunnelProviders`，更换供应商不需要修改 gate 逻辑。这仍是 Python 内部协议，
+  不是 Web API 或可跨进程安装的插件协议。
 
 未来前端不应直接携带 Nexscope/HioBuy 密钥或收件地址调用第三方服务。正确边界应是
 `前端 → Proteus 后端任务 API → 当前 Python 漏斗 → V0.2 report`；该后端任务 API
@@ -60,6 +64,11 @@ py -3.12 -m venv .venv
 
 要求 Python 3.12 或更高版本。以上命令会安装项目、测试依赖和 V0.1 浏览器兼容路径
 需要的 Playwright Python 包；只有使用 `--live-ebay` 时才需要可用的 Chrome/Edge。
+要检查或接入 Amazon 官方报告轮子，再安装可选依赖：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,amazon]"
+```
 
 ## 一分钟运行：先验证程序
 
@@ -80,12 +89,38 @@ Get-Content .\synthetic_reports.json -Raw
 `decision=OPPORTUNITY_CANDIDATE`、`automation_qualified=false`。它只证明程序和
 三门规则可运行，不证明存在真实商机。
 
+## 先测试数据源
+
+创建一个不会提交到 Git 的运行目录，然后执行四个一项 canary：
+
+```powershell
+New-Item -ItemType Directory -Path .\.private -Force | Out-Null
+
+.\.venv\Scripts\python.exe -m proteus providers check `
+  --part-number "53630-53010" `
+  --max-moq 10 `
+  --output .\.private\provider_canary.json
+```
+
+默认检查 Amazon SP-API B2B candidate source、Nexscope Amazon、SerpApi eBay 和
+HioBuy 1688。已有 HioBuy receiver 时追加
+`--receiver .\private\hiobuy_receiver.json`。只想检查一个 provider 时使用
+`--provider`。缺凭证或 receiver 时不发 live 请求，结果为 `BLOCKED`；获得
+contract-valid 终态才是 `PASSED`。命令在
+存在 blocked/failed 项时返回退出码 `3`，但仍会写出脱敏报告。
+
+2026-08-25 本机实测为 `passed=0 / blocked=4`：四个 API host 均可达，managed
+路径已排除 VPN/Japan IP 为首要阻断；当前阻断是生产凭证、Amazon Seller 报告权限、
+HioBuy receiver/用途确认，以及尚未实现的 SP-API create/poll/download adapter。
+`python-amazon-sp-api 2.1.20` 已在 Python 3.12 下通过 import 与 `pip check`。
+
 ## 使用真实候选报告运行
 
 将密钥放入环境变量，不要写进参数、JSON、日志或 Git：
 
 ```powershell
 $env:NEXSCOPE_API_KEY = "..."
+$env:SERPAPI_API_KEY = "..."
 $env:HIOBUY_API_KEY = "..."
 ```
 
@@ -101,6 +136,25 @@ JSON，然后运行最多 20 个候选：
   --max-moq 10 `
   --output .\reports_v0_2.json
 ```
+
+上面 `--nexscope` 是旧 profile 的兼容入口。需要逐阶段替换 provider 时使用：
+
+```powershell
+.\.venv\Scripts\python.exe -m proteus `
+  --amazon-b2b-report .\b2b_not_yet_on_amazon.csv `
+  --managed-providers `
+  --amazon-provider nexscope-amazon `
+  --ebay-provider serpapi-ebay `
+  --supply-provider hiobuy-1688 `
+  --hiobuy-receiver .\private\hiobuy_receiver.json `
+  --max-candidates 20 `
+  --max-moq 10 `
+  --output .\reports_v0_2.json
+```
+
+当前 Amazon competition 只有 Nexscope adapter；eBay 可选 SerpApi/Nexscope；
+1688 可选 HioBuy order-preview 或 Nexscope listing-only。listing-only 永远不能让
+供应门通过。
 
 CSV 至少需要：
 

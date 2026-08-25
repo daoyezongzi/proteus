@@ -34,6 +34,17 @@ from proteus.providers.nexscope import (
     collect_amazon_search,
     collect_ebay_search,
 )
+from proteus.providers.serpapi_ebay import collect_ebay_sold
+from proteus.providers.adapters import (
+    HIOBUY_1688_ID,
+    NEXSCOPE_1688_LISTING_ID,
+    NEXSCOPE_AMAZON_ID,
+    NEXSCOPE_EBAY_ID,
+    SERPAPI_EBAY_ID,
+    FunnelProviders,
+    build_provider_registry,
+)
+from proteus.providers.base import Capability, PartLookupRequest, SupplyLookupRequest
 
 
 def _positive_integer(value: str) -> int:
@@ -100,11 +111,41 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="use deterministic Nexscope REST for Amazon, eBay and 1688 search",
     )
+    acquisition_source.add_argument(
+        "--managed-providers",
+        action="store_true",
+        help="use the explicit per-stage provider registry",
+    )
 
     parser.add_argument(
         "--nexscope-api-key-env",
         default="NEXSCOPE_API_KEY",
         help="environment variable containing the Nexscope key",
+    )
+    parser.add_argument(
+        "--serpapi-api-key-env",
+        default="SERPAPI_API_KEY",
+        help="environment variable containing the SerpApi key",
+    )
+    parser.add_argument(
+        "--amazon-provider",
+        choices=(NEXSCOPE_AMAZON_ID,),
+        default=NEXSCOPE_AMAZON_ID,
+        help="Amazon competition provider for --managed-providers",
+    )
+    parser.add_argument(
+        "--ebay-provider",
+        choices=(SERPAPI_EBAY_ID, NEXSCOPE_EBAY_ID),
+        default=SERPAPI_EBAY_ID,
+        help="eBay demand provider for --managed-providers",
+    )
+    parser.add_argument(
+        "--supply-provider",
+        choices=(HIOBUY_1688_ID, NEXSCOPE_1688_LISTING_ID),
+        help=(
+            "1688 provider for --managed-providers; defaults to HioBuy when a "
+            "receiver is supplied, otherwise listing-only Nexscope"
+        ),
     )
     parser.add_argument(
         "--hiobuy-receiver",
@@ -237,12 +278,12 @@ def _managed_report(
     raw_part_number: str,
     candidate_source: dict[str, Any],
     *,
-    nexscope_key: str,
-    hiobuy_key: str | None,
-    receiver: dict[str, str] | None,
+    providers: FunnelProviders,
     max_moq: int,
 ) -> dict[str, Any]:
-    amazon = collect_amazon_search(raw_part_number, api_key=nexscope_key)
+    amazon = providers.amazon_competition.acquire(
+        PartLookupRequest(raw_part_number)
+    )
     canonical = normalize_part_number(raw_part_number)
     amazon_stage = evaluate_amazon_competition_gate(
         amazon,
@@ -258,8 +299,14 @@ def _managed_report(
             candidate_source=candidate_source,
         )
 
-    ebay = collect_ebay_search(raw_part_number, api_key=nexscope_key)
-    validate_acquisition(ebay, label=f"Nexscope eBay acquisition for {raw_part_number!r}")
+    ebay = providers.ebay_demand.acquire(PartLookupRequest(raw_part_number))
+    validate_acquisition(
+        ebay,
+        label=(
+            f"{providers.ebay_demand.provider_id} eBay acquisition for "
+            f"{raw_part_number!r}"
+        ),
+    )
     ebay_stage = evaluate_ebay_demand_gate(
         ebay,
         expected_canonical_part_number=canonical,
@@ -274,19 +321,9 @@ def _managed_report(
             candidate_source=candidate_source,
         )
 
-    if receiver is None:
-        supply = collect_1688_search(raw_part_number, api_key=nexscope_key)
-    else:
-        if hiobuy_key is None:
-            raise InputDataError("HioBuy key is required when receiver is configured")
-        from proteus.providers.hiobuy import collect_1688_supply
-
-        supply = collect_1688_supply(
-            raw_part_number,
-            api_key=hiobuy_key,
-            receiver=receiver,
-            max_acceptable_moq=max_moq,
-        )
+    supply = providers.alibaba_1688_supply.acquire(
+        SupplyLookupRequest(raw_part_number, max_moq)
+    )
     return evaluate_candidate(
         raw_part_number,
         ebay,
@@ -300,14 +337,25 @@ def _managed_report(
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the sequential V0.2 funnel and return a process exit code."""
 
+    active_argv = list(argv) if argv is not None else sys.argv[1:]
+    if active_argv[:2] == ["providers", "check"]:
+        from proteus.providers.canary import main as provider_canary_main
+
+        return provider_canary_main(active_argv[2:])
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(active_argv)
 
     try:
-        if args.hiobuy_receiver is not None and not args.nexscope:
-            raise InputDataError("--hiobuy-receiver requires --nexscope")
-        if args.nexscope and args.manual_evidence is not None:
-            raise InputDataError("--manual-evidence cannot be combined with --nexscope")
+        managed = args.nexscope or args.managed_providers
+        if args.hiobuy_receiver is not None and not managed:
+            raise InputDataError(
+                "--hiobuy-receiver requires --nexscope or --managed-providers"
+            )
+        if managed and args.manual_evidence is not None:
+            raise InputDataError(
+                "--manual-evidence cannot be combined with managed providers"
+            )
 
         candidate_inputs, discovery_diagnostics = _candidate_inputs(args)
         manual_by_part = (
@@ -320,33 +368,101 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.ebay_evidence is not None
             else {}
         )
-        nexscope_key = (
-            _secret_from_environment(args.nexscope_api_key_env, "Nexscope")
-            if args.nexscope
-            else None
-        )
         receiver = (
             _load_receiver(args.hiobuy_receiver)
             if args.hiobuy_receiver is not None
             else None
         )
-        hiobuy_key = (
-            _secret_from_environment(args.hiobuy_api_key_env, "HioBuy")
-            if receiver is not None
-            else None
-        )
+        funnel_providers: FunnelProviders | None = None
+        if managed:
+            if args.nexscope:
+                amazon_provider_id = NEXSCOPE_AMAZON_ID
+                ebay_provider_id = NEXSCOPE_EBAY_ID
+                supply_provider_id = (
+                    HIOBUY_1688_ID
+                    if receiver is not None
+                    else NEXSCOPE_1688_LISTING_ID
+                )
+            else:
+                amazon_provider_id = args.amazon_provider
+                ebay_provider_id = args.ebay_provider
+                supply_provider_id = args.supply_provider or (
+                    HIOBUY_1688_ID
+                    if receiver is not None
+                    else NEXSCOPE_1688_LISTING_ID
+                )
+            nexscope_ids = {
+                NEXSCOPE_AMAZON_ID,
+                NEXSCOPE_EBAY_ID,
+                NEXSCOPE_1688_LISTING_ID,
+            }
+            selected_ids = {
+                amazon_provider_id,
+                ebay_provider_id,
+                supply_provider_id,
+            }
+            nexscope_key = (
+                _secret_from_environment(args.nexscope_api_key_env, "Nexscope")
+                if selected_ids & nexscope_ids
+                else None
+            )
+            serpapi_key = (
+                _secret_from_environment(args.serpapi_api_key_env, "SerpApi")
+                if ebay_provider_id == SERPAPI_EBAY_ID
+                else None
+            )
+            if supply_provider_id == HIOBUY_1688_ID and receiver is None:
+                raise InputDataError(
+                    "--supply-provider hiobuy-1688 requires --hiobuy-receiver"
+                )
+            hiobuy_key = (
+                _secret_from_environment(args.hiobuy_api_key_env, "HioBuy")
+                if supply_provider_id == HIOBUY_1688_ID
+                else None
+            )
+            from proteus.providers.hiobuy import collect_1688_supply
+
+            registry = build_provider_registry(
+                nexscope_key=nexscope_key,
+                serpapi_key=serpapi_key,
+                hiobuy_key=hiobuy_key,
+                receiver=receiver,
+                collectors={
+                    NEXSCOPE_AMAZON_ID: collect_amazon_search,
+                    NEXSCOPE_EBAY_ID: collect_ebay_search,
+                    NEXSCOPE_1688_LISTING_ID: collect_1688_search,
+                    SERPAPI_EBAY_ID: collect_ebay_sold,
+                    HIOBUY_1688_ID: collect_1688_supply,
+                },
+            )
+            funnel_providers = FunnelProviders(
+                amazon_competition=registry.select(
+                    Capability.AMAZON_COMPETITION,
+                    (amazon_provider_id,),
+                    require_ready=False,
+                ),
+                ebay_demand=registry.select(
+                    Capability.EBAY_DEMAND,
+                    (ebay_provider_id,),
+                    require_ready=False,
+                ),
+                alibaba_1688_supply=registry.select(
+                    Capability.ALIBABA_1688_SUPPLY,
+                    (supply_provider_id,),
+                    require_ready=False,
+                ),
+            )
 
         reports: list[dict[str, Any]] = []
         for candidate_input in candidate_inputs:
             raw_part_number = candidate_input["raw_part_number"]
             candidate_source = candidate_input["source"]
-            if args.nexscope:
+            if managed:
+                assert funnel_providers is not None
                 report = _managed_report(
                     raw_part_number,
                     candidate_source,
-                    nexscope_key=nexscope_key,
-                    hiobuy_key=hiobuy_key,
-                    receiver=receiver,
+                    providers=funnel_providers,
                     max_moq=args.max_moq,
                 )
             else:

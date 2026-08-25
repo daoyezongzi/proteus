@@ -24,11 +24,20 @@
 
 ### A. Live source and discovery layer
 
+- [x] Add provider-neutral `preflight/acquire/estimate_cost` contracts, an
+  explicit allowlist registry and a `FunnelProviders` boundary so business gates
+  do not import vendor payloads or choose implicit fallbacks.
+- [x] Add a redacted `providers check` one-item canary and a SerpApi eBay Sold
+  adapter with fixed US/new/sold/no-cache parameters, raw listing evidence,
+  incomplete-page diagnostics and fail-closed parser/auth outcomes.
+
 - [ ] Confirm Amazon SP-API account/role access and automate retrieval of
   `GET_B2B_PRODUCT_OPPORTUNITIES_NOT_YET_ON_AMAZON`; downloaded CSV replay does
   not qualify as a fully automatic source. Reuse the community
   [`python-amazon-sp-api`](https://github.com/saleweaver/python-amazon-sp-api)
-  Reports client unless its credential/report behavior fails the canary.
+  Reports client unless its credential/report behavior fails the canary. Version
+  2.1.20 imports cleanly on the project Python 3.12 environment; credentials,
+  Seller report access and create/poll/download integration remain open.
 - [ ] Preserve all usable MPN/model/UPC identifiers from each report row and
   implement the frozen independent `UPC -> exact MPN -> exact model` query plan;
   the engineering preview currently evaluates only its selected primary identifier.
@@ -49,6 +58,8 @@
   for competition evidence; [SerpApi eBay](https://serpapi.com/ebay-search-api)
   for active/sold search evidence. Require raw URL/marker, US market control,
   freshness and incomplete-page diagnostics before accepting any provider.
+  The SerpApi eBay adapter and offline contract tests are complete; production
+  credentials and the 20-item live benchmark remain open.
 - [ ] Add the official
   [eBay Browse API](https://developer.ebay.com/api-docs/buy/api-browse.html) for
   active listing discovery, GTIN and vehicle-fitment checks. Canary whether the
@@ -102,7 +113,8 @@
 - [ ] Run one-item canaries, then the frozen 20-item provider benchmark for
   coverage, exact-match precision, freshness, critical fields, failure
   classification and external cost. The 2026-08-25 direct eBay browser canary
-  returned HTTP 403 and must be rerun through an approved provider path.
+  returned HTTP 403. The managed canary runner now exists, but its first run was
+  blocked before live calls because every production credential was absent.
 - [ ] Replace or approve managed providers only after their source/freshness/
   coverage semantics pass the benchmark; current managed results cannot set
   `automation_qualified=true`.

@@ -580,3 +580,122 @@ def test_managed_funnel_short_circuits_after_amazon_rejection(
     assert report["decision"] == "REJECTED"
     assert report["stages"]["ebay_demand"]["status"] == "NOT_CHECKED"
     assert report["stages"]["alibaba_1688_supply"]["status"] == "NOT_CHECKED"
+
+
+def test_provider_check_reports_missing_access_without_calling_network(
+    tmp_path: Path, monkeypatch
+) -> None:
+    for name in (
+        "NEXSCOPE_API_KEY",
+        "SERPAPI_API_KEY",
+        "HIOBUY_API_KEY",
+        "SP_API_REFRESH_TOKEN",
+        "LWA_APP_ID",
+        "LWA_CLIENT_SECRET",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    output_path = tmp_path / "provider_canary.json"
+
+    exit_code = cli.main(
+        ["providers", "check", "--output", str(output_path)]
+    )
+
+    assert exit_code == 3
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["summary"] == {
+        "passed": 0,
+        "blocked": 4,
+        "failed": 0,
+        "not_run": 0,
+    }
+    assert [item["provider_id"] for item in report["results"]] == [
+        "amazon-sp-api-b2b-report",
+        "nexscope-amazon",
+        "serpapi-ebay",
+        "hiobuy-1688",
+    ]
+    assert all(item["live_attempted"] is False for item in report["results"])
+
+
+def test_configurable_profile_selects_serpapi_without_changing_funnel(
+    tmp_path: Path, monkeypatch
+) -> None:
+    raw_part_number = "53630-53010"
+    report_path = tmp_path / "b2b.csv"
+    report_path.write_text(
+        "partNumber,category\n53630-53010,Automotive\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "reports.json"
+    calls: list[str] = []
+
+    amazon = _manual_record(raw_part_number)["amazon"]
+    amazon["source_method"] = "MANAGED_API"
+    amazon.pop("relevance_reviewed")
+    amazon["relevance_method"] = "DETERMINISTIC_EXACT"
+    amazon["evidence"][0]["extraction_method"] = "MANAGED_API"
+    ebay = _ebay_acquisition(raw_part_number)
+    ebay["schema_version"] = "0.2"
+    ebay["provider"] = "SERPAPI_EBAY_MANAGED"
+    ebay["source_method"] = "MANAGED_API"
+    ebay["listings"][0]["evidence"][0]["extraction_method"] = "MANAGED_API"
+    supply = _manual_record(raw_part_number)["alibaba_1688"]
+    supply["source_method"] = "MANAGED_API"
+    supply["purchasable"] = None
+    supply["evidence"] = [
+        evidence
+        for evidence in supply["evidence"]
+        if evidence["metric"] != "purchasable"
+    ]
+    for evidence in supply["evidence"]:
+        evidence["extraction_method"] = "MANAGED_API"
+
+    monkeypatch.setenv("NEXSCOPE_API_KEY", "nexscope-test-secret")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serpapi-test-secret")
+    monkeypatch.setattr(
+        cli,
+        "collect_amazon_search",
+        lambda *args, **kwargs: calls.append("amazon:nexscope") or amazon,
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_ebay_sold",
+        lambda *args, **kwargs: calls.append("ebay:serpapi") or ebay,
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_ebay_search",
+        lambda *args, **kwargs: pytest.fail("Nexscope eBay must not be selected"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_1688_search",
+        lambda *args, **kwargs: calls.append("1688:nexscope") or supply,
+    )
+
+    exit_code = cli.main(
+        [
+            "--amazon-b2b-report",
+            str(report_path),
+            "--managed-providers",
+            "--ebay-provider",
+            "serpapi-ebay",
+            "--supply-provider",
+            "nexscope-1688-listing",
+            "--max-moq",
+            "5",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == ["amazon:nexscope", "ebay:serpapi", "1688:nexscope"]
+    raw_output = output_path.read_text(encoding="utf-8")
+    assert "nexscope-test-secret" not in raw_output
+    assert "serpapi-test-secret" not in raw_output
+    report = json.loads(raw_output)[0]
+    assert report["stages"]["ebay_demand"]["acquisition"]["provider"] == (
+        "SERPAPI_EBAY_MANAGED"
+    )
+    assert report["decision"] == "REVIEW_REQUIRED"

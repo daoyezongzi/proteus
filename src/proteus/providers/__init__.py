@@ -1,4 +1,27 @@
-"""Managed REST acquisition providers for Proteus."""
+"""Replaceable acquisition providers for Proteus."""
+
+from proteus.providers.base import (
+    Capability,
+    CheckStatus,
+    PartLookupRequest,
+    ProviderReadiness,
+    ReadinessCheck,
+    SupplyLookupRequest,
+)
+from proteus.providers.adapters import (
+    HIOBUY_1688_ID,
+    NEXSCOPE_1688_LISTING_ID,
+    NEXSCOPE_AMAZON_ID,
+    NEXSCOPE_EBAY_ID,
+    SERPAPI_EBAY_ID,
+    FunnelProviders,
+    HioBuy1688Provider,
+    Nexscope1688ListingProvider,
+    NexscopeAmazonProvider,
+    NexscopeEbayProvider,
+    SerpApiEbayProvider,
+    build_provider_registry,
+)
 
 from proteus.providers.hiobuy import (
     HIOBUY_PROVIDER,
@@ -23,8 +46,35 @@ from proteus.providers.nexscope import (
     collect_amazon_search,
     collect_ebay_search,
 )
+from proteus.providers.registry import ProviderRegistry
+from proteus.providers.serpapi_ebay import (
+    SEARCH_ENDPOINT as SERPAPI_SEARCH_ENDPOINT,
+    SERPAPI_EBAY_PROVIDER,
+    SerpApiRequest,
+    SerpApiResponse,
+    collect_ebay_sold,
+)
 
 __all__ = [
+    "Capability",
+    "CheckStatus",
+    "PartLookupRequest",
+    "ProviderReadiness",
+    "ReadinessCheck",
+    "SupplyLookupRequest",
+    "ProviderRegistry",
+    "HIOBUY_1688_ID",
+    "NEXSCOPE_1688_LISTING_ID",
+    "NEXSCOPE_AMAZON_ID",
+    "NEXSCOPE_EBAY_ID",
+    "SERPAPI_EBAY_ID",
+    "FunnelProviders",
+    "HioBuy1688Provider",
+    "Nexscope1688ListingProvider",
+    "NexscopeAmazonProvider",
+    "NexscopeEbayProvider",
+    "SerpApiEbayProvider",
+    "build_provider_registry",
     "AMAZON_SEARCH_ENDPOINT",
     "EBAY_SEARCH_ENDPOINT",
     "NEXSCOPE_PROVIDER",
@@ -43,4 +93,9 @@ __all__ = [
     "HioBuyRequest",
     "HioBuyResponse",
     "collect_1688_supply",
+    "SERPAPI_SEARCH_ENDPOINT",
+    "SERPAPI_EBAY_PROVIDER",
+    "SerpApiRequest",
+    "SerpApiResponse",
+    "collect_ebay_sold",
 ]

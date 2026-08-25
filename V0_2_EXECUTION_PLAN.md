@@ -10,7 +10,8 @@
 本仓库现已实现 V0.2 engineering preview：Amazon B2B CSV 候选发现、V0.2
 contracts、Amazon → eBay → 1688 短路、Nexscope managed REST adapters、HioBuy
 1688 `search → detail → order preview` 只读 adapter、V0.1 输入兼容和
-`automation_qualified` 隔离。
+`automation_qualified` 隔离。随后补齐了 provider-neutral protocol、显式 registry、
+SerpApi eBay sold adapter、逐阶段 provider profile 和 `providers check` canary。
 
 这不是产品验收完成。当前尚缺获准生产凭证、Amazon SP-API 报告自动拉取、provider
 readiness/freshness/cost 的真实 20-item benchmark，以及至少一条当前真实
@@ -260,26 +261,29 @@ selected provider not ready
 src/proteus/
 ├── discovery.py               # Amazon B2B CSV replay candidate source
 ├── providers/
+│   ├── base.py                # protocol, readiness and cost contract
+│   ├── registry.py            # explicit allowlisted selection
+│   ├── adapters.py            # thin vendor objects + FunnelProviders
+│   ├── canary.py              # redacted one-item provider checks
 │   ├── nexscope.py            # Amazon/eBay/1688 managed search
+│   ├── serpapi_ebay.py        # eBay US sold-search adapter
 │   └── hiobuy.py              # 1688 detail + read-only order preview
 ├── evaluation.py              # Amazon → eBay → 1688 gates
 ├── io.py                      # V0.1 input compatibility + V0.2 validation
 └── cli.py                     # direct pool/report replay execution
 ```
 
-在 provider live benchmark 通过后，再在现有包上增量扩展为以下目标构架；不为
-尚未取得的 provider 权限预造复杂 registry 或服务层，也不进行仓库重写：
+为满足接口可替换要求，轻量 protocol/registry 已提前落地。Provider live benchmark
+通过后，只增量增加下列尚缺 adapter 与 benchmark，不进行仓库重写：
 
 ```text
 src/proteus/
 ├── providers/
-│   ├── base.py                 # protocol, readiness, cost, freshness
-│   ├── registry.py             # explicit configured selection
 │   ├── amazon_b2b_report.py    # official candidate source + offline replay
 │   ├── amazon_official.py
 │   ├── ebay_official.py
 │   ├── alibaba1688_official.py
-│   └── nexscope.py             # managed adapter, no business decisions
+│   └── ...                     # current managed adapters stay replaceable
 ├── candidate_source.py         # normalize, dedupe, automotive filter
 ├── pipeline_v0_2.py            # Amazon → eBay → 1688 short circuit
 ├── benchmark.py                # metrics and acceptance report
@@ -323,10 +327,21 @@ proteus `
 `REVIEW_REQUIRED`。receiver 只进入 preview 请求，不写入报告；代码不暴露任何
 create/pay endpoint。
 
-后续 provider gate 通过后，再增加 `providers check`、SP-API 自动报告拉取和独立
-`benchmark` 命令。它们在本轮不存在，文档和验收不得使用未来命令冒充已实现。
-离线/manual 与 report replay 输出均为 `automation_qualified=false`，不能混入
-自动产品验收统计。
+`providers check` 已实现；它区分本地阻断、live acquisition 状态和 contract validity，
+但一次 canary 通过不等于 provider/product acceptance。SP-API 自动报告拉取和独立
+`benchmark` 命令仍未实现。离线/manual 与 report replay 输出均为
+`automation_qualified=false`，不能混入自动产品验收统计。
+
+显式逐阶段选择示例：
+
+```powershell
+proteus --amazon-b2b-report .\b2b.csv --managed-providers `
+  --amazon-provider nexscope-amazon `
+  --ebay-provider serpapi-ebay `
+  --supply-provider hiobuy-1688 `
+  --hiobuy-receiver .\private\receiver.json `
+  --max-moq 10 --output .\reports.json
+```
 
 ## 8. 20-candidate provider benchmark
 

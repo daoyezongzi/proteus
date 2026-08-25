@@ -1,5 +1,37 @@
 # Proteus Development Log
 
+## 2026-08-25 — Replaceable provider core and managed canary runner
+
+- Added a provider-neutral `preflight/acquire/estimate_cost` lifecycle,
+  capability registry and `FunnelProviders` boundary. The Amazon/eBay/1688
+  business funnel now consumes provider objects; vendor selection is confined
+  to CLI configuration and registry construction.
+- Added a SerpApi eBay sold-search adapter with fixed `ebay.com`, US location,
+  new-condition, `show_only=Sold` and `no_cache=true` parameters. It accepts only
+  explicit positive sold counts bound to exact/new listings and preserves
+  pagination/parser uncertainty as partial or review-required evidence.
+- Added `proteus providers check`, which writes a redacted one-item report and
+  distinguishes local configuration blockers, live acquisition status and
+  contract validity. It never sends a request when the required key or HioBuy
+  receiver is absent.
+- The first managed canary produced `passed=0 / blocked=4`: Amazon SP-API,
+  Nexscope, SerpApi and HioBuy production credentials were all absent; HioBuy
+  also lacked a runtime receiver, and the official Amazon create/poll/download
+  adapter remains open. This is an access block, not a negative market result.
+- Installed and imported `python-amazon-sp-api 2.1.20` under Python 3.12 and
+  passed `pip check`; exposed it as the optional `amazon` dependency group.
+  This validates wheel compatibility only, not Seller authorization.
+- Independent unauthenticated reachability probes returned SerpApi HTTP 401,
+  HioBuy OpenAPI HTTP 200, Nexscope HTTP 200 with error envelope `code=11209`,
+  and Amazon SP-API NA HTTP 403. Managed API hosts are reachable, so the earlier
+  Japan/VPN concern is not the primary blocker for this path.
+- Passed 241 offline tests, Python bytecode compilation, editable dependency
+  resolution and wheel packaging. The wheel SHA-256 is
+  `58DF16526901FC28626C04003C11C28CEF71ED5F56DB5F660F0A86DFDFEA3214`.
+  The configurable
+  profile test proves eBay can switch from Nexscope to SerpApi without changing
+  funnel decisions; secrets remain absent from output.
+
 ## 2026-08-25 — Search/crawl wheel research added to the MVP path
 
 - Confirmed the architectural distinction between discovery and decision:
