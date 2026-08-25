@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proteus-opportunity-finder"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evidence-first automotive parts opportunity finder"
 requires-python = ">=3.12"
 dependencies = [
@@ -30,6 +30,8 @@ where = ["src"]
 "share/proteus/contracts" = [
   "contracts/v0_1_acquisition.schema.json",
   "contracts/v0_1_opportunity_report.schema.json",
+  "contracts/v0_2_acquisition.schema.json",
+  "contracts/v0_2_opportunity_report.schema.json",
 ]
 
 [tool.pytest.ini_options]

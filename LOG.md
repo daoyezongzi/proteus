@@ -1,5 +1,36 @@
 # Proteus Development Log
 
+## 2026-08-25 — V0.2 automated-opportunity engineering preview complete
+
+- Replaced the hand-curated-only entry point with deterministic candidate
+  discovery from an Amazon B2B Product Opportunities CSV replay, including an
+  automotive allowlist, primary-identifier selection, normalization, dedupe and
+  row/field provenance.
+- Implemented the fixed Amazon → eBay → 1688 short-circuit funnel. The runtime
+  path is deterministic Python and does not call an Agent or LLM.
+- Added managed Nexscope adapters for all three search surfaces and a HioBuy
+  `search → detail → order preview` adapter. HioBuy is allowlisted to those
+  three endpoints and has no create, pay or supplier-contact path.
+- Bound non-manual 1688 decisions to the same provider request, offer, SKU and
+  quantity; enforced source-specific provenance, freshness windows and
+  credential-bearing redirect refusal.
+- Added V0.2 acquisition/report schemas, fail-closed semantic revalidation and
+  `automation_qualified`. CSV replay, managed-provider evidence, manual evidence
+  and stale evidence cannot be presented as a current fully automatic result.
+- Retained the V0.1 JSON route and corrected its checked-in synthetic eBay
+  fixture to the V0.2 manual-provenance contract. The README command produces
+  one synthetic `OPPORTUNITY_CANDIDATE` with
+  `automation_qualified=false`.
+- Passed 225 offline tests, Python bytecode compilation, JSON-contract checks,
+  diff whitespace checks and a fresh Python 3.12 isolated-wheel CLI smoke run.
+  Built `proteus_opportunity_finder-0.2.0-py3-none-any.whl` with SHA-256
+  `7C32E8F985CC7FF8A2E2A66D98D800EFCD100AF57ABB28BE01D66F404D3E4874`.
+- Product acceptance remains open. The current parser keeps one primary
+  identifier per report row; automatic SP-API report retrieval, the complete
+  UPC/MPN/model query chain, approved production credentials, HioBuy negative
+  and multi-offer semantics, a real 20-item benchmark and at least one current
+  `automation_qualified=true` opportunity are still required.
+
 ## 2026-08-25 — V0.1 engineering implementation complete
 
 - Implemented the installable Python package, sequential candidate-pool CLI,

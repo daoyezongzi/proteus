@@ -20,6 +20,7 @@ from proteus.evaluation import (  # noqa: E402
     evaluate_ebay_demand_gate,
     evaluate_supply_gate,
 )
+from proteus.io import ContractValidationError, validate_opportunity_report  # noqa: E402
 from proteus.normalization import normalize_part_number  # noqa: E402
 
 
@@ -436,8 +437,8 @@ def test_part_number_normalization_fixtures(case: dict) -> None:
 
 
 def _validate_opportunity_report(report: dict) -> None:
-    schema_path = ROOT / "contracts" / "v0_1_opportunity_report.schema.json"
-    acquisition_schema_path = ROOT / "contracts" / "v0_1_acquisition.schema.json"
+    schema_path = ROOT / "contracts" / "v0_2_opportunity_report.schema.json"
+    acquisition_schema_path = ROOT / "contracts" / "v0_2_acquisition.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     acquisition_schema = json.loads(acquisition_schema_path.read_text(encoding="utf-8"))
     schema["$id"] = schema_path.as_uri()
@@ -473,10 +474,11 @@ def test_candidate_report_passes_all_gates_and_schema() -> None:
         "PASSED",
         "PASSED",
     ]
+    assert report["stages"]["alibaba_1688_supply"]["order_preview"] is None
     _validate_opportunity_report(report)
 
 
-def test_ebay_rejection_short_circuits_both_downstream_gates() -> None:
+def test_ebay_rejection_short_circuits_only_supply_gate() -> None:
     ebay = _ebay_acquisition(OPPORTUNITY_CASES["ebay_gate_cases"][1])
 
     report = evaluate_candidate(
@@ -489,17 +491,8 @@ def test_ebay_rejection_short_circuits_both_downstream_gates() -> None:
     )
 
     assert report["decision"] == "REJECTED"
-    assert report["stages"]["amazon_competition"] == {
-        "status": "NOT_CHECKED",
-        "acquisition_status": None,
-        "source_method": None,
-        "query": None,
-        "market_context": None,
-        "relevance_reviewed": None,
-        "relevant_result_count": None,
-        "evidence": [],
-        "reason": "Not checked because the eBay demand gate did not pass.",
-    }
+    assert report["stages"]["amazon_competition"]["status"] == "PASSED"
+    assert report["stages"]["ebay_demand"]["status"] == "REJECTED"
     assert report["stages"]["alibaba_1688_supply"]["status"] == "NOT_CHECKED"
     _validate_opportunity_report(report)
 
@@ -518,8 +511,373 @@ def test_missing_amazon_evidence_short_circuits_supply_as_review() -> None:
 
     assert report["decision"] == "REVIEW_REQUIRED"
     assert report["stages"]["amazon_competition"]["status"] == "REVIEW_REQUIRED"
+    assert report["stages"]["ebay_demand"]["status"] == "NOT_CHECKED"
     assert report["stages"]["alibaba_1688_supply"]["status"] == "NOT_CHECKED"
     _validate_opportunity_report(report)
+
+
+def test_deterministic_managed_amazon_exact_count_can_pass() -> None:
+    amazon = _amazon_evidence(OPPORTUNITY_CASES["amazon_gate_cases"][0])
+    amazon["source_method"] = "MANAGED_API"
+    amazon.pop("relevance_reviewed")
+    amazon["relevance_method"] = "DETERMINISTIC_EXACT"
+    for evidence in amazon["evidence"]:
+        evidence["extraction_method"] = "MANAGED_API"
+
+    stage = evaluate_amazon_competition_gate(
+        amazon,
+        expected_canonical_part_number="5363053010",
+    )
+
+    assert stage["status"] == "PASSED"
+    assert stage["relevance_method"] == "DETERMINISTIC_EXACT"
+
+
+def test_partial_ebay_page_without_sold_evidence_requires_review() -> None:
+    ebay = _ebay_acquisition(OPPORTUNITY_CASES["ebay_gate_cases"][2])
+    ebay["status"] = "PARTIAL_SUCCESS"
+    ebay["diagnostics"] = [
+        {
+            "code": "CARD_SKIPPED",
+            "message": "Provider returned an incomplete page.",
+            "raw_marker": "provider_page_complete=false",
+        }
+    ]
+
+    stage = evaluate_ebay_demand_gate(ebay)
+
+    assert stage["status"] == "REVIEW_REQUIRED"
+    assert "Partial eBay results" in stage["reason"]
+
+
+def test_ebay_sold_summary_requires_matching_field_evidence() -> None:
+    ebay = _ebay_acquisition(OPPORTUNITY_CASES["ebay_gate_cases"][0])
+    for listing in ebay["listings"]:
+        for evidence in listing["evidence"]:
+            if evidence["metric"] == "sold_count":
+                evidence["value"] = 999
+
+    stage = evaluate_ebay_demand_gate(ebay)
+
+    assert stage["status"] == "REVIEW_REQUIRED"
+    assert stage["acquisition"]["observed_demand"]["aggregate_observed_sold"] == 0
+
+
+def test_partial_managed_amazon_results_cannot_prove_low_competition() -> None:
+    amazon = _amazon_evidence(OPPORTUNITY_CASES["amazon_gate_cases"][0])
+    amazon["acquisition_status"] = "PARTIAL_SUCCESS"
+    amazon["source_method"] = "MANAGED_API"
+    amazon.pop("relevance_reviewed")
+    amazon["relevance_method"] = "DETERMINISTIC_EXACT"
+    for evidence in amazon["evidence"]:
+        evidence["extraction_method"] = "MANAGED_API"
+
+    stage = evaluate_amazon_competition_gate(amazon)
+
+    assert stage["status"] == "REVIEW_REQUIRED"
+    assert "Partial Amazon API results" in stage["reason"]
+
+
+def test_managed_1688_listing_cannot_replace_order_preview() -> None:
+    supply = _supply_evidence(OPPORTUNITY_CASES["supply_gate_cases"][0])
+    supply["source_method"] = "MANAGED_API"
+    for evidence in supply["evidence"]:
+        evidence["extraction_method"] = "MANAGED_API"
+
+    stage = evaluate_supply_gate(supply, max_acceptable_moq=10)
+
+    assert stage["status"] == "REVIEW_REQUIRED"
+    assert "order preview" in stage["reason"]
+
+
+@pytest.mark.parametrize("source_method", ["BROWSER", "HTTP", "SEARCH"])
+def test_non_manual_supply_cannot_pass_without_structured_preview(
+    source_method: str,
+) -> None:
+    supply = _supply_evidence(OPPORTUNITY_CASES["supply_gate_cases"][0])
+    supply["source_method"] = source_method
+    for record in supply["evidence"]:
+        if record["metric"] == "purchasable":
+            record["extraction_method"] = "ORDER_PREVIEW"
+
+    stage = evaluate_supply_gate(supply, max_acceptable_moq=10)
+
+    assert stage["status"] == "REVIEW_REQUIRED"
+    assert "structured order preview" in stage["reason"]
+
+
+def test_api_not_purchasable_preview_remains_a_rejection() -> None:
+    supply = _supply_evidence(OPPORTUNITY_CASES["supply_gate_cases"][2])
+    supply["source_method"] = "OFFICIAL_API"
+    purchasable_record = next(
+        record for record in supply["evidence"] if record["metric"] == "purchasable"
+    )
+    purchasable_record["extraction_method"] = "ORDER_PREVIEW"
+    supply["order_preview"] = {
+        "provider": "HIOBUY_STANDARD",
+        "request_id": "preview-unavailable",
+        "offer_id": "fixture",
+        "sku_id": "fixture-sku",
+        "quantity": 1,
+        "currency": "CNY",
+        "payment_cny": None,
+        "shipping_cny": None,
+        "retrieved_at": RETRIEVED_AT,
+    }
+    binding = {
+        key: supply["order_preview"][key]
+        for key in ("provider", "request_id", "offer_id", "sku_id", "quantity")
+    }
+    purchasable_record["preview_binding"] = binding
+
+    stage = evaluate_supply_gate(supply, max_acceptable_moq=10)
+
+    assert stage["status"] == "REJECTED"
+    assert stage["order_preview"]["request_id"] == "preview-unavailable"
+
+
+def _automation_ready_inputs() -> tuple[dict, dict, dict, dict]:
+    ebay = _ebay_acquisition(OPPORTUNITY_CASES["ebay_gate_cases"][0])
+    ebay["schema_version"] = "0.2"
+    ebay["source_method"] = "OFFICIAL_API"
+    for listing in ebay["listings"]:
+        for evidence in listing["evidence"]:
+            evidence["extraction_method"] = "OFFICIAL_API"
+
+    amazon = _amazon_evidence(OPPORTUNITY_CASES["amazon_gate_cases"][0])
+    amazon["source_method"] = "OFFICIAL_API"
+    amazon.pop("relevance_reviewed")
+    amazon["relevance_method"] = "DETERMINISTIC_EXACT"
+    for evidence in amazon["evidence"]:
+        evidence["extraction_method"] = "OFFICIAL_API"
+
+    supply = _supply_evidence(OPPORTUNITY_CASES["supply_gate_cases"][0])
+    supply["source_method"] = "OFFICIAL_API"
+    for evidence in supply["evidence"]:
+        evidence["extraction_method"] = (
+            "ORDER_PREVIEW"
+            if evidence["metric"] == "purchasable"
+            else "OFFICIAL_API"
+        )
+    preview_template = next(
+        evidence
+        for evidence in supply["evidence"]
+        if evidence["metric"] == "purchasable"
+    )
+    for metric, value in (
+        ("preview_payment_cny", 85),
+        ("preview_shipping_cny", 5),
+    ):
+        record = deepcopy(preview_template)
+        record["metric"] = metric
+        record["value"] = value
+        record["raw_evidence"] = f"{metric}={value}"
+        supply["evidence"].append(record)
+    supply["order_preview"] = {
+        "provider": "HIOBUY_STANDARD",
+        "request_id": "preview-request-id",
+        "offer_id": "fixture",
+        "sku_id": "fixture-sku",
+        "quantity": 10,
+        "currency": "CNY",
+        "payment_cny": 85,
+        "shipping_cny": 5,
+        "retrieved_at": RETRIEVED_AT,
+    }
+    preview_binding = {
+        key: supply["order_preview"][key]
+        for key in ("provider", "request_id", "offer_id", "sku_id", "quantity")
+    }
+    for record in supply["evidence"]:
+        record["preview_binding"] = deepcopy(preview_binding)
+
+    candidate_source = {
+        "method": "AMAZON_B2B_REPORT_API",
+        "provider": "AMAZON_SP_API",
+        "source_reference": "report-id",
+        "source_row": 2,
+        "source_field": "partNumber",
+        "identifier_type": "partNumber",
+        "category": "Automotive",
+        "brand": "Fixture Brand",
+        "item_name": "Fixture automotive part",
+        "report_generated_at": RETRIEVED_AT,
+    }
+    return ebay, amazon, supply, candidate_source
+
+
+def _automation_report(
+    ebay: dict,
+    amazon: dict,
+    supply: dict,
+    candidate_source: dict,
+) -> dict:
+    return evaluate_candidate(
+        "53630-53010",
+        ebay,
+        amazon,
+        supply,
+        max_acceptable_moq=10,
+        candidate_source=candidate_source,
+        generated_at=RETRIEVED_AT,
+    )
+
+
+def test_official_api_only_report_can_be_automation_qualified() -> None:
+    report = _automation_report(*_automation_ready_inputs())
+
+    assert report["decision"] == "OPPORTUNITY_CANDIDATE"
+    assert report["automation_qualified"] is True
+    _validate_opportunity_report(report)
+    validate_opportunity_report(report)
+
+
+@pytest.mark.parametrize(
+    "stale_surface",
+    [
+        "candidate_report",
+        "amazon_evidence",
+        "ebay_acquisition",
+        "ebay_evidence",
+        "supply_evidence",
+        "order_preview",
+    ],
+)
+def test_stale_official_data_is_not_automation_qualified(
+    stale_surface: str,
+) -> None:
+    ebay, amazon, supply, candidate_source = _automation_ready_inputs()
+    if stale_surface == "candidate_report":
+        candidate_source["report_generated_at"] = "2026-08-16T23:59:59Z"
+    elif stale_surface == "amazon_evidence":
+        amazon["evidence"][0]["retrieved_at"] = "2026-08-23T23:59:59Z"
+    elif stale_surface == "ebay_acquisition":
+        ebay["retrieved_at"] = "2026-08-23T23:59:59Z"
+    elif stale_surface == "ebay_evidence":
+        ebay["listings"][0]["evidence"][0]["retrieved_at"] = (
+            "2026-08-23T23:59:59Z"
+        )
+    elif stale_surface == "supply_evidence":
+        next(
+            record
+            for record in supply["evidence"]
+            if record["metric"] == "price_cny"
+        )["retrieved_at"] = "2026-08-23T23:59:59Z"
+    else:
+        supply["order_preview"]["retrieved_at"] = "2026-08-24T23:44:59Z"
+        for record in supply["evidence"]:
+            if record["extraction_method"] == "ORDER_PREVIEW":
+                record["retrieved_at"] = "2026-08-24T23:44:59Z"
+
+    report = _automation_report(ebay, amazon, supply, candidate_source)
+
+    assert report["decision"] == "OPPORTUNITY_CANDIDATE"
+    assert report["automation_qualified"] is False
+    _validate_opportunity_report(report)
+
+
+def test_validate_report_rejects_forged_automation_claim() -> None:
+    ebay, amazon, supply, candidate_source = _automation_ready_inputs()
+    amazon["evidence"][0]["retrieved_at"] = "2020-01-01T00:00:00Z"
+    report = _automation_report(ebay, amazon, supply, candidate_source)
+    assert report["automation_qualified"] is False
+    report["automation_qualified"] = True
+
+    with pytest.raises(ContractValidationError, match="automation semantics"):
+        validate_opportunity_report(report)
+
+
+@pytest.mark.parametrize("field_name", ["provider", "request_id", "sku_id"])
+def test_validate_report_rejects_mutated_preview_identity(field_name: str) -> None:
+    report = _automation_report(*_automation_ready_inputs())
+    report["stages"]["alibaba_1688_supply"]["order_preview"][field_name] = (
+        f"unrelated-{field_name}"
+    )
+
+    with pytest.raises(ContractValidationError, match="automation semantics"):
+        validate_opportunity_report(report)
+
+
+@pytest.mark.parametrize(
+    ("surface", "extraction_method"),
+    [
+        ("amazon", "MANAGED_API"),
+        ("amazon", "MANUAL_REVIEW"),
+        ("ebay", "MANAGED_API"),
+        ("ebay", "MANUAL_REVIEW"),
+        ("supply_price", "MANAGED_API"),
+        ("supply_price", "MANUAL_REVIEW"),
+        ("supply_moq", "MANAGED_API"),
+        ("supply_moq", "MANUAL_REVIEW"),
+    ],
+)
+def test_validate_report_rejects_mixed_official_provenance(
+    surface: str,
+    extraction_method: str,
+) -> None:
+    report = _automation_report(*_automation_ready_inputs())
+    if surface == "amazon":
+        record = report["stages"]["amazon_competition"]["evidence"][0]
+    elif surface == "ebay":
+        record = report["stages"]["ebay_demand"]["acquisition"]["listings"][0][
+            "evidence"
+        ][0]
+    else:
+        metric = "price_cny" if surface == "supply_price" else "moq"
+        record = next(
+            item
+            for item in report["stages"]["alibaba_1688_supply"]["evidence"]
+            if item["metric"] == metric
+        )
+    record["extraction_method"] = extraction_method
+
+    with pytest.raises(ContractValidationError, match="automation semantics"):
+        validate_opportunity_report(report)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("provider", "USER_INPUT"),
+        ("source_reference", None),
+        ("source_row", None),
+        ("source_field", None),
+        ("identifier_type", None),
+        ("category", "Industrial"),
+    ],
+)
+def test_validate_report_rejects_incomplete_api_candidate_provenance(
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    report = _automation_report(*_automation_ready_inputs())
+    report["candidate_source"][field_name] = invalid_value
+
+    with pytest.raises(ContractValidationError):
+        validate_opportunity_report(report)
+
+
+def test_non_qualified_opportunity_still_requires_bound_supply_semantics() -> None:
+    report = _automation_report(*_automation_ready_inputs())
+    report["automation_qualified"] = False
+    report["stages"]["alibaba_1688_supply"]["order_preview"]["sku_id"] = (
+        "unrelated-sku"
+    )
+
+    with pytest.raises(ContractValidationError, match="opportunity semantics"):
+        validate_opportunity_report(report)
+
+
+def test_schema_rejects_managed_api_as_automation_qualified() -> None:
+    report = _automation_report(*_automation_ready_inputs())
+    report["stages"]["amazon_competition"]["source_method"] = "MANAGED_API"
+    report["stages"]["ebay_demand"]["acquisition"]["source_method"] = (
+        "MANAGED_API"
+    )
+    report["stages"]["alibaba_1688_supply"]["source_method"] = "MANAGED_API"
+
+    with pytest.raises(ContractValidationError):
+        validate_opportunity_report(report)
 
 
 def test_invalid_moq_policy_is_rejected() -> None:

@@ -1,0 +1,969 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "v0_2_opportunity_report.schema.json",
+  "title": "Proteus V0.2 OpportunityCandidateReport",
+  "description": "Three-gate opportunity decision with traceable Amazon, eBay and 1688 evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate",
+    "candidate_source",
+    "automation_qualified",
+    "policy",
+    "stages",
+    "decision",
+    "reasons",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.2"
+    },
+    "candidate": {
+      "$ref": "./v0_2_acquisition.schema.json#/$defs/partQuery"
+    },
+    "candidate_source": {
+      "$ref": "#/$defs/candidateSource"
+    },
+    "automation_qualified": {
+      "type": "boolean"
+    },
+    "policy": {
+      "$ref": "#/$defs/opportunityPolicy"
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amazon_competition",
+        "ebay_demand",
+        "alibaba_1688_supply"
+      ],
+      "properties": {
+        "amazon_competition": {
+          "$ref": "#/$defs/amazonCompetitionStage"
+        },
+        "ebay_demand": {
+          "$ref": "#/$defs/ebayDemandStage"
+        },
+        "alibaba_1688_supply": {
+          "$ref": "#/$defs/supplyStage"
+        }
+      }
+    },
+    "decision": {
+      "enum": [
+        "OPPORTUNITY_CANDIDATE",
+        "REJECTED",
+        "REVIEW_REQUIRED"
+      ]
+    },
+    "reasons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "automation_qualified": {"const": true}
+        }
+      },
+      "then": {
+        "properties": {
+          "decision": {"const": "OPPORTUNITY_CANDIDATE"},
+          "candidate_source": {
+            "required": [
+              "method",
+              "provider",
+              "source_reference",
+              "source_row",
+              "source_field",
+              "identifier_type",
+              "category",
+              "report_generated_at"
+            ],
+            "properties": {
+              "method": {"const": "AMAZON_B2B_REPORT_API"},
+              "provider": {"const": "AMAZON_SP_API"},
+              "source_reference": {"type": "string", "minLength": 1},
+              "source_row": {"type": "integer", "minimum": 1},
+              "source_field": {"type": "string", "minLength": 1},
+              "identifier_type": {
+                "enum": ["partNumber", "modelNumber", "EAN", "UPC", "ISBN"]
+              },
+              "category": {
+                "type": "string",
+                "pattern": "^[Aa][Uu][Tt][Oo][Mm][Oo][Tt][Ii][Vv][Ee]$"
+              },
+              "report_generated_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "stages": {
+            "properties": {
+              "amazon_competition": {
+                "required": ["status", "source_method", "relevance_method"],
+                "properties": {
+                  "status": {"const": "PASSED"},
+                  "source_method": {"const": "OFFICIAL_API"},
+                  "relevance_method": {"const": "DETERMINISTIC_EXACT"}
+                }
+              },
+              "ebay_demand": {
+                "required": ["status", "acquisition"],
+                "properties": {
+                  "status": {"const": "PASSED"},
+                  "acquisition": {
+                    "type": "object",
+                    "required": ["source_method"],
+                    "properties": {
+                      "source_method": {"const": "OFFICIAL_API"}
+                    }
+                  }
+                }
+              },
+              "alibaba_1688_supply": {
+                "required": ["status", "source_method", "order_preview"],
+                "properties": {
+                  "status": {"const": "PASSED"},
+                  "source_method": {"const": "OFFICIAL_API"},
+                  "order_preview": {
+                    "allOf": [
+                      {"$ref": "#/$defs/orderPreview"},
+                      {
+                        "properties": {
+                          "currency": {"const": "CNY"},
+                          "payment_cny": {"type": "number", "minimum": 0},
+                          "shipping_cny": {"type": "number", "minimum": 0}
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "OPPORTUNITY_CANDIDATE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "stages": {
+            "properties": {
+              "amazon_competition": {
+                "properties": {
+                  "status": {
+                    "const": "PASSED"
+                  }
+                }
+              },
+              "ebay_demand": {
+                "properties": {
+                  "status": {
+                    "const": "PASSED"
+                  }
+                }
+              },
+              "alibaba_1688_supply": {
+                "properties": {
+                  "status": {
+                    "const": "PASSED"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "REJECTED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "stages": {
+            "anyOf": [
+              {
+                "properties": {
+                  "amazon_competition": {
+                    "properties": {
+                      "status": {
+                        "const": "REJECTED"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "ebay_demand": {
+                    "properties": {
+                      "status": {
+                        "const": "REJECTED"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "alibaba_1688_supply": {
+                    "properties": {
+                      "status": {
+                        "const": "REJECTED"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "stageStatus": {
+      "enum": [
+        "PASSED",
+        "REJECTED",
+        "REVIEW_REQUIRED",
+        "NOT_CHECKED"
+      ]
+    },
+    "sourceMethod": {
+      "enum": [
+        "OFFICIAL_API",
+        "MANAGED_API",
+        "HTTP",
+        "SEARCH",
+        "BROWSER",
+        "MANUAL"
+      ]
+    },
+    "candidateSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "provider",
+        "source_reference",
+        "source_row",
+        "source_field",
+        "identifier_type",
+        "category",
+        "brand",
+        "item_name",
+        "report_generated_at"
+      ],
+      "properties": {
+        "method": {
+          "enum": [
+            "SUPPLIED_POOL",
+            "AMAZON_B2B_REPORT_REPLAY",
+            "AMAZON_B2B_REPORT_API"
+          ]
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_reference": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "source_row": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "source_field": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "identifier_type": {
+          "type": ["string", "null"],
+          "enum": ["partNumber", "modelNumber", "EAN", "UPC", "ISBN", null]
+        },
+        "category": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "brand": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "item_name": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "report_generated_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "opportunityPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_amazon_relevant_results",
+        "min_ebay_aggregate_observed_sold",
+        "max_acceptable_moq",
+        "candidate_report_max_age_hours",
+        "stage_evidence_max_age_hours",
+        "order_preview_max_age_minutes",
+        "future_clock_skew_minutes"
+      ],
+      "properties": {
+        "max_amazon_relevant_results": {
+          "const": 5
+        },
+        "min_ebay_aggregate_observed_sold": {
+          "const": 1
+        },
+        "max_acceptable_moq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "candidate_report_max_age_hours": {
+          "const": 192
+        },
+        "stage_evidence_max_age_hours": {
+          "const": 24
+        },
+        "order_preview_max_age_minutes": {
+          "const": 15
+        },
+        "future_clock_skew_minutes": {
+          "const": 5
+        }
+      }
+    },
+    "amazonCompetitionStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "acquisition_status",
+        "source_method",
+        "query",
+        "market_context",
+        "relevance_method",
+        "relevant_result_count",
+        "evidence",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/stageStatus"
+        },
+        "acquisition_status": {
+          "oneOf": [
+            {
+              "$ref": "./v0_2_acquisition.schema.json#/$defs/acquisitionStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_method": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sourceMethod"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "query": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "market_context": {
+          "oneOf": [
+            {
+              "$ref": "./v0_2_acquisition.schema.json#/$defs/marketContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "relevance_method": {
+          "type": ["string", "null"],
+          "enum": ["DETERMINISTIC_EXACT", "MANUAL_REVIEW", null]
+        },
+        "relevant_result_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "./v0_2_acquisition.schema.json#/$defs/evidence"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "PASSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acquisition_status": {
+                "enum": [
+                  "SUCCESS",
+                  "PARTIAL_SUCCESS",
+                  "ZERO_RESULTS"
+                ]
+              },
+              "source_method": {
+                "$ref": "#/$defs/sourceMethod"
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "market_context": {
+                "type": "object",
+                "properties": {
+                  "marketplace_id": {
+                    "const": "AMAZON_US"
+                  },
+                  "site": {
+                    "const": "www.amazon.com"
+                  },
+                  "locale": {
+                    "const": "en-US"
+                  },
+                  "ship_to_country": {
+                    "const": "US"
+                  },
+                  "currency": {
+                    "const": "USD"
+                  }
+                }
+              },
+              "relevance_method": {
+                "enum": ["DETERMINISTIC_EXACT", "MANUAL_REVIEW"]
+              },
+              "relevant_result_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 5
+              },
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "REJECTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acquisition_status": {
+                "enum": [
+                  "SUCCESS",
+                  "PARTIAL_SUCCESS"
+                ]
+              },
+              "source_method": {
+                "$ref": "#/$defs/sourceMethod"
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "market_context": {
+                "type": "object",
+                "properties": {
+                  "marketplace_id": {
+                    "const": "AMAZON_US"
+                  },
+                  "site": {
+                    "const": "www.amazon.com"
+                  },
+                  "locale": {
+                    "const": "en-US"
+                  },
+                  "ship_to_country": {
+                    "const": "US"
+                  },
+                  "currency": {
+                    "const": "USD"
+                  }
+                }
+              },
+              "relevance_method": {
+                "enum": ["DETERMINISTIC_EXACT", "MANUAL_REVIEW"]
+              },
+              "relevant_result_count": {
+                "type": "integer",
+                "minimum": 6
+              },
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_CHECKED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acquisition_status": {
+                "type": "null"
+              },
+              "source_method": {
+                "type": "null"
+              },
+              "query": {
+                "type": "null"
+              },
+              "market_context": {
+                "type": "null"
+              },
+              "relevance_method": {
+                "type": "null"
+              },
+              "relevant_result_count": {
+                "type": "null"
+              },
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ebayDemandStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "acquisition",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "PASSED",
+            "REJECTED",
+            "REVIEW_REQUIRED",
+            "NOT_CHECKED"
+          ]
+        },
+        "acquisition": {
+          "oneOf": [
+            {"$ref": "./v0_2_acquisition.schema.json"},
+            {"type": "null"}
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {"const": "NOT_CHECKED"}
+            }
+          },
+          "then": {
+            "properties": {
+              "acquisition": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "acquisition": {"$ref": "./v0_2_acquisition.schema.json"}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "PASSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acquisition": {
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "SUCCESS",
+                      "PARTIAL_SUCCESS"
+                    ]
+                  },
+                  "observed_demand": {
+                    "properties": {
+                      "eligible_listing_count": {
+                        "minimum": 1
+                      },
+                      "max_single_listing_sold": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "aggregate_observed_sold": {
+                        "minimum": 1
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "orderPreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "request_id",
+        "offer_id",
+        "sku_id",
+        "quantity",
+        "currency",
+        "payment_cny",
+        "shipping_cny",
+        "retrieved_at"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "offer_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sku_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "CNY"
+        },
+        "payment_cny": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "shipping_cny": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "retrieved_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "supplyStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "acquisition_status",
+        "source_method",
+        "matched_part_numbers",
+        "match_type",
+        "supplier",
+        "offer_url",
+        "purchasable",
+        "price_cny",
+        "moq",
+        "order_preview",
+        "evidence",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/stageStatus"
+        },
+        "acquisition_status": {
+          "oneOf": [
+            {
+              "$ref": "./v0_2_acquisition.schema.json#/$defs/acquisitionStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_method": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sourceMethod"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "matched_part_numbers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "match_type": {
+          "enum": [
+            "EXACT",
+            "NORMALIZED_EXACT",
+            "CROSS_REFERENCE",
+            "REPLACEMENT",
+            "LEFT_RIGHT_PAIR",
+            "SIDE_MISMATCH",
+            "AMBIGUOUS",
+            "IRRELEVANT",
+            "UNKNOWN",
+            null
+          ]
+        },
+        "supplier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offer_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri"
+        },
+        "purchasable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "price_cny": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "moq": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "order_preview": {
+          "oneOf": [
+            {"$ref": "#/$defs/orderPreview"},
+            {"type": "null"}
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "./v0_2_acquisition.schema.json#/$defs/evidence"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "PASSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acquisition_status": {
+                "enum": [
+                  "SUCCESS",
+                  "PARTIAL_SUCCESS"
+                ]
+              },
+              "source_method": {
+                "$ref": "#/$defs/sourceMethod"
+              },
+              "match_type": {
+                "enum": [
+                  "EXACT",
+                  "NORMALIZED_EXACT"
+                ]
+              },
+              "matched_part_numbers": {
+                "minItems": 1
+              },
+              "supplier": {
+                "type": "string",
+                "minLength": 1
+              },
+              "offer_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "purchasable": {
+                "const": true
+              },
+              "price_cny": {
+                "type": "number",
+                "minimum": 0
+              },
+              "moq": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_CHECKED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acquisition_status": {
+                "type": "null"
+              },
+              "source_method": {
+                "type": "null"
+              },
+              "matched_part_numbers": {
+                "maxItems": 0
+              },
+              "match_type": {
+                "type": "null"
+              },
+              "supplier": {
+                "type": "null"
+              },
+              "offer_url": {
+                "type": "null"
+              },
+              "purchasable": {
+                "type": "null"
+              },
+              "price_cny": {
+                "type": "null"
+              },
+              "moq": {
+                "type": "null"
+              },
+              "order_preview": {
+                "type": "null"
+              },
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {"const": "PASSED"},
+              "source_method": {
+                "enum": [
+                  "OFFICIAL_API",
+                  "MANAGED_API",
+                  "HTTP",
+                  "SEARCH",
+                  "BROWSER"
+                ]
+              }
+            },
+            "required": ["status", "source_method"]
+          },
+          "then": {
+            "properties": {
+              "order_preview": {"$ref": "#/$defs/orderPreview"}
+            }
+          }
+        }
+      ]
+    }
+  }
+}

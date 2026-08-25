@@ -49,7 +49,7 @@
               "source": "Synthetic eBay fixture - not platform evidence",
               "url": "https://www.ebay.com/itm/123456789012",
               "retrieved_at": "2026-08-25T00:00:00Z",
-              "extraction_method": "MANUAL_FIXTURE",
+              "extraction_method": "MANUAL_REVIEW",
               "raw_evidence": "Synthetic label: 2 sold",
               "confidence": 1
             }

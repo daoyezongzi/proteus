@@ -15,6 +15,10 @@ venv/
 .coverage
 htmlcov/
 
+# Runtime-only files that may contain a domestic receiver identity/address.
+/private/
+/.private/
+
 build/
 dist/
 *.egg-info/

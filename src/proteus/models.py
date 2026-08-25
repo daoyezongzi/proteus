@@ -1,11 +1,15 @@
-"""Shared V0.1 policy values and schema-shaped stage constructors."""
+"""Shared V0.2 policy values and schema-shaped stage constructors."""
 
 from __future__ import annotations
 
 from enum import Enum
 
 
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION = "0.2"
+LEGACY_SCHEMA_VERSION = "0.1"
+SUPPORTED_INPUT_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_SCHEMA_VERSION, SCHEMA_VERSION}
+)
 MAX_AMAZON_RELEVANT_RESULTS = 5
 MIN_EBAY_AGGREGATE_OBSERVED_SOLD = 1
 
@@ -44,6 +48,7 @@ class OpportunityDecision(StringEnum):
 
 class SourceMethod(StringEnum):
     OFFICIAL_API = "OFFICIAL_API"
+    MANAGED_API = "MANAGED_API"
     HTTP = "HTTP"
     SEARCH = "SEARCH"
     BROWSER = "BROWSER"
@@ -62,12 +67,18 @@ class MatchType(StringEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class RelevanceMethod(StringEnum):
+    DETERMINISTIC_EXACT = "DETERMINISTIC_EXACT"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+
+
 SUCCESSFUL_ACQUISITION_STATUSES = frozenset(
     {AcquisitionStatus.SUCCESS.value, AcquisitionStatus.PARTIAL_SUCCESS.value}
 )
 ACQUISITION_STATUS_VALUES = frozenset(status.value for status in AcquisitionStatus)
 SOURCE_METHOD_VALUES = frozenset(method.value for method in SourceMethod)
 MATCH_TYPE_VALUES = frozenset(match_type.value for match_type in MatchType)
+RELEVANCE_METHOD_VALUES = frozenset(method.value for method in RelevanceMethod)
 STAGE_STATUS_VALUES = frozenset(status.value for status in StageStatus)
 
 EBAY_US_CONTEXT = {
@@ -95,7 +106,7 @@ def make_not_checked_amazon_stage(reason: str) -> dict:
         "source_method": None,
         "query": None,
         "market_context": None,
-        "relevance_reviewed": None,
+        "relevance_method": None,
         "relevant_result_count": None,
         "evidence": [],
         "reason": reason,
@@ -114,6 +125,15 @@ def make_not_checked_supply_stage(reason: str) -> dict:
         "purchasable": None,
         "price_cny": None,
         "moq": None,
+        "order_preview": None,
         "evidence": [],
+        "reason": reason,
+    }
+
+
+def make_not_checked_ebay_stage(reason: str) -> dict:
+    return {
+        "status": StageStatus.NOT_CHECKED.value,
+        "acquisition": None,
         "reason": reason,
     }

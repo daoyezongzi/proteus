@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from proteus import cli
 
 
@@ -231,6 +233,8 @@ def test_offline_cli_preserves_order_and_manual_provenance(tmp_path: Path) -> No
         "OPPORTUNITY_CANDIDATE",
     ]
     for report in reports:
+        assert report["schema_version"] == "0.2"
+        assert report["automation_qualified"] is False
         amazon = report["stages"]["amazon_competition"]
         supply = report["stages"]["alibaba_1688_supply"]
         assert amazon["source_method"] == "MANUAL"
@@ -239,7 +243,34 @@ def test_offline_cli_preserves_order_and_manual_provenance(tmp_path: Path) -> No
         assert supply["evidence"][0]["extraction_method"] == "MANUAL_REVIEW"
 
 
-def test_live_ebay_is_sequential_defaults_to_auto_and_missing_manual_reviews(
+def test_readme_synthetic_example_remains_runnable(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    output_path = tmp_path / "synthetic_reports.json"
+
+    exit_code = cli.main(
+        [
+            "--candidate-pool",
+            str(project_root / "examples" / "synthetic_candidates.json"),
+            "--manual-evidence",
+            str(project_root / "examples" / "synthetic_manual_evidence.json"),
+            "--ebay-evidence",
+            str(project_root / "examples" / "synthetic_ebay_evidence.json"),
+            "--max-moq",
+            "10",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    reports = json.loads(output_path.read_text(encoding="utf-8"))
+    assert len(reports) == 1
+    assert reports[0]["schema_version"] == "0.2"
+    assert reports[0]["decision"] == "OPPORTUNITY_CANDIDATE"
+    assert reports[0]["automation_qualified"] is False
+
+
+def test_missing_amazon_evidence_short_circuits_live_ebay(
     tmp_path: Path, monkeypatch
 ) -> None:
     candidates = ["53630-53010", "A18-67004-004"]
@@ -268,10 +299,7 @@ def test_live_ebay_is_sequential_defaults_to_auto_and_missing_manual_reviews(
     )
 
     assert exit_code == 0
-    assert calls == [
-        ("53630-53010", True, "auto"),
-        ("A18-67004-004", True, "auto"),
-    ]
+    assert calls == []
     reports = json.loads(output_path.read_text(encoding="utf-8"))
     assert all(report["decision"] == "REVIEW_REQUIRED" for report in reports)
     assert all(
@@ -315,7 +343,7 @@ def test_live_challenge_is_preserved_and_never_promoted(
     assert report["decision"] == "REVIEW_REQUIRED"
     assert report["stages"]["ebay_demand"]["status"] == "REVIEW_REQUIRED"
     assert report["stages"]["ebay_demand"]["acquisition"]["status"] == "CHALLENGE"
-    assert report["stages"]["amazon_competition"]["status"] == "NOT_CHECKED"
+    assert report["stages"]["amazon_competition"]["status"] == "PASSED"
     assert report["stages"]["alibaba_1688_supply"]["status"] == "NOT_CHECKED"
 
 
@@ -388,6 +416,10 @@ def test_missing_offline_acquisition_fails_closed_without_partial_output(
     ebay_path = _write_json(
         tmp_path / "ebay.json", [_ebay_acquisition(candidates[0])]
     )
+    manual_path = _write_json(
+        tmp_path / "manual.json",
+        [_manual_record(part_number) for part_number in candidates],
+    )
     output_path = tmp_path / "reports.json"
 
     exit_code = cli.main(
@@ -396,6 +428,8 @@ def test_missing_offline_acquisition_fails_closed_without_partial_output(
             str(candidate_path),
             "--ebay-evidence",
             str(ebay_path),
+            "--manual-evidence",
+            str(manual_path),
             "--max-moq",
             "5",
             "--output",
@@ -409,3 +443,140 @@ def test_missing_offline_acquisition_fails_closed_without_partial_output(
         in capsys.readouterr().err
     )
     assert not output_path.exists()
+
+
+def test_b2b_report_drives_managed_funnel_without_agent_or_manual_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    raw_part_number = "53630-53010"
+    report_path = tmp_path / "b2b.csv"
+    report_path.write_text(
+        "partNumber,category,itemName\n"
+        "53630-53010,Automotive,Opportunity row\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "reports.json"
+    calls: list[str] = []
+
+    amazon = _manual_record(raw_part_number)["amazon"]
+    amazon["source_method"] = "MANAGED_API"
+    amazon.pop("relevance_reviewed")
+    amazon["relevance_method"] = "DETERMINISTIC_EXACT"
+    amazon["evidence"][0]["extraction_method"] = "MANAGED_API"
+
+    ebay = _ebay_acquisition(raw_part_number)
+    ebay["schema_version"] = "0.2"
+    ebay["source_method"] = "MANAGED_API"
+    ebay["listings"][0]["evidence"][0]["extraction_method"] = "MANAGED_API"
+
+    supply = _manual_record(raw_part_number)["alibaba_1688"]
+    supply["source_method"] = "MANAGED_API"
+    supply["purchasable"] = None
+    supply["evidence"] = [
+        evidence
+        for evidence in supply["evidence"]
+        if evidence["metric"] != "purchasable"
+    ]
+    for evidence in supply["evidence"]:
+        evidence["extraction_method"] = "MANAGED_API"
+
+    monkeypatch.setenv("NEXSCOPE_API_KEY", "test-secret-never-output")
+    monkeypatch.setattr(
+        cli,
+        "collect_amazon_search",
+        lambda *args, **kwargs: calls.append("amazon") or amazon,
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_ebay_search",
+        lambda *args, **kwargs: calls.append("ebay") or ebay,
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_1688_search",
+        lambda *args, **kwargs: calls.append("1688") or supply,
+    )
+
+    exit_code = cli.main(
+        [
+            "--amazon-b2b-report",
+            str(report_path),
+            "--nexscope",
+            "--max-moq",
+            "5",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == ["amazon", "ebay", "1688"]
+    raw_output = output_path.read_text(encoding="utf-8")
+    assert "test-secret-never-output" not in raw_output
+    report = json.loads(raw_output)[0]
+    assert report["candidate_source"] == {
+        "method": "AMAZON_B2B_REPORT_REPLAY",
+        "provider": "AMAZON_SP_API",
+        "source_reference": "b2b.csv",
+        "source_row": 2,
+        "source_field": "partNumber",
+        "identifier_type": "partNumber",
+        "category": "Automotive",
+        "brand": None,
+        "item_name": "Opportunity row",
+        "report_generated_at": None,
+    }
+    assert report["decision"] == "REVIEW_REQUIRED"
+    assert report["automation_qualified"] is False
+    assert report["stages"]["alibaba_1688_supply"]["purchasable"] is None
+
+
+def test_managed_funnel_short_circuits_after_amazon_rejection(
+    tmp_path: Path, monkeypatch
+) -> None:
+    raw_part_number = "53630-53010"
+    report_path = tmp_path / "b2b.csv"
+    report_path.write_text(
+        "partNumber,category\n53630-53010,Automotive\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "reports.json"
+
+    amazon = _manual_record(raw_part_number)["amazon"]
+    amazon["source_method"] = "MANAGED_API"
+    amazon.pop("relevance_reviewed")
+    amazon["relevance_method"] = "DETERMINISTIC_EXACT"
+    amazon["relevant_result_count"] = 6
+    amazon["evidence"][0]["value"] = 6
+    amazon["evidence"][0]["extraction_method"] = "MANAGED_API"
+
+    monkeypatch.setenv("NEXSCOPE_API_KEY", "test-secret")
+    monkeypatch.setattr(cli, "collect_amazon_search", lambda *args, **kwargs: amazon)
+    monkeypatch.setattr(
+        cli,
+        "collect_ebay_search",
+        lambda *args, **kwargs: pytest.fail("eBay must be short-circuited"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_1688_search",
+        lambda *args, **kwargs: pytest.fail("1688 must be short-circuited"),
+    )
+
+    exit_code = cli.main(
+        [
+            "--amazon-b2b-report",
+            str(report_path),
+            "--nexscope",
+            "--max-moq",
+            "5",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    report = json.loads(output_path.read_text(encoding="utf-8"))[0]
+    assert report["decision"] == "REJECTED"
+    assert report["stages"]["ebay_demand"]["status"] == "NOT_CHECKED"
+    assert report["stages"]["alibaba_1688_supply"]["status"] == "NOT_CHECKED"

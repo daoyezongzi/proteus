@@ -1,4 +1,4 @@
-"""JSON input/output helpers for the Proteus V0.1 CLI."""
+"""JSON input/output helpers for the Proteus V0.2 CLI."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
+
+from proteus.models import SCHEMA_VERSION, SUPPORTED_INPUT_SCHEMA_VERSIONS
 
 
 JsonObject = dict[str, Any]
@@ -235,7 +237,8 @@ def evidence_for_candidate(
 def validate_acquisition(value: Any, *, label: str = "eBay acquisition") -> None:
     """Validate one eBay AcquisitionOutcome document."""
 
-    _validate_contract(value, "v0_1_acquisition.schema.json", label)
+    version = _contract_version(value, label)
+    _validate_contract(value, f"v{version.replace('.', '_')}_acquisition.schema.json", label)
 
 
 def validate_opportunity_report(
@@ -243,14 +246,52 @@ def validate_opportunity_report(
 ) -> None:
     """Validate one final OpportunityCandidateReport document."""
 
-    _validate_contract(value, "v0_1_opportunity_report.schema.json", label)
+    version = _contract_version(value, label)
+    _validate_contract(
+        value,
+        f"v{version.replace('.', '_')}_opportunity_report.schema.json",
+        label,
+    )
+    if version == SCHEMA_VERSION and value.get("automation_qualified") is True:
+        # Local import keeps the schema/IO layer usable by the evaluator without
+        # introducing a module import cycle.
+        from proteus.evaluation import is_report_automation_qualified
+
+        if not is_report_automation_qualified(value):
+            raise ContractValidationError(
+                f"{label} claims automation_qualified=true but does not satisfy "
+                "the V0.2 automation semantics"
+            )
+    if version == SCHEMA_VERSION and value.get("decision") == "OPPORTUNITY_CANDIDATE":
+        from proteus.evaluation import (
+            is_report_opportunity_candidate_semantically_valid,
+        )
+
+        if not is_report_opportunity_candidate_semantically_valid(value):
+            raise ContractValidationError(
+                f"{label} claims OPPORTUNITY_CANDIDATE but does not satisfy "
+                "the V0.2 opportunity semantics"
+            )
+
+
+def _contract_version(value: Any, label: str) -> str:
+    if not isinstance(value, dict):
+        raise ContractValidationError(f"{label} must be an object")
+    version = value.get("schema_version")
+    if version not in SUPPORTED_INPUT_SCHEMA_VERSIONS:
+        raise ContractValidationError(
+            f"{label} has unsupported schema_version {version!r}; "
+            f"expected one of {sorted(SUPPORTED_INPUT_SCHEMA_VERSIONS)!r}"
+        )
+    return version
 
 
 def _check_schema_version(document: JsonObject, path: str | Path) -> None:
     version = document.get("schema_version")
-    if version is not None and version != "0.1":
+    if version is not None and version not in SUPPORTED_INPUT_SCHEMA_VERSIONS:
         raise InputDataError(
-            f"unsupported schema_version in {path}: expected '0.1', got {version!r}"
+            f"unsupported schema_version in {path}: expected one of "
+            f"{sorted(SUPPORTED_INPUT_SCHEMA_VERSIONS)!r}, got {version!r}"
         )
 
 
@@ -333,7 +374,7 @@ def _contracts_directory() -> Path:
         Path.cwd() / "contracts",
     )
     for candidate in candidates:
-        if (candidate / "v0_1_acquisition.schema.json").is_file():
+        if (candidate / f"v{SCHEMA_VERSION.replace('.', '_')}_acquisition.schema.json").is_file():
             return candidate
     raise ContractValidationError(
         "cannot locate Proteus contracts directory; run from the project checkout"

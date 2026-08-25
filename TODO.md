@@ -1,47 +1,61 @@
 # Proteus Current Work
 
-## Now — V0.1 minimum opportunity finder
+## V0.2 engineering preview — complete
 
-- [x] Implement the three-gate domain models and deterministic opportunity
-  evaluator against both fixture suites.
-- [x] Implement the low-volume eBay browser provider with the frozen `EBAY_US`
-  market check, matching, sold parsing and explicit acquisition statuses.
-- [x] Implement candidate-pool CLI plus traceable manual-evidence import for the
-  Amazon competition and 1688 supply stages.
-- [x] Pass the offline engineering suite and produce a three-gate synthetic
-  `OPPORTUNITY_CANDIDATE` through the real CLI path.
-- [ ] Run a real small candidate pool with current three-platform evidence and
-  produce at least one `OPPORTUNITY_CANDIDATE` for product acceptance.
-  - Current live eBay check returned explicit `HTTP_ERROR` (`403`) even after
-    using a US exit; current Amazon and 1688 manual evidence is also absent.
+- [x] Generate one deterministic primary-identifier candidate per Amazon B2B
+  Product Opportunities CSV row instead of requiring a hand-curated OEM/MPN pool.
+- [x] Run the deterministic Amazon → eBay → 1688 short-circuit funnel without
+  Agent/LLM calls in the runtime path.
+- [x] Add Nexscope managed REST adapters with explicit auth/HTTP/timeout/parser,
+  market and incomplete-page outcomes.
+- [x] Add HioBuy 1688 search/detail/order-preview verification with exact
+  offer/SKU/quantity binding and no create/pay path.
+- [x] Add V0.2 schemas, candidate provenance and `automation_qualified`; retain
+  V0.1 JSON input compatibility.
+- [x] Bind every non-manual supply decision to a structured
+  offer/SKU/quantity preview and make automatic qualification fail closed on
+  stale reports or evidence.
+- [x] Bind provider/request/offer/SKU/quantity into field-level preview evidence,
+  enforce source-specific provenance, and refuse credential-bearing redirects.
+- [x] Preserve the rule that listing-level 1688 evidence cannot prove
+  purchasability.
 
-## Pre-work complete
+## Product acceptance — open
 
-- [x] Freeze the three-gate opportunity outcome while limiting V0.1 automation
-  to the currently feasible eBay path in [V0_1_SCOPE_CONTRACT.md](V0_1_SCOPE_CONTRACT.md).
-- [x] Define eBay acquisition plus the shared three-platform opportunity report
-  contracts in [contracts](contracts).
-- [x] Fix `EBAY_US`, manual Amazon/1688 evidence requirements, opportunity
-  thresholds and failure/review semantics.
-- [x] Add deterministic eBay fixtures and end-to-end opportunity gate fixtures
-  under [fixtures](fixtures).
+- [ ] Confirm Amazon SP-API account/role access and automate retrieval of
+  `GET_B2B_PRODUCT_OPPORTUNITIES_NOT_YET_ON_AMAZON`; downloaded CSV replay does
+  not qualify as a fully automatic source.
+- [ ] Preserve all usable MPN/model/UPC identifiers from each report row and
+  implement the frozen independent `UPC -> exact MPN -> exact model` query plan;
+  the engineering preview currently evaluates only its selected primary identifier.
+- [ ] Obtain approved production credentials and written purpose compatibility
+  for every selected Amazon, eBay, Nexscope and HioBuy/1688 path.
+- [ ] Run one-item canaries, then the frozen 20-item provider benchmark for
+  coverage, exact-match precision, freshness, critical fields, failure
+  classification and external cost.
+- [ ] Capture an authorized HioBuy unavailable-preview fixture and confirm how
+  `unavailable_lines` binds offer/SKU/quantity; until then an unbound negative
+  response remains `REVIEW_REQUIRED` to avoid a false rejection.
+- [ ] Freeze a bounded multi-offer fallback policy for 1688 so one unavailable
+  exact offer cannot reject a candidate while another exact offer is still untested.
+- [ ] Replace or approve managed providers only after their source/freshness/
+  coverage semantics pass the benchmark; current managed results cannot set
+  `automation_qualified=true`.
+- [ ] Produce at least one current, real, three-gate
+  `OPPORTUNITY_CANDIDATE` with successful 1688 order preview and
+  `automation_qualified=true`.
 
-## Provider gates
+## Compatibility and safety
 
-- [ ] Confirm eBay production API eligibility and obtain an approved key through
-  a local secret store.
-- [ ] Confirm Amazon Associates/Creators API eligibility and written purpose
-  compatibility before adding credentials.
-- [x] Make the V0.1 1688 supply stage explicitly manual-assisted.
-- [ ] Identify an authorized 1688 buyer-side keyword-search API/solution before
-  adding automated acquisition.
+- [x] Keep the V0.1 direct candidate, offline eBay and manual Amazon/1688 input
+  route runnable; these outputs are never automation-qualified.
+- [x] Keep Playwright eBay only as an explicitly selected compatibility path,
+  not the V0.2 default.
+- [x] Do not add CAPTCHA solving, stealth, login automation, proxy pools,
+  automatic VPN switching, order creation, payment or supplier contact.
+- [x] Do not scale beyond the 20-item benchmark before provider access,
+  accuracy, freshness and cost gates pass.
 
-## Hold
-
-- [ ] Do not build a complete three-platform automated acquisition funnel yet.
-- [ ] Do not run 10,000-item load tests before provider access, rate and benchmark
-  accuracy are established.
-- [ ] Do not add CAPTCHA solving, stealth, proxy-pool or anti-bot bypass logic.
-
-See [DATA_SOURCE_RECONNAISSANCE.md](DATA_SOURCE_RECONNAISSANCE.md) for the current
-evidence boundary.
+See [V0_2_EXECUTION_PLAN.md](V0_2_EXECUTION_PLAN.md) for the frozen execution
+boundary and [DATA_SOURCE_RECONNAISSANCE.md](DATA_SOURCE_RECONNAISSANCE.md) for
+the original public-access reconnaissance.
