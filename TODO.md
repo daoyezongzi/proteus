@@ -44,6 +44,10 @@
 - [ ] Produce at least one current, real, three-gate
   `OPPORTUNITY_CANDIDATE` with successful 1688 order preview and
   `automation_qualified=true`.
+- [ ] Before starting a front end, freeze and implement a backend job/report API
+  with run creation, status/result retrieval, authentication and secret-safe
+  provider execution. The current public surfaces are CLI, Python callables and
+  V0.2 JSON contracts only.
 
 ## Compatibility and safety
 

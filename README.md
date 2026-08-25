@@ -32,14 +32,55 @@ Amazon 低竞争 → eBay 已观察销量 → 1688 精确供应 + 只读下单�
 - 因此当前托管/回放报告会明确输出 `automation_qualified: false`，不得宣称已找到
   真实、全自动、产品验收合格的商机。
 
+## 当前交付形态与接口
+
+目前交付的是 **Python 命令行程序**：
+
+- 已有 CLI：`python -m proteus ...`，适合本机执行、定时任务或由其他后端进程调用；
+- **没有前端页面**，仓库内没有 React/Vue/桌面 GUI；
+- **没有 HTTP/REST API**，也没有任务队列、运行状态查询、用户鉴权或结果数据库；
+- 已预留的数据接口是
+  [`contracts/v0_2_acquisition.schema.json`](contracts/v0_2_acquisition.schema.json)
+  和
+  [`contracts/v0_2_opportunity_report.schema.json`](contracts/v0_2_opportunity_report.schema.json)；
+- 已预留的代码扩展点是 `proteus.providers` 中的 provider 函数和可注入 transport，
+  但这还不是一个稳定的 Web API 或插件协议。
+
+未来前端不应直接携带 Nexscope/HioBuy 密钥或收件地址调用第三方服务。正确边界应是
+`前端 → Proteus 后端任务 API → 当前 Python 漏斗 → V0.2 report`；该后端任务 API
+尚未实现。
+
 ## 安装
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m proteus --help
 ```
 
-## V0.2 商机发现运行
+要求 Python 3.12 或更高版本。以上命令会安装项目、测试依赖和 V0.1 浏览器兼容路径
+需要的 Playwright Python 包；只有使用 `--live-ebay` 时才需要可用的 Chrome/Edge。
+
+## 一分钟运行：先验证程序
+
+仓库自带一套合成数据，不需要账号、密钥、浏览器或网络：
+
+```powershell
+.\.venv\Scripts\python.exe -m proteus `
+  --candidate-pool .\examples\synthetic_candidates.json `
+  --manual-evidence .\examples\synthetic_manual_evidence.json `
+  --ebay-evidence .\examples\synthetic_ebay_evidence.json `
+  --max-moq 10 `
+  --output .\synthetic_reports.json
+
+Get-Content .\synthetic_reports.json -Raw
+```
+
+这条命令应生成一个 JSON 数组，其中示例结果为
+`decision=OPPORTUNITY_CANDIDATE`、`automation_qualified=false`。它只证明程序和
+三门规则可运行，不证明存在真实商机。
+
+## 使用真实候选报告运行
 
 将密钥放入环境变量，不要写进参数、JSON、日志或 Git：
 
@@ -60,6 +101,15 @@ JSON，然后运行最多 20 个候选：
   --max-moq 10 `
   --output .\reports_v0_2.json
 ```
+
+CSV 至少需要：
+
+- 一个候选标识列：`partNumber`/`MPN`、`modelNumber`、`EAN`、`UPC` 或 `ISBN`；
+- 一个类目列：`category`、`categoryName` 或 `productCategory`；
+- 可选的 `brand`、`itemName`/`productName`/`title` 用于来源追踪。
+
+当前每行按 `partNumber → modelNumber → EAN → UPC → ISBN` 只选一个 primary
+identifier；完整的多标识独立查询仍在产品验收待办中。
 
 报告输入默认只接收 `category=Automotive`；若 Seller Central 导出的 US 类目名称
 不同，可重复传入 `--amazon-category "实际类目名"`，匹配规则为不区分大小写的
@@ -91,6 +141,20 @@ listing 不能证明可下单，供应门必然保持 `REVIEW_REQUIRED`。HioBuy
 ```
 
 这些 examples 全部是合成工程数据，只能验证程序与规则，不能证明真实商机。
+
+## 输出怎么看
+
+`--output` 始终写入一个有序 JSON report 数组。先看每条 report 的四个位置：
+
+- `candidate`：本次查询的原始与规范化零件号；
+- `stages`：Amazon、eBay、1688 三门的状态、证据与原因；
+- `decision`：`OPPORTUNITY_CANDIDATE`、`REJECTED` 或 `REVIEW_REQUIRED`；
+- `automation_qualified`：是否满足当前、全自动、合规来源和时效要求。
+
+`OPPORTUNITY_CANDIDATE` 表示三门规则通过；`REJECTED` 表示已有充分业务证据否决；
+`REVIEW_REQUIRED` 表示来源失败、证据不足、字段歧义或时效不合格。现有 CSV replay、
+manual 和 managed-provider 路径即使三门通过，也会保持
+`automation_qualified=false`，不能当作产品验收完成。
 
 ## 判定边界
 

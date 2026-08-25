@@ -21,6 +21,9 @@
   fixture to the V0.2 manual-provenance contract. The README command produces
   one synthetic `OPPORTUNITY_CANDIDATE` with
   `automation_qualified=false`.
+- Documented the actual delivery surface: the runnable product is currently a
+  Python CLI with V0.2 JSON contracts and provider callables. No front end,
+  HTTP API, job runner, authentication layer or result store has been built.
 - Passed 225 offline tests, Python bytecode compilation, JSON-contract checks,
   diff whitespace checks and a fresh Python 3.12 isolated-wheel CLI smoke run.
   Built `proteus_opportunity_finder-0.2.0-py3-none-any.whl` with SHA-256
