@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daoyezongzi/proteus/contracts/v0_1_acquisition.schema.json",
-  "title": "Proteus V0.1 AcquisitionOutcome",
-  "description": "Provider-neutral acquisition result used by the eBay-first evidence slice.",
+  "$id": "v0_1_acquisition.schema.json",
+  "title": "Proteus V0.1 eBay AcquisitionOutcome",
+  "description": "eBay acquisition result used by the minimum opportunity-finder pipeline.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,11 +23,7 @@
       "const": "0.1"
     },
     "platform": {
-      "enum": [
-        "EBAY",
-        "AMAZON",
-        "ALIBABA_1688"
-      ]
+      "const": "EBAY"
     },
     "provider": {
       "type": "string",
@@ -266,7 +262,8 @@
             "JSON_LD",
             "EMBEDDED_STATE",
             "SEARCH_SNIPPET",
-            "MANUAL_FIXTURE"
+            "MANUAL_FIXTURE",
+            "MANUAL_REVIEW"
           ]
         },
         "raw_evidence": {

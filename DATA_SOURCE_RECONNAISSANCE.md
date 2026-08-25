@@ -329,6 +329,12 @@ local secret store; they must not be committed or pasted into reports.
 
 ## 10. Phase decision
 
-Proceed only with an **eBay-first evidence vertical slice** and the shared
-evidence/failure model. Do not yet implement the complete Amazon → eBay → 1688
-funnel. Amazon and 1688 remain provider gates, not coding assumptions.
+For **automated acquisition**, proceed only with an eBay-first evidence vertical
+slice and the shared evidence/failure model. Do not yet implement automated
+Amazon or 1688 acquisition. Those platforms remain provider gates, not coding
+assumptions.
+
+At the **product level**, V0.1 may combine the automated eBay result with
+traceable, user-supplied manual Amazon/1688 evidence and a deterministic
+three-gate evaluator. This preserves the opportunity-finding outcome without
+claiming that the blocked provider paths are technically available.

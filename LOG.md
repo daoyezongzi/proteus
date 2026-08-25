@@ -1,6 +1,22 @@
 # Proteus Development Log
 
-## 2026-08-25 — V0.1 implementation boundary frozen
+## 2026-08-25 — V0.1 product boundary corrected to retain opportunity finding
+
+- Corrected the prior scope error: an eBay-only evidence collector is an
+  internal implementation milestone, not the first product version.
+- Restored all three business gates in V0.1. An opportunity candidate now
+  requires Amazon low-competition, eBay observed-demand and 1688 purchasable-
+  supply evidence.
+- Kept the feasibility boundary intact: eBay is the only automated provider in
+  V0.1; Amazon and 1688 use explicit, traceable manual evidence until their
+  authorized provider gates pass.
+- Added the three-stage `OpportunityCandidateReport` contract and 19 synthetic
+  gate/decision fixtures. Missing or blocked evidence produces
+  `REVIEW_REQUIRED`, never an opportunity candidate.
+- Product acceptance now requires at least one real, evidence-backed
+  `OPPORTUNITY_CANDIDATE` from a small current candidate pool.
+
+## 2026-08-25 — V0.1 eBay acquisition sub-slice frozen
 
 - Completed the remaining pre-work for the eBay-first slice: fixed the input,
   first-page output, `EBAY_US` market context, status vocabulary, evidence
@@ -13,9 +29,8 @@
 - Decision: only exact/normalized-exact, new listings with an explicitly parsed
   positive sold count can contribute to observed demand; related, ambiguous or
   missing-sold cases require review, and side/condition mismatches are rejected.
-- Boundary: V0.1 is CLI + JSON eBay evidence acquisition, not the original
-  Amazon → eBay → 1688 opportunity funnel. The exact delta is recorded in
-  [V0_1_SCOPE_CONTRACT.md](V0_1_SCOPE_CONTRACT.md).
+- This eBay-only boundary is retained as an internal acquisition component. It
+  was superseded as the product boundary by the three-gate correction above.
 
 ## 2026-08-25 — Phase 0 initial data-source reconnaissance
 

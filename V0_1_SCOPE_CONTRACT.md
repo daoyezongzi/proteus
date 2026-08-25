@@ -1,61 +1,77 @@
-# Proteus V0.1 — eBay Evidence Slice Contract
+# Proteus V0.1 — Minimum Opportunity Finder Contract
 
-> 状态：`FROZEN_FOR_IMPLEMENTATION`
-> 冻结日期：2026-08-25
+> 状态：`CORRECTED_AND_FROZEN_FOR_IMPLEMENTATION`
+> 修订日期：2026-08-25
 > 上位企划：[proteus.md](proteus.md)
-> 可行性依据：[DATA_SOURCE_RECONNAISSANCE.md](DATA_SOURCE_RECONNAISSANCE.md)
+> 数据源边界：[DATA_SOURCE_RECONNAISSANCE.md](DATA_SOURCE_RECONNAISSANCE.md)
 
-## 1. 版本定义
+## 1. 产品底线
 
-V0.1 是原 Proteus V0 的第一个可执行技术切片，不是完整的跨平台选品系统。
+V0.1 必须至少能够从一个小型 OEM / MPN 候选池中产出
+`OPPORTUNITY_CANDIDATE`。只获取 eBay demand evidence 的能力是内部技术
+里程碑，不是可以交付的第一版产品。
 
-固定主路径：
+V0.1 保留原企划的三个必要商业判据：
 
 ```text
-single raw OEM / MPN
-→ deterministic normalization
-→ eBay US first-result-page acquisition
-→ listing match and sold-evidence classification
-→ traceable JSON
+Amazon low-competition evidence
+AND eBay observed-demand evidence
+AND 1688 purchasable-supply evidence
+→ OPPORTUNITY_CANDIDATE
 ```
 
-这个版本只回答：
+`OPPORTUNITY_CANDIDATE` 表示“值得人工继续验证的商机候选”，不表示已经
+证明利润、销量、供应商可靠性或最终可经营性。
 
-> 在固定的美国站市场上下文中，能否为一个零件号稳定地产出可追溯的
-> eBay listing-level observed-demand evidence？
+## 2. 最小闭环
 
-它不回答该零件是否值得采购、是否低竞争、是否存在中国供应，也不输出
-“值得做 / 不值得做”的商业结论。
+当前 provider 可行性不支持三平台全自动采集，所以首版收缩自动化方式，
+不收缩商业结果：
 
-## 2. 固定范围
+```text
+small candidate pool
+→ deterministic part-number normalization
+→ eBay US automated observed-demand check
+→ Amazon competition evidence import / approved provider
+→ 1688 supply evidence import / approved provider
+→ deterministic three-gate evaluation
+→ traceable opportunity-candidate JSON
+```
 
-### 2.1 In scope
+执行顺序改为 eBay-first，是因为它是目前唯一通过低频技术验证的数据路径，
+可先淘汰无 demand evidence 的候选，减少后续人工工作。最终判定仍要求三个
+gate 全部通过；顺序变化不改变商机定义。
 
-- 每次运行输入一个原始 OEM / MPN；fixtures 可以顺序运行，但不是批处理系统。
-- 最小 CLI 接收该编号，并只输出符合契约的 JSON；不提供交互界面。
-- 保留原始编号，并生成仅含大写字母和数字的 canonical part number。
-- 只访问 eBay 美国站搜索结果第一页；并发固定为 `1`，不翻页。
-- 只让 `NEW` listing 形成 observed-demand evidence。
-- 保存 listing ID、URL、标题、condition、price、sold raw label、sold count、
-  part-number match、提取时间、方法与字段级 evidence。
-- 对唯一 listing ID 计算 `max_single_listing_sold` 与
-  `aggregate_observed_sold`；二者都只是观测值，不是时间窗口销量。
-- 输出必须符合
+## 3. 固定范围
+
+### 3.1 In scope
+
+- CLI 接收一个小型 OEM / MPN JSON 候选池，并顺序处理。
+- eBay 组件执行自动化、低频、第一页 evidence acquisition。
+- Amazon 与 1688 在授权自动 provider 不可用时接受人工录入的结构化
+  evidence；录入必须保留来源 URL、retrieved time、原始片段与录入方法。
+- 使用透明三门规则输出 `OPPORTUNITY_CANDIDATE`、`REJECTED` 或
+  `REVIEW_REQUIRED`。
+- 输出 JSON 必须符合
+  [contracts/v0_1_opportunity_report.schema.json](contracts/v0_1_opportunity_report.schema.json)。
+- eBay acquisition 必须符合
   [contracts/v0_1_acquisition.schema.json](contracts/v0_1_acquisition.schema.json)。
-- 单次查询至多对 `TIMEOUT`、连接错误或 HTTP `5xx` 重试一次；HTTP `4xx`
-  以及其他失败不重试。
+- 所有平台失败必须显式表示；缺失、阻塞和歧义不能转成零结果或通过。
 
-### 2.2 Out of scope
+### 3.2 Out of scope
 
-- Amazon、1688、三平台 funnel 与 Opportunity Score。
-- eBay 其他 marketplace、其他 ship-to context、多语言解析和分页。
-- API 凭据申请、批量调度、SQLite、CSV、缓存层和 10,000 OEM 压测。
-- 自动确认 replacement、cross-reference 或 left/right pair 为同一零件。
-- LLM、语义匹配、自动商业推荐和供应商判断。
-- 登录自动化、CAPTCHA/anti-bot 绕过、代理池或 stealth。
-- 保存完整网页响应；V0.1 只保存支持字段判断所需的最小原始片段。
+- Amazon 与 1688 的未授权自动抓取、登录自动化或 challenge bypass。
+- 三个平台的生产级全自动 provider、10,000 OEM 压测与并发调度。
+- Opportunity ranking、精确利润、物流、关税、退货率和车辆保有量。
+- CSV、SQLite、Dashboard、SaaS、缓存集群和分布式任务。
+- LLM 主路径、自动 cross-reference 认定和自动商业决策。
+- 自动联系供应商、采购、刊登或执行交易。
 
-## 3. 固定市场上下文
+## 4. Provider 与人工证据边界
+
+### 4.1 eBay
+
+首版使用已验证可行的低频 browser evidence path：
 
 | Field | Required value |
 |---|---|
@@ -66,70 +82,69 @@ single raw OEM / MPN
 | `ship_to_postal_code` | `10001`（非个人测试邮编） |
 | `currency` | `USD` |
 
-Provider 必须在解析 sold evidence 前验证这些字段。实际页面只要出现其他
-marketplace、locale、currency 或 ship-to context，就返回
-`MARKET_CONTEXT_MISMATCH`，不得继续累计 sold count。
+只访问搜索结果第一页，并发为 `1`。单次查询至多对 `TIMEOUT`、连接错误或
+HTTP `5xx` 重试一次；HTTP `4xx`、challenge、login 和 market mismatch
+不重试。
 
-## 4. 共享模型
+### 4.2 Amazon
 
-机器可读定义以 JSON Schema 为准。首版只实现下列三个核心对象：
-
-### 4.1 `AcquisitionOutcome`
-
-一次 provider 查询的完整结果，包含 query、market context、显式 status、
-listings、observed-demand summary 和 diagnostics。
-
-状态固定为：
-
-| Status | Meaning |
-|---|---|
-| `SUCCESS` | 页面与上下文有效，并解析出至少一个 listing。 |
-| `PARTIAL_SUCCESS` | 至少一个 listing 有效，但也有被显式记录的解析异常。 |
-| `ZERO_RESULTS` | 有效结果页明确为零结果；不是错误页、挑战页或解析失败。 |
-| `HTTP_ERROR` | HTTP/页面加载失败。 |
-| `TIMEOUT` | 获取超时。 |
-| `CHALLENGE` | 出现 CAPTCHA 或反自动化挑战。 |
-| `AUTH_REQUIRED` | 需要登录。 |
-| `BLOCKED_BY_CREDENTIALS` | 官方路径存在，但本地缺少已批准凭据。 |
-| `PROVIDER_UNAVAILABLE` | 没有符合授权与用途要求的 provider。 |
-| `MARKET_CONTEXT_MISMATCH` | marketplace、locale、currency 或 ship-to 不符合固定值。 |
-| `PARSER_FAILED` | 页面有效，但必要结构或字段无法按契约解释。 |
-
-`AMBIGUOUS` 不属于 acquisition failure；它是 listing 的 match classification。
-
-### 4.2 `ListingEvidence`
-
-一个 eBay listing 的结构化观测。`match_type` 固定为：
+在 Creators API 资格与用途确认完成前，系统不实现自动 Amazon provider。
+首版接受用户通过合法访问路径取得的 manual evidence bundle，至少包含：
 
 ```text
-EXACT
-NORMALIZED_EXACT
-CROSS_REFERENCE
-REPLACEMENT
-LEFT_RIGHT_PAIR
-SIDE_MISMATCH
-AMBIGUOUS
-IRRELEVANT
-UNKNOWN
+query
+marketplace_id = AMAZON_US
+locale = en-US
+ship_to_country = US
+relevant_result_count
+relevance_reviewed = true
+source_url
+retrieved_at
+raw_evidence
 ```
 
-listing decision 固定为：
+系统只负责验证输入完整性并执行透明阈值，不把人工录入伪装成自动采集。
+
+### 4.3 1688
+
+在买家侧关键词 API / solution 获得明确授权前，系统不自动搜索、登录或处理
+challenge。首版接受 manual supply evidence bundle，至少包含：
 
 ```text
-ACCEPT_DEMAND_EVIDENCE
-HUMAN_REVIEW
-REJECT
+matched_part_number
+match_type
+supplier
+offer_url
+purchasable
+price_cny
+moq
+retrieved_at
+raw_evidence
 ```
 
-### 4.3 `Evidence`
+人工证据缺失或来源不完整时，该 stage 必须为 `REVIEW_REQUIRED`。
 
-字段级证据必须包含 metric、value、source、URL、retrieved time、extraction
-method、最小 raw evidence 与 `0.0–1.0` confidence。结论不得只保留数值而
-丢失来源。
+## 5. 三个商机 Gate
 
-## 5. 决策规则
+### 5.1 Amazon competition gate
 
-只有同时满足以下条件的 listing 才能进入 observed-demand 汇总：
+固定初始规则沿用原企划：
+
+```text
+acquisition_status IN {SUCCESS, PARTIAL_SUCCESS}
+AND US market context is exact
+AND relevance_reviewed == true
+AND relevant_result_count <= 5
+→ PASSED
+```
+
+- 有效证据显示 `relevant_result_count > 5` → `REJECTED`。
+- 访问失败、证据缺失或 relevance 未复核 → `REVIEW_REQUIRED`。
+- Generic total-result count 不能冒充 manually reviewed relevant count。
+
+### 5.2 eBay demand gate
+
+只有同时满足以下条件的唯一 listing 才进入 observed-demand 汇总：
 
 ```text
 market context exact
@@ -138,84 +153,100 @@ AND condition == NEW
 AND sold_count is an explicitly parsed integer > 0
 ```
 
-- `CROSS_REFERENCE`、`REPLACEMENT`、`LEFT_RIGHT_PAIR`、`AMBIGUOUS`、
-  `UNKNOWN` → `HUMAN_REVIEW`。
-- `SIDE_MISMATCH`、`IRRELEVANT` 或非 `NEW` listing → `REJECT`。
-- sold label 缺失或无法解析不等于 `sold_count = 0`，应进入
-  `HUMAN_REVIEW` 或显式 parser diagnostic。
-- `aggregate_observed_sold` 只汇总唯一 listing ID，不能把同一 listing 的
-  搜索卡片与详情页重复相加。
-- 没有 eligible listing 时，summary 必须为 `count = 0`、`max = null`、
-  `aggregate = 0`；非 success status 同样不得保留 demand aggregate。
-- 存在 eligible listings 时，`max_single_listing_sold` 必须大于 `0`，且
-  `aggregate_observed_sold >= max_single_listing_sold`。
-- listing lifetime sold count 只能称作 `Observed Demand`，不能称作市场销量。
+至少存在一个 eligible listing 且 `aggregate_observed_sold >= 1` → `PASSED`。
+明确成功页面但没有 eligible sold evidence → `REJECTED`；market mismatch、
+parser failure、challenge、login 或歧义 → `REVIEW_REQUIRED`。
 
-## 6. Sold label 边界
+`aggregate_observed_sold` 只汇总唯一 listing ID。Listing lifetime sold count
+只能称作 `Observed Demand`，不能称作市场销量。
 
-V0.1 只接受 `en-US` 下的整数英文标签：
+### 5.3 1688 supply gate
+
+每次运行必须提供 `max_acceptable_moq`；V0.1 不擅自设定全局商业阈值。
 
 ```text
-32 sold
-1 sold
-1,234 sold
-10+ sold
+acquisition_status IN {SUCCESS, PARTIAL_SUCCESS}
+AND match_type IN {EXACT, NORMALIZED_EXACT}
+AND matched_part_number is present
+AND purchasable == true
+AND moq <= max_acceptable_moq
+AND supplier, offer_url and price_cny are present
+→ PASSED
 ```
 
-允许数字中的千位逗号和数字后的 `+`；不解释 `K/M` 缩写，不从
-“watchers”“available”“last one”等文本推导 sold count。原侦察中看到的
-日文 `5点販売済み` 作为 locale-mismatch fixture 保存，但 V0.1 不实现日文
-解析；必须先返回 `MARKET_CONTEXT_MISMATCH`。
+- 有效证据显示不可采购或 MOQ 超阈值 → `REJECTED`。
+- cross-reference、replacement、left/right 或 unknown relation →
+  `REVIEW_REQUIRED`，不能自动形成 supply pass。
+- price 必须作为 evidence 保存，但 V0.1 不做精确 margin 判断。
 
-所有情况下都保留 `sold_label_raw`。解析失败不得静默返回 `0`。
+## 6. 最终决策
 
-## 7. 固定 fixtures
+```text
+all three stages PASSED
+→ OPPORTUNITY_CANDIDATE
 
-[fixtures/ebay_v0_1_cases.json](fixtures/ebay_v0_1_cases.json) 是实现前基准，
-覆盖：
+any stage REJECTED
+→ REJECTED
 
-- 两个已侦察的 live positive queries；
-- 可区分 zero results、HTTP error、timeout、challenge、login、market mismatch
-  与 parser failure 的 acquisition-status cases；
-- exact 与 normalized-number；
-- negative、ambiguous、cross-reference；
-- synthetic replacement 和 left/right side mismatch；
-- used-condition rejection；
-- en-US sold parsing、无 sold signal 和 locale mismatch。
+otherwise
+→ REVIEW_REQUIRED
+```
 
-Synthetic fixture 只验证规则，不声明真实汽配关系。Live fixture 的结果数量、
-价格和 sold count 都是动态值；测试只能断言显式状态、市场上下文、证据结构
-和“失败不等于零结果”。
+`REVIEW_REQUIRED` 包括 provider unavailable、manual evidence 未录入、字段
+缺失、解析失败或 relation ambiguity。它既不是通过，也不是否定商机。
 
-## 8. 首版实现验收门
+## 7. Evidence 与失败模型
 
-实现开始前，本文件、JSON Schema 与 fixture 集合必须保持一致。实现完成时：
+字段级 `Evidence` 必须包含 metric、value、source、URL、retrieved time、
+extraction method、最小 raw evidence 与 `0.0–1.0` confidence。
 
-1. 所有 offline fixtures 通过 deterministic normalization、match、condition
-   和 sold-label tests。
-2. 每个运行结果都能通过 JSON Schema 校验。
-3. live 运行先核验 market context，再解析字段。
-4. 两个 live queries 顺序执行；不把动态数值写成固定断言。
-5. 任一挑战、登录、上下文错误或 parser failure 都产生显式 status，并停止
-   demand aggregation。
+Acquisition status 固定为：
 
-满足以上条件才算完成 V0.1；Amazon 与 1688 provider gate 不属于它的验收项。
+```text
+SUCCESS
+PARTIAL_SUCCESS
+ZERO_RESULTS
+HTTP_ERROR
+TIMEOUT
+CHALLENGE
+AUTH_REQUIRED
+BLOCKED_BY_CREDENTIALS
+PROVIDER_UNAVAILABLE
+MARKET_CONTEXT_MISMATCH
+PARSER_FAILED
+```
 
-## 9. 相对原企划的边界收缩
+任何 failure status 都不能转换为 `ZERO_RESULTS`。人工证据使用
+`source_method = MANUAL` 和 `extraction_method = MANUAL_REVIEW`，使来源在
+最终 report 中可见。
 
-这里按结构数量衡量，不把不同模块假装成等量工时：
+## 8. Fixtures 与验收
 
-| Dimension | Original Proteus V0 | V0.1 first slice | Boundary reduction |
+- [fixtures/ebay_v0_1_cases.json](fixtures/ebay_v0_1_cases.json) 验证 eBay
+  acquisition、normalization、matching、sold parsing 和 failure classification。
+- [fixtures/opportunity_v0_1_cases.json](fixtures/opportunity_v0_1_cases.json)
+  验证三门全过、各门拒绝、证据缺失和歧义路径。
+
+V0.1 的验收分为两层：
+
+1. **Engineering pass**：所有离线 fixtures 通过，每个输出符合 JSON Schema，
+   且失败不会被误判为零结果或通过。
+2. **Product pass**：对一个带当前、可追溯三平台证据的真实小型候选池运行后，
+   至少输出一个 `OPPORTUNITY_CANDIDATE`。如果只证明程序能运行却没有真实
+   商机候选，V0.1 不算产品验收通过。
+
+候选仍需人工验证利润、物流、合规与供应商质量；“商机候选”不是盈利保证。
+
+## 9. 相对原企划的正确收缩方式
+
+| Dimension | Original Proteus V0 | V0.1 | Contraction |
 |---|---|---|---:|
-| Active platforms | Amazon + eBay + 1688（3） | eBay（1） | `66.7%` |
-| Business-hypothesis paths active | H1 + H2 + H3（3） | H2 的 evidence-acquisition prerequisite（1，尚未验证 H2） | `66.7%` deferred |
-| Core build phases after reconnaissance | Phase 1–5（5） | Phase 1（1） | `80%` |
-| Delivery surfaces | CLI + JSON + CSV + SQLite（4） | CLI + JSON（2） | `50%` |
-| Operating scale | Candidate pool / 10,000-item design target | Single query / low-volume fixtures | 不适合百分比 |
-| Product conclusion | Opportunity candidate for human review | Listing-level observed-demand evidence | 商业结论全部延后 |
+| Core product outcome | Three-gate opportunity candidate | Three-gate opportunity candidate | `0%` |
+| Business hypotheses | H1 + H2 + H3 | H1 + H2 + H3 | `0%` |
+| Automated platform acquisition | 3 platforms intended | eBay automated; Amazon/1688 manual-assisted | `66.7%` automation |
+| Operating scale | Candidate pool / 10,000-item design target | Small sequential candidate pool | 不适合百分比 |
+| Delivery surfaces | CLI + JSON + CSV + SQLite | CLI + JSON | `50%` |
+| Ranking / economics | Explainable score and future margin proxy | Boolean three-gate candidate decision | 大幅延后 |
 
-Phase 6 evaluation 以最小 fixture 验证保留，因此没有计入 core build phase
-分母。最诚实的表述是：**首版的核心产品边界比原 V0 收缩约 67%–80%**；
-它是一个数据获取与证据契约切片，不代表原企划已经完成 20%–33%。原企划
-仍是后续 roadmap，只有 provider gate 通过后才恢复 Amazon、1688 与完整
-funnel。
+因此，**首版不再收缩核心商业边界**。被收缩的是自动化比例、运行规模、输出
+形式和评分深度。eBay-only evidence slice 保留为实现阶段，而不是产品终点。

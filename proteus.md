@@ -1766,15 +1766,16 @@ limitations
 **不要在完成 reconnaissance 之前直接构建完整 pipeline。**
 
 当前进度（2026-08-25）：已完成首轮匿名 HTTP、普通浏览器与官方文档侦察，
-并完成 eBay-first 首版的实现前契约。结论为 V0.1 只构建“单个 OEM / MPN →
-eBay US 首屏 → listing-level observed-demand evidence → JSON”；Amazon Creators
-API 和 1688 Open Platform 仍受凭据/授权 gate 阻塞，不属于 V0.1 验收项。
+并完成 V0.1 最小商机闭环的实现前契约。eBay US evidence acquisition 是首个
+自动化阶段；Amazon Creators API 和 1688 Open Platform 仍受凭据/授权 gate
+阻塞，因此 V0.1 通过可追溯 manual evidence 输入补齐这两个商业 gate。
 
-V0.1 的固定市场、共享数据模型、fixtures、验收条件及其相对原企划
-`66.7%–80%` 的结构边界收缩，见
+V0.1 只有在 Amazon low competition、eBay observed demand 与 1688
+purchasable supply 三项全部通过时，才能输出 `OPPORTUNITY_CANDIDATE`。
+固定模型、阈值、fixtures、验收条件及正确的边界收缩方式见
 [V0_1_SCOPE_CONTRACT.md](V0_1_SCOPE_CONTRACT.md)。完整侦察结果见
 [DATA_SOURCE_RECONNAISSANCE.md](DATA_SOURCE_RECONNAISSANCE.md)，当前执行项见
-[TODO.md](TODO.md)。原 V0 仍作为后续 roadmap，不因首版收缩而被改写。
+[TODO.md](TODO.md)。原 V0 的核心商机目标没有被首版收缩。
 
 ---
 

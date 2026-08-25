@@ -1,0 +1,205 @@
+{
+  "schema_version": "0.1",
+  "contract": "../contracts/v0_1_opportunity_report.schema.json",
+  "synthetic": true,
+  "policy": {
+    "max_amazon_relevant_results": 5,
+    "min_ebay_aggregate_observed_sold": 1,
+    "max_acceptable_moq": 10
+  },
+  "amazon_gate_cases": [
+    {
+      "id": "amazon_low_competition_pass",
+      "acquisition_status": "SUCCESS",
+      "market_context_exact": true,
+      "relevance_reviewed": true,
+      "relevant_result_count": 4,
+      "evidence_present": true,
+      "expected_stage_status": "PASSED"
+    },
+    {
+      "id": "amazon_high_competition_reject",
+      "acquisition_status": "SUCCESS",
+      "market_context_exact": true,
+      "relevance_reviewed": true,
+      "relevant_result_count": 6,
+      "evidence_present": true,
+      "expected_stage_status": "REJECTED"
+    },
+    {
+      "id": "amazon_provider_unavailable_review",
+      "acquisition_status": "PROVIDER_UNAVAILABLE",
+      "market_context_exact": false,
+      "relevance_reviewed": null,
+      "relevant_result_count": null,
+      "evidence_present": false,
+      "expected_stage_status": "REVIEW_REQUIRED"
+    },
+    {
+      "id": "amazon_unreviewed_relevance_review",
+      "acquisition_status": "SUCCESS",
+      "market_context_exact": true,
+      "relevance_reviewed": false,
+      "relevant_result_count": 3,
+      "evidence_present": true,
+      "expected_stage_status": "REVIEW_REQUIRED"
+    }
+  ],
+  "ebay_gate_cases": [
+    {
+      "id": "ebay_observed_demand_pass",
+      "acquisition_status": "SUCCESS",
+      "market_context_exact": true,
+      "eligible_listing_count": 2,
+      "aggregate_observed_sold": 37,
+      "ambiguous": false,
+      "expected_stage_status": "PASSED"
+    },
+    {
+      "id": "ebay_valid_zero_results_reject",
+      "acquisition_status": "ZERO_RESULTS",
+      "market_context_exact": true,
+      "eligible_listing_count": 0,
+      "aggregate_observed_sold": 0,
+      "ambiguous": false,
+      "expected_stage_status": "REJECTED"
+    },
+    {
+      "id": "ebay_no_sold_evidence_reject",
+      "acquisition_status": "SUCCESS",
+      "market_context_exact": true,
+      "eligible_listing_count": 0,
+      "aggregate_observed_sold": 0,
+      "ambiguous": false,
+      "expected_stage_status": "REJECTED"
+    },
+    {
+      "id": "ebay_market_context_review",
+      "acquisition_status": "MARKET_CONTEXT_MISMATCH",
+      "market_context_exact": false,
+      "eligible_listing_count": 0,
+      "aggregate_observed_sold": 0,
+      "ambiguous": false,
+      "expected_stage_status": "REVIEW_REQUIRED"
+    },
+    {
+      "id": "ebay_ambiguous_match_review",
+      "acquisition_status": "SUCCESS",
+      "market_context_exact": true,
+      "eligible_listing_count": 0,
+      "aggregate_observed_sold": 0,
+      "ambiguous": true,
+      "expected_stage_status": "REVIEW_REQUIRED"
+    }
+  ],
+  "supply_gate_cases": [
+    {
+      "id": "supply_exact_purchasable_pass",
+      "acquisition_status": "SUCCESS",
+      "match_type": "EXACT",
+      "matched_part_number_present": true,
+      "purchasable": true,
+      "price_cny": 40,
+      "moq": 10,
+      "supplier_present": true,
+      "offer_url_present": true,
+      "evidence_present": true,
+      "expected_stage_status": "PASSED"
+    },
+    {
+      "id": "supply_moq_too_high_reject",
+      "acquisition_status": "SUCCESS",
+      "match_type": "NORMALIZED_EXACT",
+      "matched_part_number_present": true,
+      "purchasable": true,
+      "price_cny": 40,
+      "moq": 11,
+      "supplier_present": true,
+      "offer_url_present": true,
+      "evidence_present": true,
+      "expected_stage_status": "REJECTED"
+    },
+    {
+      "id": "supply_not_purchasable_reject",
+      "acquisition_status": "SUCCESS",
+      "match_type": "EXACT",
+      "matched_part_number_present": true,
+      "purchasable": false,
+      "price_cny": 40,
+      "moq": 1,
+      "supplier_present": true,
+      "offer_url_present": true,
+      "evidence_present": true,
+      "expected_stage_status": "REJECTED"
+    },
+    {
+      "id": "supply_provider_unavailable_review",
+      "acquisition_status": "PROVIDER_UNAVAILABLE",
+      "match_type": "UNKNOWN",
+      "matched_part_number_present": false,
+      "purchasable": null,
+      "price_cny": null,
+      "moq": null,
+      "supplier_present": false,
+      "offer_url_present": false,
+      "evidence_present": false,
+      "expected_stage_status": "REVIEW_REQUIRED"
+    },
+    {
+      "id": "supply_replacement_relation_review",
+      "acquisition_status": "SUCCESS",
+      "match_type": "REPLACEMENT",
+      "matched_part_number_present": true,
+      "purchasable": true,
+      "price_cny": 40,
+      "moq": 1,
+      "supplier_present": true,
+      "offer_url_present": true,
+      "evidence_present": true,
+      "expected_stage_status": "REVIEW_REQUIRED"
+    },
+    {
+      "id": "supply_missing_source_review",
+      "acquisition_status": "SUCCESS",
+      "match_type": "EXACT",
+      "matched_part_number_present": true,
+      "purchasable": true,
+      "price_cny": 40,
+      "moq": 1,
+      "supplier_present": true,
+      "offer_url_present": false,
+      "evidence_present": false,
+      "expected_stage_status": "REVIEW_REQUIRED"
+    }
+  ],
+  "decision_cases": [
+    {
+      "id": "all_three_gates_pass_opportunity",
+      "amazon_competition": "PASSED",
+      "ebay_demand": "PASSED",
+      "alibaba_1688_supply": "PASSED",
+      "expected_decision": "OPPORTUNITY_CANDIDATE"
+    },
+    {
+      "id": "confirmed_negative_rejects",
+      "amazon_competition": "PASSED",
+      "ebay_demand": "PASSED",
+      "alibaba_1688_supply": "REJECTED",
+      "expected_decision": "REJECTED"
+    },
+    {
+      "id": "missing_provider_requires_review",
+      "amazon_competition": "REVIEW_REQUIRED",
+      "ebay_demand": "PASSED",
+      "alibaba_1688_supply": "NOT_CHECKED",
+      "expected_decision": "REVIEW_REQUIRED"
+    },
+    {
+      "id": "ambiguous_stage_requires_review",
+      "amazon_competition": "PASSED",
+      "ebay_demand": "REVIEW_REQUIRED",
+      "alibaba_1688_supply": "NOT_CHECKED",
+      "expected_decision": "REVIEW_REQUIRED"
+    }
+  ]
+}

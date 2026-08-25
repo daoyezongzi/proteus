@@ -1,25 +1,26 @@
 # Proteus Current Work
 
-## Now — V0.1 implementation
+## Now — V0.1 minimum opportunity finder
 
-- [ ] Implement deterministic normalization, listing matching, sold-label
-  parsing and the shared output models.
+- [ ] Implement the three-gate domain models and deterministic opportunity
+  evaluator against both fixture suites.
 - [ ] Implement the low-volume eBay browser provider with the frozen `EBAY_US`
-  market check and explicit acquisition statuses.
-- [ ] Pass the offline fixture suite, then run the two live queries sequentially
-  and record the evidence/result boundary.
+  market check, matching, sold parsing and explicit acquisition statuses.
+- [ ] Implement candidate-pool CLI plus traceable manual-evidence import for the
+  Amazon competition and 1688 supply stages.
+- [ ] Run a real small candidate pool with current three-platform evidence and
+  produce at least one `OPPORTUNITY_CANDIDATE` for product acceptance.
 
 ## Pre-work complete
 
-- [x] Freeze the single-query, first-page, eBay-only V0.1 scope and acceptance
-  boundary in [V0_1_SCOPE_CONTRACT.md](V0_1_SCOPE_CONTRACT.md).
-- [x] Define the shared `AcquisitionOutcome`, `ListingEvidence` and `Evidence`
-  model in [contracts/v0_1_acquisition.schema.json](contracts/v0_1_acquisition.schema.json).
-- [x] Fix `EBAY_US`, `en-US`, US ship-to and USD market context plus sold-label
-  failure rules.
-- [x] Add deterministic fixtures for positive, negative, ambiguous,
-  normalized-number, cross-reference, replacement, left/right, condition and
-  locale/failure cases in [fixtures/ebay_v0_1_cases.json](fixtures/ebay_v0_1_cases.json).
+- [x] Freeze the three-gate opportunity outcome while limiting V0.1 automation
+  to the currently feasible eBay path in [V0_1_SCOPE_CONTRACT.md](V0_1_SCOPE_CONTRACT.md).
+- [x] Define eBay acquisition plus the shared three-platform opportunity report
+  contracts in [contracts](contracts).
+- [x] Fix `EBAY_US`, manual Amazon/1688 evidence requirements, opportunity
+  thresholds and failure/review semantics.
+- [x] Add deterministic eBay fixtures and end-to-end opportunity gate fixtures
+  under [fixtures](fixtures).
 
 ## Provider gates
 
@@ -32,7 +33,7 @@
 
 ## Hold
 
-- [ ] Do not build the complete three-platform funnel yet.
+- [ ] Do not build a complete three-platform automated acquisition funnel yet.
 - [ ] Do not run 10,000-item load tests before provider access, rate and benchmark
   accuracy are established.
 - [ ] Do not add CAPTCHA solving, stealth, proxy-pool or anti-bot bypass logic.
