@@ -2,14 +2,18 @@
 
 ## Now — V0.1 minimum opportunity finder
 
-- [ ] Implement the three-gate domain models and deterministic opportunity
+- [x] Implement the three-gate domain models and deterministic opportunity
   evaluator against both fixture suites.
-- [ ] Implement the low-volume eBay browser provider with the frozen `EBAY_US`
+- [x] Implement the low-volume eBay browser provider with the frozen `EBAY_US`
   market check, matching, sold parsing and explicit acquisition statuses.
-- [ ] Implement candidate-pool CLI plus traceable manual-evidence import for the
+- [x] Implement candidate-pool CLI plus traceable manual-evidence import for the
   Amazon competition and 1688 supply stages.
+- [x] Pass the offline engineering suite and produce a three-gate synthetic
+  `OPPORTUNITY_CANDIDATE` through the real CLI path.
 - [ ] Run a real small candidate pool with current three-platform evidence and
   produce at least one `OPPORTUNITY_CANDIDATE` for product acceptance.
+  - Current live eBay check returned explicit `HTTP_ERROR` (`403`) even after
+    using a US exit; current Amazon and 1688 manual evidence is also absent.
 
 ## Pre-work complete
 
@@ -28,8 +32,9 @@
   a local secret store.
 - [ ] Confirm Amazon Associates/Creators API eligibility and written purpose
   compatibility before adding credentials.
-- [ ] Identify an authorized 1688 buyer-side keyword-search API/solution, or make
-  the V0 supply stage explicitly manual-assisted.
+- [x] Make the V0.1 1688 supply stage explicitly manual-assisted.
+- [ ] Identify an authorized 1688 buyer-side keyword-search API/solution before
+  adding automated acquisition.
 
 ## Hold
 

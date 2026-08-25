@@ -1,0 +1,81 @@
+{
+  "schema_version": "0.1",
+  "synthetic": true,
+  "evidence": [
+    {
+      "raw_part_number": "TEST-PART-001",
+      "amazon": {
+        "acquisition_status": "SUCCESS",
+        "source_method": "MANUAL",
+        "query": "TEST-PART-001",
+        "market_context": {
+          "marketplace_id": "AMAZON_US",
+          "site": "www.amazon.com",
+          "locale": "en-US",
+          "ship_to_country": "US",
+          "ship_to_postal_code": "10001",
+          "currency": "USD"
+        },
+        "relevance_reviewed": true,
+        "relevant_result_count": 2,
+        "evidence": [
+          {
+            "metric": "relevant_result_count",
+            "value": 2,
+            "source": "Synthetic Amazon fixture - not platform evidence",
+            "url": "https://www.amazon.com/s?k=TEST-PART-001",
+            "retrieved_at": "2026-08-25T00:00:00Z",
+            "extraction_method": "MANUAL_REVIEW",
+            "raw_evidence": "Synthetic review: two relevant results",
+            "confidence": 1
+          }
+        ]
+      },
+      "alibaba_1688": {
+        "acquisition_status": "SUCCESS",
+        "source_method": "MANUAL",
+        "matched_part_numbers": [
+          "TEST-PART-001"
+        ],
+        "match_type": "EXACT",
+        "supplier": "Synthetic Supplier",
+        "offer_url": "https://detail.1688.com/offer/000000000000.html",
+        "purchasable": true,
+        "price_cny": 40,
+        "moq": 2,
+        "evidence": [
+          {
+            "metric": "purchasable",
+            "value": true,
+            "source": "Synthetic 1688 fixture - not platform evidence",
+            "url": "https://detail.1688.com/offer/000000000000.html",
+            "retrieved_at": "2026-08-25T00:00:00Z",
+            "extraction_method": "MANUAL_REVIEW",
+            "raw_evidence": "Synthetic offer is purchasable",
+            "confidence": 1
+          },
+          {
+            "metric": "price_cny",
+            "value": 40,
+            "source": "Synthetic 1688 fixture - not platform evidence",
+            "url": "https://detail.1688.com/offer/000000000000.html",
+            "retrieved_at": "2026-08-25T00:00:00Z",
+            "extraction_method": "MANUAL_REVIEW",
+            "raw_evidence": "Synthetic offer price is CNY 40",
+            "confidence": 1
+          },
+          {
+            "metric": "moq",
+            "value": 2,
+            "source": "Synthetic 1688 fixture - not platform evidence",
+            "url": "https://detail.1688.com/offer/000000000000.html",
+            "retrieved_at": "2026-08-25T00:00:00Z",
+            "extraction_method": "MANUAL_REVIEW",
+            "raw_evidence": "Synthetic offer MOQ is 2",
+            "confidence": 1
+          }
+        ]
+      }
+    }
+  ]
+}

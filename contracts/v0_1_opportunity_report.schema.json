@@ -200,6 +200,7 @@
         "status",
         "acquisition_status",
         "source_method",
+        "query",
         "market_context",
         "relevance_reviewed",
         "relevant_result_count",
@@ -229,6 +230,13 @@
               "type": "null"
             }
           ]
+        },
+        "query": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
         },
         "market_context": {
           "oneOf": [
@@ -284,6 +292,10 @@
               "source_method": {
                 "$ref": "#/$defs/sourceMethod"
               },
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
               "market_context": {
                 "type": "object",
                 "properties": {
@@ -337,6 +349,10 @@
               "source_method": {
                 "$ref": "#/$defs/sourceMethod"
               },
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
               "market_context": {
                 "type": "object",
                 "properties": {
@@ -384,6 +400,9 @@
                 "type": "null"
               },
               "source_method": {
+                "type": "null"
+              },
+              "query": {
                 "type": "null"
               },
               "market_context": {

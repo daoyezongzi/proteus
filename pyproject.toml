@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proteus-opportunity-finder"
+version = "0.1.0"
+description = "Evidence-first automotive parts opportunity finder"
+requires-python = ">=3.12"
+dependencies = [
+  "jsonschema>=4.20,<5",
+  "playwright>=1.45,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<10",
+]
+
+[project.scripts]
+proteus = "proteus.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"share/proteus/contracts" = [
+  "contracts/v0_1_acquisition.schema.json",
+  "contracts/v0_1_opportunity_report.schema.json",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --basetemp=.pytest-tmp"

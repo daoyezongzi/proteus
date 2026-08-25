@@ -1,5 +1,37 @@
 # Proteus Development Log
 
+## 2026-08-25 — V0.1 engineering implementation complete
+
+- Implemented the installable Python package, sequential candidate-pool CLI,
+  schema-validated JSON I/O and atomic report writes.
+- Implemented deterministic eBay → Amazon → 1688 short-circuit evaluation. All
+  three stages must pass to produce `OPPORTUNITY_CANDIDATE`; failures and
+  missing or ambiguous evidence remain explicit.
+- Implemented the low-frequency eBay Playwright provider with system Edge
+  support, first-page-only collection, finite retry, conservative matching and
+  fail-closed `EBAY_US` market verification. It has no login, stealth or
+  challenge-bypass path.
+- Added traceable manual Amazon/1688 evidence import and runnable synthetic
+  examples. The synthetic CLI run produced one three-gate opportunity candidate
+  and is labelled engineering evidence only.
+- Passed 109 offline tests plus Python bytecode compilation. Coverage includes
+  all frozen opportunity fixtures, eBay parsing/status cases, JSON Schemas,
+  provenance, short-circuit behavior and CLI partial-write prevention.
+- Closed independent-review evidence gaps: Amazon now preserves and binds its
+  query/count/source URL; 1688 binds purchasability, price and MOQ to the exact
+  offer URL; eBay rejects mixed-region conflicts and wrong-page/query redirects.
+- Mapped the remaining Playwright lifecycle exceptions to explicit acquisition
+  statuses so one provider failure cannot escape and interrupt a candidate pool.
+- Included both JSON Schemas in the built wheel and passed an isolated-venv CLI
+  smoke run from outside the repository checkout.
+- Live verification exposed two separate environment outcomes: an initial
+  browser route resolved to Japan and produced a challenge/market mismatch;
+  after using a US exit, the provider returned an explicit HTTP 403. Neither
+  result was converted to zero demand or a passed gate.
+- Product acceptance remains open: no current, traceable real candidate has yet
+  passed all three platform gates. Synthetic fixtures are not a substitute for
+  that acceptance condition.
+
 ## 2026-08-25 — V0.1 product boundary corrected to retain opportunity finding
 
 - Corrected the prior scope error: an eBay-only evidence collector is an

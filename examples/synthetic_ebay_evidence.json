@@ -1,0 +1,67 @@
+{
+  "schema_version": "0.1",
+  "synthetic": true,
+  "acquisitions": [
+    {
+      "schema_version": "0.1",
+      "platform": "EBAY",
+      "provider": "SYNTHETIC_ENGINEERING_FIXTURE",
+      "source_method": "MANUAL",
+      "query": {
+        "raw_part_number": "TEST-PART-001",
+        "canonical_part_number": "TESTPART001",
+        "query_type": "EXACT_PART_NUMBER"
+      },
+      "market_context": {
+        "marketplace_id": "EBAY_US",
+        "site": "www.ebay.com",
+        "locale": "en-US",
+        "ship_to_country": "US",
+        "ship_to_postal_code": "10001",
+        "currency": "USD"
+      },
+      "status": "SUCCESS",
+      "retrieved_at": "2026-08-25T00:00:00Z",
+      "listings": [
+        {
+          "listing_id": "123456789012",
+          "url": "https://www.ebay.com/itm/123456789012",
+          "title": "New OEM TEST-PART-001 synthetic fixture",
+          "condition": "NEW",
+          "price": {
+            "amount": 25,
+            "currency": "USD"
+          },
+          "sold_count": 2,
+          "sold_label_raw": "2 sold",
+          "available_count": null,
+          "seller": "synthetic-seller",
+          "location": "United States",
+          "part_numbers": [
+            "TEST-PART-001"
+          ],
+          "match_type": "EXACT",
+          "decision": "ACCEPT_DEMAND_EVIDENCE",
+          "evidence": [
+            {
+              "metric": "sold_count",
+              "value": 2,
+              "source": "Synthetic eBay fixture - not platform evidence",
+              "url": "https://www.ebay.com/itm/123456789012",
+              "retrieved_at": "2026-08-25T00:00:00Z",
+              "extraction_method": "MANUAL_FIXTURE",
+              "raw_evidence": "Synthetic label: 2 sold",
+              "confidence": 1
+            }
+          ]
+        }
+      ],
+      "observed_demand": {
+        "eligible_listing_count": 1,
+        "max_single_listing_sold": 2,
+        "aggregate_observed_sold": 2
+      },
+      "diagnostics": []
+    }
+  ]
+}

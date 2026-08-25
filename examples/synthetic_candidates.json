@@ -1,0 +1,9 @@
+{
+  "schema_version": "0.1",
+  "synthetic": true,
+  "candidates": [
+    {
+      "raw_part_number": "TEST-PART-001"
+    }
+  ]
+}
