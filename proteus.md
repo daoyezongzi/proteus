@@ -1765,11 +1765,16 @@ limitations
 
 **不要在完成 reconnaissance 之前直接构建完整 pipeline。**
 
-当前进度（2026-08-25）：已完成首轮匿名 HTTP、普通浏览器与官方文档侦察。
-结论为 eBay-first vertical slice 可继续；Amazon Creators API 和 1688 Open
-Platform 仍受凭据/授权 gate 阻塞。完整结果见
+当前进度（2026-08-25）：已完成首轮匿名 HTTP、普通浏览器与官方文档侦察，
+并完成 eBay-first 首版的实现前契约。结论为 V0.1 只构建“单个 OEM / MPN →
+eBay US 首屏 → listing-level observed-demand evidence → JSON”；Amazon Creators
+API 和 1688 Open Platform 仍受凭据/授权 gate 阻塞，不属于 V0.1 验收项。
+
+V0.1 的固定市场、共享数据模型、fixtures、验收条件及其相对原企划
+`66.7%–80%` 的结构边界收缩，见
+[V0_1_SCOPE_CONTRACT.md](V0_1_SCOPE_CONTRACT.md)。完整侦察结果见
 [DATA_SOURCE_RECONNAISSANCE.md](DATA_SOURCE_RECONNAISSANCE.md)，当前执行项见
-[TODO.md](TODO.md)。
+[TODO.md](TODO.md)。原 V0 仍作为后续 roadmap，不因首版收缩而被改写。
 
 ---
 

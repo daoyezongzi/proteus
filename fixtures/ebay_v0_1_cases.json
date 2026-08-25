@@ -1,0 +1,280 @@
+{
+  "schema_version": "0.1",
+  "contract": "../contracts/v0_1_acquisition.schema.json",
+  "market_context": {
+    "marketplace_id": "EBAY_US",
+    "site": "www.ebay.com",
+    "locale": "en-US",
+    "ship_to_country": "US",
+    "ship_to_postal_code": "10001",
+    "currency": "USD"
+  },
+  "coverage": [
+    "known_positive",
+    "negative",
+    "ambiguous",
+    "normalized_number",
+    "cross_reference",
+    "replacement",
+    "left_right_side_mismatch",
+    "used_condition",
+    "locale_mismatch",
+    "no_sold_signal",
+    "failure_classification"
+  ],
+  "live_queries": [
+    {
+      "id": "live_known_positive_53630_53010",
+      "raw_part_number": "53630-53010",
+      "canonical_part_number": "5363053010",
+      "recorded_on": "2026-08-25",
+      "recorded_snapshot": {
+        "visible_result_count": 16,
+        "visible_sold_counts": [
+          32,
+          38
+        ]
+      },
+      "stable_assertions": [
+        "acquisition_status_is_explicit",
+        "market_context_matches_contract_before_sold_parsing",
+        "successful_evidence_retains_source_url_and_raw_label",
+        "failure_is_never_converted_to_zero_results"
+      ],
+      "unstable_fields": [
+        "visible_result_count",
+        "listing_ids",
+        "prices",
+        "sold_counts",
+        "availability"
+      ]
+    },
+    {
+      "id": "live_known_positive_a18_67004_004",
+      "raw_part_number": "A18-67004-004",
+      "canonical_part_number": "A1867004004",
+      "recorded_on": "2026-08-25",
+      "recorded_snapshot": {
+        "visible_result_count": 15,
+        "related_part_numbers": [
+          "A18-67004-006",
+          "HLK2882"
+        ],
+        "detail_sold_label_raw": "5点販売済み",
+        "detail_locale": "ja-JP"
+      },
+      "stable_assertions": [
+        "acquisition_status_is_explicit",
+        "co_occurring_part_numbers_are_not_assumed_to_be_same_part",
+        "locale_mismatch_prevents_sold_aggregation",
+        "failure_is_never_converted_to_zero_results"
+      ],
+      "unstable_fields": [
+        "visible_result_count",
+        "listing_ids",
+        "prices",
+        "sold_counts",
+        "availability"
+      ]
+    }
+  ],
+  "acquisition_status_cases": [
+    {
+      "id": "status_valid_zero_results",
+      "observation": "valid_search_page_with_explicit_zero_results",
+      "expected_status": "ZERO_RESULTS"
+    },
+    {
+      "id": "status_http_error",
+      "observation": "http_403_or_5xx_error_page",
+      "expected_status": "HTTP_ERROR"
+    },
+    {
+      "id": "status_timeout",
+      "observation": "navigation_deadline_exceeded",
+      "expected_status": "TIMEOUT"
+    },
+    {
+      "id": "status_challenge",
+      "observation": "captcha_or_anti_automation_challenge_marker",
+      "expected_status": "CHALLENGE"
+    },
+    {
+      "id": "status_auth_required",
+      "observation": "redirected_to_login_before_results",
+      "expected_status": "AUTH_REQUIRED"
+    },
+    {
+      "id": "status_market_context_mismatch",
+      "observation": "results_loaded_with_non_us_locale_or_ship_to_context",
+      "expected_status": "MARKET_CONTEXT_MISMATCH"
+    },
+    {
+      "id": "status_parser_failed",
+      "observation": "valid_results_page_but_required_contract_cannot_be_parsed",
+      "expected_status": "PARSER_FAILED"
+    }
+  ],
+  "normalization_cases": [
+    {
+      "id": "normalize_hyphenated",
+      "raw": "A18-67004-004",
+      "expected_canonical": "A1867004004"
+    },
+    {
+      "id": "normalize_spaced",
+      "raw": "A18 67004 004",
+      "expected_canonical": "A1867004004"
+    },
+    {
+      "id": "normalize_underscored",
+      "raw": "A18_67004_004",
+      "expected_canonical": "A1867004004"
+    },
+    {
+      "id": "normalize_compact_lowercase",
+      "raw": "a1867004004",
+      "expected_canonical": "A1867004004"
+    }
+  ],
+  "matching_cases": [
+    {
+      "id": "match_exact_positive",
+      "synthetic": true,
+      "query": "53630-53010",
+      "candidate_title": "New OEM 53630-53010 Automotive Part",
+      "condition": "NEW",
+      "sold_count": 32,
+      "relation_hint": "exact",
+      "expected_match_type": "EXACT",
+      "expected_decision": "ACCEPT_DEMAND_EVIDENCE"
+    },
+    {
+      "id": "match_normalized_positive",
+      "synthetic": true,
+      "query": "A18-67004-004",
+      "candidate_title": "A1867004004 Exterior Door Handle New",
+      "condition": "NEW",
+      "sold_count": 5,
+      "relation_hint": "normalized_exact",
+      "expected_match_type": "NORMALIZED_EXACT",
+      "expected_decision": "ACCEPT_DEMAND_EVIDENCE"
+    },
+    {
+      "id": "match_ambiguous_cooccurrence",
+      "synthetic": true,
+      "query": "A18-67004-004",
+      "candidate_title": "A18-67004-004 A18-67004-006 Freightliner Door Handle",
+      "condition": "NEW",
+      "sold_count": 5,
+      "relation_hint": "unknown_relation",
+      "expected_match_type": "AMBIGUOUS",
+      "expected_decision": "HUMAN_REVIEW"
+    },
+    {
+      "id": "match_cross_reference_review",
+      "synthetic": true,
+      "query": "A18-67004-004",
+      "candidate_title": "HLK2882 Cross Reference for A18-67004-004",
+      "condition": "NEW",
+      "sold_count": 2,
+      "relation_hint": "cross_reference",
+      "expected_match_type": "CROSS_REFERENCE",
+      "expected_decision": "HUMAN_REVIEW"
+    },
+    {
+      "id": "match_replacement_review",
+      "synthetic": true,
+      "query": "PT-OLD-100",
+      "candidate_title": "PT-NEW-200 replaces PT-OLD-100",
+      "condition": "NEW",
+      "sold_count": 7,
+      "relation_hint": "replacement",
+      "expected_match_type": "REPLACEMENT",
+      "expected_decision": "HUMAN_REVIEW"
+    },
+    {
+      "id": "match_left_right_reject",
+      "synthetic": true,
+      "query": "PT-LH-001",
+      "candidate_title": "PT-RH-001 Right Side Automotive Part",
+      "condition": "NEW",
+      "sold_count": 4,
+      "relation_hint": "left_right_pair",
+      "expected_match_type": "SIDE_MISMATCH",
+      "expected_decision": "REJECT"
+    },
+    {
+      "id": "match_negative_irrelevant",
+      "synthetic": true,
+      "query": "PROTEUS-NO-SUCH-PART-9X7Q2",
+      "candidate_title": "Universal Vehicle Cup Holder Black",
+      "condition": "NEW",
+      "sold_count": 12,
+      "relation_hint": "none",
+      "expected_match_type": "IRRELEVANT",
+      "expected_decision": "REJECT"
+    },
+    {
+      "id": "match_used_condition_reject",
+      "synthetic": true,
+      "query": "53630-53010",
+      "candidate_title": "Used OEM 53630-53010 Automotive Part",
+      "condition": "USED",
+      "sold_count": 10,
+      "relation_hint": "exact",
+      "expected_match_type": "EXACT",
+      "expected_decision": "REJECT"
+    }
+  ],
+  "sold_label_cases": [
+    {
+      "id": "sold_en_us_integer",
+      "raw_label": "32 sold",
+      "locale": "en-US",
+      "marketplace_id": "EBAY_US",
+      "expected_sold_count": 32,
+      "expected_label_outcome": "PARSED"
+    },
+    {
+      "id": "sold_en_us_singular",
+      "raw_label": "1 sold",
+      "locale": "en-US",
+      "marketplace_id": "EBAY_US",
+      "expected_sold_count": 1,
+      "expected_label_outcome": "PARSED"
+    },
+    {
+      "id": "sold_en_us_thousands",
+      "raw_label": "1,234 sold",
+      "locale": "en-US",
+      "marketplace_id": "EBAY_US",
+      "expected_sold_count": 1234,
+      "expected_label_outcome": "PARSED"
+    },
+    {
+      "id": "sold_en_us_plus",
+      "raw_label": "10+ sold",
+      "locale": "en-US",
+      "marketplace_id": "EBAY_US",
+      "expected_sold_count": 10,
+      "expected_label_outcome": "PARSED"
+    },
+    {
+      "id": "sold_wrong_locale",
+      "raw_label": "5点販売済み",
+      "locale": "ja-JP",
+      "marketplace_id": "EBAY_US",
+      "expected_sold_count": null,
+      "expected_label_outcome": "MARKET_CONTEXT_MISMATCH"
+    },
+    {
+      "id": "sold_signal_absent",
+      "raw_label": "Last one",
+      "locale": "en-US",
+      "marketplace_id": "EBAY_US",
+      "expected_sold_count": null,
+      "expected_label_outcome": "NO_SOLD_SIGNAL"
+    }
+  ]
+}

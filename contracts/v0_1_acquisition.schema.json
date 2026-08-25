@@ -1,0 +1,465 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daoyezongzi/proteus/contracts/v0_1_acquisition.schema.json",
+  "title": "Proteus V0.1 AcquisitionOutcome",
+  "description": "Provider-neutral acquisition result used by the eBay-first evidence slice.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "platform",
+    "provider",
+    "source_method",
+    "query",
+    "market_context",
+    "status",
+    "retrieved_at",
+    "listings",
+    "observed_demand",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "platform": {
+      "enum": [
+        "EBAY",
+        "AMAZON",
+        "ALIBABA_1688"
+      ]
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_method": {
+      "enum": [
+        "OFFICIAL_API",
+        "HTTP",
+        "SEARCH",
+        "BROWSER",
+        "MANUAL"
+      ]
+    },
+    "query": {
+      "$ref": "#/$defs/partQuery"
+    },
+    "market_context": {
+      "$ref": "#/$defs/marketContext"
+    },
+    "status": {
+      "$ref": "#/$defs/acquisitionStatus"
+    },
+    "retrieved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "listings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/listingEvidence"
+      }
+    },
+    "observed_demand": {
+      "$ref": "#/$defs/observedDemand"
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "SUCCESS",
+              "PARTIAL_SUCCESS"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "listings": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "PARTIAL_SUCCESS"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "diagnostics": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ZERO_RESULTS",
+              "HTTP_ERROR",
+              "TIMEOUT",
+              "CHALLENGE",
+              "AUTH_REQUIRED",
+              "BLOCKED_BY_CREDENTIALS",
+              "PROVIDER_UNAVAILABLE",
+              "MARKET_CONTEXT_MISMATCH",
+              "PARSER_FAILED"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "listings": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "acquisitionStatus": {
+      "enum": [
+        "SUCCESS",
+        "PARTIAL_SUCCESS",
+        "ZERO_RESULTS",
+        "HTTP_ERROR",
+        "TIMEOUT",
+        "CHALLENGE",
+        "AUTH_REQUIRED",
+        "BLOCKED_BY_CREDENTIALS",
+        "PROVIDER_UNAVAILABLE",
+        "MARKET_CONTEXT_MISMATCH",
+        "PARSER_FAILED"
+      ]
+    },
+    "partQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_part_number",
+        "canonical_part_number",
+        "query_type"
+      ],
+      "properties": {
+        "raw_part_number": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canonical_part_number": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]+$"
+        },
+        "query_type": {
+          "const": "EXACT_PART_NUMBER"
+        }
+      }
+    },
+    "marketContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "marketplace_id",
+        "site",
+        "locale",
+        "ship_to_country",
+        "ship_to_postal_code",
+        "currency"
+      ],
+      "properties": {
+        "marketplace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "site": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locale": {
+          "type": "string",
+          "minLength": 2
+        },
+        "ship_to_country": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$"
+        },
+        "ship_to_postal_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        }
+      }
+    },
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metric",
+        "value",
+        "source",
+        "url",
+        "retrieved_at",
+        "extraction_method",
+        "raw_evidence",
+        "confidence"
+      ],
+      "properties": {
+        "metric": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {},
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "extraction_method": {
+          "enum": [
+            "OFFICIAL_API",
+            "VISIBLE_TEXT",
+            "JSON_LD",
+            "EMBEDDED_STATE",
+            "SEARCH_SNIPPET",
+            "MANUAL_FIXTURE"
+          ]
+        },
+        "raw_evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "listingEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "listing_id",
+        "url",
+        "title",
+        "condition",
+        "price",
+        "sold_count",
+        "sold_label_raw",
+        "available_count",
+        "seller",
+        "location",
+        "part_numbers",
+        "match_type",
+        "decision",
+        "evidence"
+      ],
+      "properties": {
+        "listing_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "condition": {
+          "enum": [
+            "NEW",
+            "USED",
+            "REMANUFACTURED",
+            "OTHER",
+            "UNKNOWN"
+          ]
+        },
+        "price": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sold_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sold_label_raw": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "available_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "seller": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "part_numbers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "match_type": {
+          "enum": [
+            "EXACT",
+            "NORMALIZED_EXACT",
+            "CROSS_REFERENCE",
+            "REPLACEMENT",
+            "LEFT_RIGHT_PAIR",
+            "SIDE_MISMATCH",
+            "AMBIGUOUS",
+            "IRRELEVANT",
+            "UNKNOWN"
+          ]
+        },
+        "decision": {
+          "enum": [
+            "ACCEPT_DEMAND_EVIDENCE",
+            "HUMAN_REVIEW",
+            "REJECT"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "observedDemand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eligible_listing_count",
+        "max_single_listing_sold",
+        "aggregate_observed_sold"
+      ],
+      "properties": {
+        "eligible_listing_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_single_listing_sold": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "aggregate_observed_sold": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "raw_marker"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "HTTP_ERROR",
+            "TIMEOUT",
+            "CHALLENGE",
+            "AUTH_REQUIRED",
+            "BLOCKED_BY_CREDENTIALS",
+            "PROVIDER_UNAVAILABLE",
+            "MARKET_CONTEXT_MISMATCH",
+            "PARSER_FAILED",
+            "CARD_SKIPPED",
+            "DUPLICATE_LISTING"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "raw_marker": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}
