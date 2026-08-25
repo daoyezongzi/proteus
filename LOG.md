@@ -1,5 +1,21 @@
 # Proteus Development Log
 
+## 2026-08-25 — V0.2 one-item live canary remains blocked
+
+- Probed real Lexus/Toyota part `53630-53010`. Public catalog evidence confirms
+  the identifier and product identity, but it does not satisfy any of the
+  frozen Amazon/eBay/1688 opportunity gates.
+- The current environment has no Amazon SP-API/B2B report input, Nexscope key,
+  HioBuy key or runtime receiver configuration.
+- The checked-in eBay browser provider reached the fixed US search context but
+  returned explicit `HTTP_ERROR` with raw marker `HTTP 403`; it preserved zero
+  eligible listings and did not convert the provider failure into zero demand.
+- Independent public probes could not complete the remaining gates: the Amazon
+  search request returned HTTP 503 and the 1688 search surface was unavailable.
+  No challenge bypass, login automation, proxy or VPN manipulation was used.
+- Result: no real opportunity report was produced. This canary remains
+  `REVIEW_REQUIRED` until an approved provider supplies current, bound evidence.
+
 ## 2026-08-25 — V0.2 automated-opportunity engineering preview complete
 
 - Replaced the hand-curated-only entry point with deterministic candidate

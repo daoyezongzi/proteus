@@ -32,7 +32,8 @@
   for every selected Amazon, eBay, Nexscope and HioBuy/1688 path.
 - [ ] Run one-item canaries, then the frozen 20-item provider benchmark for
   coverage, exact-match precision, freshness, critical fields, failure
-  classification and external cost.
+  classification and external cost. The 2026-08-25 direct eBay browser canary
+  returned HTTP 403 and must be rerun through an approved provider path.
 - [ ] Capture an authorized HioBuy unavailable-preview fixture and confirm how
   `unavailable_lines` binds offer/SKU/quantity; until then an unbound negative
   response remains `REVIEW_REQUIRED` to avoid a false rejection.
