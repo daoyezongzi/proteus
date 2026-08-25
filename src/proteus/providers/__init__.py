@@ -1,6 +1,7 @@
 """Replaceable acquisition providers for Proteus."""
 
 from proteus.providers.base import (
+    CandidateDiscoveryRequest,
     Capability,
     CheckStatus,
     PartLookupRequest,
@@ -13,13 +14,17 @@ from proteus.providers.adapters import (
     NEXSCOPE_1688_LISTING_ID,
     NEXSCOPE_AMAZON_ID,
     NEXSCOPE_EBAY_ID,
+    SERPAPI_AMAZON_ID,
     SERPAPI_EBAY_ID,
+    SERPAPI_EBAY_DISCOVERY_ID,
     FunnelProviders,
     HioBuy1688Provider,
     Nexscope1688ListingProvider,
     NexscopeAmazonProvider,
     NexscopeEbayProvider,
     SerpApiEbayProvider,
+    SerpApiAmazonProvider,
+    SerpApiEbayDiscoveryProvider,
     build_provider_registry,
 )
 
@@ -54,9 +59,18 @@ from proteus.providers.serpapi_ebay import (
     SerpApiResponse,
     collect_ebay_sold,
 )
+from proteus.providers.serpapi_amazon import (
+    SERPAPI_AMAZON_PROVIDER,
+    collect_amazon_competition,
+)
+from proteus.providers.serpapi_ebay_discovery import (
+    SERPAPI_EBAY_DISCOVERY_PROVIDER,
+    collect_ebay_sold_candidates,
+)
 
 __all__ = [
     "Capability",
+    "CandidateDiscoveryRequest",
     "CheckStatus",
     "PartLookupRequest",
     "ProviderReadiness",
@@ -67,13 +81,17 @@ __all__ = [
     "NEXSCOPE_1688_LISTING_ID",
     "NEXSCOPE_AMAZON_ID",
     "NEXSCOPE_EBAY_ID",
+    "SERPAPI_AMAZON_ID",
     "SERPAPI_EBAY_ID",
+    "SERPAPI_EBAY_DISCOVERY_ID",
     "FunnelProviders",
     "HioBuy1688Provider",
     "Nexscope1688ListingProvider",
     "NexscopeAmazonProvider",
     "NexscopeEbayProvider",
     "SerpApiEbayProvider",
+    "SerpApiAmazonProvider",
+    "SerpApiEbayDiscoveryProvider",
     "build_provider_registry",
     "AMAZON_SEARCH_ENDPOINT",
     "EBAY_SEARCH_ENDPOINT",
@@ -98,4 +116,8 @@ __all__ = [
     "SerpApiRequest",
     "SerpApiResponse",
     "collect_ebay_sold",
+    "SERPAPI_AMAZON_PROVIDER",
+    "collect_amazon_competition",
+    "SERPAPI_EBAY_DISCOVERY_PROVIDER",
+    "collect_ebay_sold_candidates",
 ]

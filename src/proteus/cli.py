@@ -10,6 +10,13 @@ import sys
 from typing import Any, Sequence
 
 from proteus.discovery import DiscoveryError, discover_candidates_from_csv
+from proteus.credentials import (
+    CredentialStoreError,
+    HIOBUY_API_KEY,
+    SERPAPI_API_KEY,
+    resolve_receiver,
+    resolve_secret,
+)
 from proteus.ebay import collect_ebay
 from proteus.evaluation import (
     evaluate_amazon_competition_gate,
@@ -35,11 +42,19 @@ from proteus.providers.nexscope import (
     collect_ebay_search,
 )
 from proteus.providers.serpapi_ebay import collect_ebay_sold
+from proteus.providers.serpapi_amazon import collect_amazon_competition
+from proteus.providers.serpapi_ebay_discovery import (
+    DEFAULT_CATEGORY_ID,
+    collect_ebay_sold_candidates,
+)
+from proteus.providers.hiobuy import collect_1688_supply
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
     NEXSCOPE_1688_LISTING_ID,
     NEXSCOPE_AMAZON_ID,
     NEXSCOPE_EBAY_ID,
+    SERPAPI_AMAZON_ID,
+    SERPAPI_EBAY_DISCOVERY_ID,
     SERPAPI_EBAY_ID,
     FunnelProviders,
     build_provider_registry,
@@ -62,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="proteus",
         description=(
             "Discover or import OEM/MPN candidates, then evaluate the Proteus "
-            "V0.2 Amazon -> eBay -> 1688 opportunity funnel."
+            "V0.2 eBay discovery -> Amazon -> eBay -> 1688 opportunity funnel."
         ),
     )
 
@@ -79,6 +94,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="downloaded Amazon SP-API B2B Product Opportunities CSV report",
     )
+    candidate_source.add_argument(
+        "--discover-ebay-sold",
+        action="store_true",
+        help=(
+            "automatically discover part-number candidates from fresh eBay "
+            "Motors sold listings; implies the two-account managed profile"
+        ),
+    )
     parser.add_argument(
         "--amazon-category",
         action="append",
@@ -93,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="legacy Amazon/1688 manual-evidence JSON bundle",
     )
-    acquisition_source = parser.add_mutually_exclusive_group(required=True)
+    acquisition_source = parser.add_mutually_exclusive_group(required=False)
     acquisition_source.add_argument(
         "--ebay-evidence",
         "--offline-ebay",
@@ -129,9 +152,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--amazon-provider",
-        choices=(NEXSCOPE_AMAZON_ID,),
-        default=NEXSCOPE_AMAZON_ID,
+        choices=(SERPAPI_AMAZON_ID, NEXSCOPE_AMAZON_ID),
+        default=SERPAPI_AMAZON_ID,
         help="Amazon competition provider for --managed-providers",
+    )
+    parser.add_argument(
+        "--ebay-category-id",
+        default=DEFAULT_CATEGORY_ID,
+        help="eBay Motors category for automatic sold discovery (default: 6028)",
+    )
+    parser.add_argument(
+        "--discovery-pages",
+        type=_positive_integer,
+        default=1,
+        help="maximum sold-category pages scanned during discovery (default: 1)",
     )
     parser.add_argument(
         "--ebay-provider",
@@ -176,7 +210,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         required=True,
-        help="destination JSON file; output is an ordered array of reports",
+        help=(
+            "destination JSON; automatic discovery writes a run envelope, "
+            "compatibility inputs write an ordered report array"
+        ),
     )
     parser.add_argument(
         "--browser-channel",
@@ -261,6 +298,26 @@ def _secret_from_environment(variable_name: str, provider: str) -> str:
     return value.strip()
 
 
+def _secret_from_configuration(variable_name: str, provider: str) -> str:
+    if not isinstance(variable_name, str) or not variable_name.strip():
+        raise InputDataError(f"{provider} API-key environment variable name is empty")
+    value = os.environ.get(variable_name)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    supported_alias = {
+        "SerpApi": SERPAPI_API_KEY,
+        "HioBuy": HIOBUY_API_KEY,
+    }.get(provider)
+    if supported_alias == variable_name:
+        stored = resolve_secret(supported_alias)
+        if stored is not None:
+            return stored
+    raise InputDataError(
+        f"{provider} API key is missing; run 'proteus setup' or configure "
+        f"environment variable {variable_name!r}"
+    )
+
+
 def _load_receiver(path: Path) -> dict[str, str]:
     value = read_json(path)
     required = ("name", "mobile", "province", "city", "district", "address")
@@ -338,6 +395,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the sequential V0.2 funnel and return a process exit code."""
 
     active_argv = list(argv) if argv is not None else sys.argv[1:]
+    if active_argv[:1] == ["setup"]:
+        from proteus.credentials import main as setup_main
+
+        return setup_main(active_argv[1:])
+    if active_argv[:1] == ["api"]:
+        try:
+            from proteus.api import main as api_main
+        except ImportError:
+            print(
+                "proteus: error: API dependencies are missing; install with "
+                "'pip install -e .[api]'",
+                file=sys.stderr,
+            )
+            return 2
+        return api_main(active_argv[1:])
     if active_argv[:2] == ["providers", "check"]:
         from proteus.providers.canary import main as provider_canary_main
 
@@ -347,6 +419,65 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(active_argv)
 
     try:
+        acquisition_selected = any(
+            (
+                args.ebay_evidence is not None,
+                args.live_ebay,
+                args.nexscope,
+                args.managed_providers,
+            )
+        )
+        if not args.discover_ebay_sold and not acquisition_selected:
+            raise InputDataError(
+                "one acquisition source is required unless --discover-ebay-sold is used"
+            )
+        if args.discover_ebay_sold and any(
+            (args.ebay_evidence is not None, args.live_ebay, args.nexscope)
+        ):
+            raise InputDataError(
+                "--discover-ebay-sold cannot be combined with legacy acquisition sources"
+            )
+        if not isinstance(args.ebay_category_id, str) or not args.ebay_category_id.isdigit():
+            raise InputDataError("--ebay-category-id must contain digits only")
+        if args.discovery_pages > 10:
+            raise InputDataError("--discovery-pages cannot exceed 10")
+
+        if args.discover_ebay_sold:
+            from proteus.managed import run_two_account_managed
+
+            receiver = resolve_receiver(args.hiobuy_receiver)
+            result = run_two_account_managed(
+                serpapi_key=_secret_from_configuration(
+                    args.serpapi_api_key_env,
+                    "SerpApi",
+                ),
+                hiobuy_key=_secret_from_configuration(
+                    args.hiobuy_api_key_env,
+                    "HioBuy",
+                ),
+                receiver=receiver,
+                max_candidates=args.max_candidates,
+                max_moq=args.max_moq,
+                ebay_category_id=args.ebay_category_id,
+                discovery_pages=args.discovery_pages,
+                collectors={
+                    SERPAPI_EBAY_DISCOVERY_ID: collect_ebay_sold_candidates,
+                    SERPAPI_AMAZON_ID: collect_amazon_competition,
+                    SERPAPI_EBAY_ID: collect_ebay_sold,
+                    HIOBUY_1688_ID: collect_1688_supply,
+                },
+            )
+            write_json_atomic(args.output, result)
+            summary = result["summary"]
+            print(
+                f"Wrote managed run to {args.output} "
+                f"(candidates={result['discovery']['candidate_count']}, "
+                f"opportunities={summary['opportunities']}, "
+                f"rejected={summary['rejected']}, "
+                f"review_required={summary['review_required']})."
+            )
+            return 0
+
         managed = args.nexscope or args.managed_providers
         if args.hiobuy_receiver is not None and not managed:
             raise InputDataError(
@@ -371,6 +502,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         receiver = (
             _load_receiver(args.hiobuy_receiver)
             if args.hiobuy_receiver is not None
+            else resolve_receiver()
+            if args.managed_providers
             else None
         )
         funnel_providers: FunnelProviders | None = None
@@ -407,21 +540,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else None
             )
             serpapi_key = (
-                _secret_from_environment(args.serpapi_api_key_env, "SerpApi")
+                _secret_from_configuration(args.serpapi_api_key_env, "SerpApi")
                 if ebay_provider_id == SERPAPI_EBAY_ID
+                or amazon_provider_id == SERPAPI_AMAZON_ID
                 else None
             )
             if supply_provider_id == HIOBUY_1688_ID and receiver is None:
                 raise InputDataError(
-                    "--supply-provider hiobuy-1688 requires --hiobuy-receiver"
+                    "hiobuy-1688 requires a receiver; run 'proteus setup' or "
+                    "pass --hiobuy-receiver"
                 )
             hiobuy_key = (
-                _secret_from_environment(args.hiobuy_api_key_env, "HioBuy")
+                _secret_from_configuration(args.hiobuy_api_key_env, "HioBuy")
                 if supply_provider_id == HIOBUY_1688_ID
                 else None
             )
-            from proteus.providers.hiobuy import collect_1688_supply
-
             registry = build_provider_registry(
                 nexscope_key=nexscope_key,
                 serpapi_key=serpapi_key,
@@ -429,6 +562,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 receiver=receiver,
                 collectors={
                     NEXSCOPE_AMAZON_ID: collect_amazon_search,
+                    SERPAPI_AMAZON_ID: collect_amazon_competition,
                     NEXSCOPE_EBAY_ID: collect_ebay_search,
                     NEXSCOPE_1688_LISTING_ID: collect_1688_search,
                     SERPAPI_EBAY_ID: collect_ebay_sold,
@@ -508,7 +642,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             reports.append(report)
 
         write_json_atomic(args.output, reports)
-    except (InputDataError, ContractValidationError, DiscoveryError, ValueError) as exc:
+    except (
+        InputDataError,
+        ContractValidationError,
+        CredentialStoreError,
+        DiscoveryError,
+        ValueError,
+    ) as exc:
         print(f"proteus: error: {exc}", file=sys.stderr)
         return 2
 

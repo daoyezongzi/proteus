@@ -1,5 +1,24 @@
 # Proteus Current Work
 
+## V0.2.1 two-account managed profile — engineering complete
+
+- [x] Make eBay Motors sold listings the automatic candidate source without
+  treating title extraction as final demand evidence; every candidate is
+  rechecked by the exact eBay demand gate.
+- [x] Add SerpApi Amazon competition and eBay category-discovery adapters with
+  fixed US context, `no_cache=true`, explicit pagination uncertainty and
+  fail-closed auth/parser behavior.
+- [x] Reduce the default MVP to two accounts: SerpApi for discovery/Amazon/eBay
+  and HioBuy for 1688 order preview. Keep Nexscope and Amazon B2B inputs as
+  replaceable compatibility paths.
+- [x] Add `proteus setup` with Windows/OS keyring storage for both keys and the
+  receiver; environment variables remain explicit CI overrides.
+- [x] Add a loopback FastAPI surface for health, redacted configuration,
+  provider readiness, async run submission and run retrieval. Keep secrets and
+  receiver data out of request/response bodies.
+- [x] Add a candidate-discovery JSON contract and a managed run envelope while
+  preserving V0.1/V0.2 report compatibility.
+
 ## V0.2 engineering preview — complete
 
 - [x] Generate one deterministic primary-identifier candidate per Amazon B2B
@@ -31,7 +50,7 @@
   adapter with fixed US/new/sold/no-cache parameters, raw listing evidence,
   incomplete-page diagnostics and fail-closed parser/auth outcomes.
 
-- [ ] Confirm Amazon SP-API account/role access and automate retrieval of
+- [ ] Optional official-tier enhancement: confirm Amazon SP-API account/role access and automate retrieval of
   `GET_B2B_PRODUCT_OPPORTUNITIES_NOT_YET_ON_AMAZON`; downloaded CSV replay does
   not qualify as a fully automatic source. Reuse the community
   [`python-amazon-sp-api`](https://github.com/saleweaver/python-amazon-sp-api)
@@ -51,15 +70,16 @@
   [Brave Search](https://api-dashboard.search.brave.com/app/documentation/web-search)
   and [Exa Search + Contents](https://exa.ai/docs/reference/search). Keep Agent
   query expansion optional and downstream of deterministic exact-ID queries.
-- [ ] Benchmark marketplace-specific managed data instead of building another
+- [ ] Benchmark the implemented marketplace-specific managed adapters instead of building another
   site parser first:
   [SerpApi Amazon](https://serpapi.com/amazon-search-api) and
   [DataForSEO Merchant Amazon](https://docs.dataforseo.com/v3/merchant-api-overview/)
   for competition evidence; [SerpApi eBay](https://serpapi.com/ebay-search-api)
   for active/sold search evidence. Require raw URL/marker, US market control,
   freshness and incomplete-page diagnostics before accepting any provider.
-  The SerpApi eBay adapter and offline contract tests are complete; production
-  credentials and the 20-item live benchmark remain open.
+  The SerpApi Amazon, eBay exact-sold and eBay category-discovery adapters and
+  offline contract tests are complete; production credentials and the 20-item
+  live benchmark remain open.
 - [ ] Add the official
   [eBay Browse API](https://developer.ebay.com/api-docs/buy/api-browse.html) for
   active listing discovery, GTIN and vehicle-fitment checks. Canary whether the
@@ -93,15 +113,18 @@
 
 ### C. Backend product surface
 
-- [ ] Implement a backend job/report API with run creation, progress/status,
-  cancellation, result retrieval and report export; keep provider secrets and
-  receiver data server-side.
+- [x] Implement the initial backend job/report API with async run creation,
+  status/result retrieval and server-side provider secrets/receiver data.
+- [ ] Add cancellation, progress events and report export after the initial
+  in-memory run contract passes a real provider benchmark.
 - [ ] Add persistent runs, candidates, evidence, provider attempts and report
   versions so interrupted jobs can resume and historical decisions remain auditable.
 - [ ] Add bounded retries, rate limits, per-run cost ceilings, idempotency,
   provider health/readiness and structured operational metrics.
-- [ ] Add authenticated secret management, retention/redaction rules and audit
-  logs before accepting production credentials or receiver data.
+- [x] Add local OS-keyring secret storage and redacted configuration/readiness
+  responses for the single-user loopback deployment.
+- [ ] Add API user authentication, persistence retention rules and audit logs
+  before exposing the service beyond loopback or accepting multi-user data.
 - [ ] Package a reproducible local deployment and health check before building
   the front end; then implement the UI against the frozen job/report API rather
   than calling third-party providers from the browser.
@@ -115,12 +138,14 @@
   classification and external cost. The 2026-08-25 direct eBay browser canary
   returned HTTP 403. The managed canary runner now exists, but its first run was
   blocked before live calls because every production credential was absent.
-- [ ] Replace or approve managed providers only after their source/freshness/
-  coverage semantics pass the benchmark; current managed results cannot set
-  `automation_qualified=true`.
+- [ ] Approve the two-account managed profile only after source/freshness/
+  coverage semantics pass the benchmark. `execution.mode=AUTOMATED_MANAGED`
+  records automated execution; it must not be confused with the existing
+  official-tier `automation_qualified` flag.
 - [ ] Produce at least one current, real, economically acceptable three-gate
-  `OPPORTUNITY_CANDIDATE` with successful 1688 order preview and
-  `automation_qualified=true`.
+  `OPPORTUNITY_CANDIDATE` with successful 1688 order preview through the
+  two-account profile. Official-tier `automation_qualified=true` remains a
+  later enhancement, not a blocker for managed MVP evidence.
 
 ## Search/crawl evidence boundary — frozen
 

@@ -241,6 +241,19 @@ def validate_acquisition(value: Any, *, label: str = "eBay acquisition") -> None
     _validate_contract(value, f"v{version.replace('.', '_')}_acquisition.schema.json", label)
 
 
+def validate_candidate_discovery(
+    value: Any, *, label: str = "candidate discovery"
+) -> None:
+    """Validate one automatic candidate-discovery outcome."""
+
+    version = _contract_version(value, label)
+    _validate_contract(
+        value,
+        f"v{version.replace('.', '_')}_candidate_discovery.schema.json",
+        label,
+    )
+
+
 def validate_opportunity_report(
     value: Any, *, label: str = "opportunity report"
 ) -> None:

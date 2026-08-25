@@ -319,6 +319,7 @@ def _prepare_candidate_source(value: Mapping | None) -> dict:
         "SUPPLIED_POOL",
         "AMAZON_B2B_REPORT_REPLAY",
         "AMAZON_B2B_REPORT_API",
+        "EBAY_SOLD_DISCOVERY_API",
     }:
         raise ValueError("candidate_source.method is unsupported")
     provider = _nonempty_string(value.get("provider"))
@@ -375,6 +376,20 @@ def _prepare_candidate_source(value: Mapping | None) -> dict:
     ):
         raise ValueError(
             "Amazon B2B candidate source requires reference, row, field, and identifier type"
+        )
+    if method == "EBAY_SOLD_DISCOVERY_API" and any(
+        item is None
+        for item in (
+            source_reference,
+            source_row,
+            source_field,
+            identifier_type,
+            report_generated_at,
+        )
+    ):
+        raise ValueError(
+            "eBay sold candidate source requires listing reference, position, "
+            "field, identifier type, and retrieval time"
         )
 
     return {

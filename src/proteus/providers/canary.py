@@ -16,24 +16,40 @@ from proteus.evaluation import (
     evaluate_supply_gate,
 )
 from proteus.io import read_json, validate_acquisition, write_json_atomic
+from proteus.io import validate_candidate_discovery
+from proteus.credentials import (
+    CredentialStoreError,
+    HIOBUY_API_KEY,
+    SERPAPI_API_KEY,
+    resolve_receiver,
+    resolve_secret,
+)
 from proteus.normalization import normalize_part_number
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
     NEXSCOPE_AMAZON_ID,
+    SERPAPI_AMAZON_ID,
+    SERPAPI_EBAY_DISCOVERY_ID,
     SERPAPI_EBAY_ID,
     build_provider_registry,
 )
-from proteus.providers.base import Capability, PartLookupRequest, SupplyLookupRequest
+from proteus.providers.base import (
+    CandidateDiscoveryRequest,
+    Capability,
+    PartLookupRequest,
+    SupplyLookupRequest,
+)
 
 
 DEFAULT_PART_NUMBER = "53630-53010"
 AMAZON_SP_API_ID = "amazon-sp-api-b2b-report"
 TARGETS = (
-    AMAZON_SP_API_ID,
-    NEXSCOPE_AMAZON_ID,
+    SERPAPI_EBAY_DISCOVERY_ID,
+    SERPAPI_AMAZON_ID,
     SERPAPI_EBAY_ID,
     HIOBUY_1688_ID,
 )
+ALL_TARGETS = TARGETS + (AMAZON_SP_API_ID, NEXSCOPE_AMAZON_ID)
 
 
 def _utc_now() -> str:
@@ -57,7 +73,7 @@ def _environment_secret(name: str) -> str | None:
 
 def _load_receiver(path: Path | None) -> dict[str, str] | None:
     if path is None:
-        return None
+        return resolve_receiver()
     value = read_json(path)
     required = ("name", "mobile", "province", "city", "district", "address")
     if not isinstance(value, Mapping) or any(
@@ -159,8 +175,10 @@ def _run_adapter_canary(
         return base
 
     base["live_attempted"] = True
-    request: PartLookupRequest | SupplyLookupRequest
-    if provider.capability == Capability.ALIBABA_1688_SUPPLY:
+    request: CandidateDiscoveryRequest | PartLookupRequest | SupplyLookupRequest
+    if provider.capability == Capability.EBAY_CANDIDATE_SOURCE:
+        request = CandidateDiscoveryRequest("6028", 20)
+    elif provider.capability == Capability.ALIBABA_1688_SUPPLY:
         request = SupplyLookupRequest(raw_part_number, max_moq)
     else:
         request = PartLookupRequest(raw_part_number)
@@ -169,7 +187,13 @@ def _run_adapter_canary(
         acquisition_status = outcome.get("status", outcome.get("acquisition_status"))
         base["acquisition_status"] = acquisition_status
         canonical = normalize_part_number(raw_part_number)
-        if provider.capability == Capability.EBAY_DEMAND:
+        if provider.capability == Capability.EBAY_CANDIDATE_SOURCE:
+            validate_candidate_discovery(
+                outcome,
+                label=f"{provider.provider_id} canary",
+            )
+            stage = None
+        elif provider.capability == Capability.EBAY_DEMAND:
             validate_acquisition(outcome, label=f"{provider.provider_id} canary")
             stage = evaluate_ebay_demand_gate(
                 outcome,
@@ -187,7 +211,7 @@ def _run_adapter_canary(
                 expected_canonical_part_number=canonical,
             )
         base["contract_valid"] = True
-        base["stage_status"] = stage["status"]
+        base["stage_status"] = stage["status"] if stage is not None else None
         if acquisition_status in {"SUCCESS", "PARTIAL_SUCCESS", "ZERO_RESULTS"}:
             base["canary_status"] = "PASSED"
             base["reason"] = "Live call returned a contract-valid terminal outcome."
@@ -208,7 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="proteus providers check",
         description="Run one-item, read-only provider canaries and write a redacted report.",
     )
-    parser.add_argument("--provider", action="append", choices=TARGETS)
+    parser.add_argument("--provider", action="append", choices=ALL_TARGETS)
     parser.add_argument("--part-number", default=DEFAULT_PART_NUMBER)
     parser.add_argument("--max-moq", type=_positive_integer, default=10)
     parser.add_argument("--receiver", type=Path)
@@ -224,8 +248,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         receiver = _load_receiver(args.receiver)
         registry = build_provider_registry(
             nexscope_key=_environment_secret("NEXSCOPE_API_KEY"),
-            serpapi_key=_environment_secret("SERPAPI_API_KEY"),
-            hiobuy_key=_environment_secret("HIOBUY_API_KEY"),
+            serpapi_key=resolve_secret(SERPAPI_API_KEY),
+            hiobuy_key=resolve_secret(HIOBUY_API_KEY),
             receiver=receiver,
         )
         selected = tuple(args.provider or TARGETS)
@@ -236,7 +260,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 continue
             capability = (
                 Capability.AMAZON_COMPETITION
-                if provider_id == NEXSCOPE_AMAZON_ID
+                if provider_id in {NEXSCOPE_AMAZON_ID, SERPAPI_AMAZON_ID}
+                else Capability.EBAY_CANDIDATE_SOURCE
+                if provider_id == SERPAPI_EBAY_DISCOVERY_ID
                 else Capability.EBAY_DEMAND
                 if provider_id == SERPAPI_EBAY_ID
                 else Capability.ALIBABA_1688_SUPPLY
@@ -267,7 +293,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             },
         }
         write_json_atomic(args.output, report)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (
+        CredentialStoreError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
         print(f"proteus providers check: error: {exc}", file=os.sys.stderr)
         return 2
 

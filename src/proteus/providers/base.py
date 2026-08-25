@@ -12,6 +12,7 @@ from proteus.normalization import normalize_part_number
 
 class Capability(str, Enum):
     AMAZON_CANDIDATE_SOURCE = "AMAZON_CANDIDATE_SOURCE"
+    EBAY_CANDIDATE_SOURCE = "EBAY_CANDIDATE_SOURCE"
     AMAZON_COMPETITION = "AMAZON_COMPETITION"
     EBAY_DEMAND = "EBAY_DEMAND"
     ALIBABA_1688_SUPPLY = "ALIBABA_1688_SUPPLY"
@@ -53,6 +54,25 @@ class SupplyLookupRequest:
             or self.max_acceptable_moq < 1
         ):
             raise ValueError("max_acceptable_moq must be a positive integer")
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateDiscoveryRequest:
+    """Provider-neutral inputs for one bounded candidate-discovery page."""
+
+    category_id: str
+    max_candidates: int
+    page: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.category_id, str) or not self.category_id.isdigit():
+            raise ValueError("category_id must contain digits only")
+        for name, value in (
+            ("max_candidates", self.max_candidates),
+            ("page", self.page),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)

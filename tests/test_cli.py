@@ -585,6 +585,8 @@ def test_managed_funnel_short_circuits_after_amazon_rejection(
 def test_provider_check_reports_missing_access_without_calling_network(
     tmp_path: Path, monkeypatch
 ) -> None:
+    from proteus.providers import canary
+
     for name in (
         "NEXSCOPE_API_KEY",
         "SERPAPI_API_KEY",
@@ -594,6 +596,8 @@ def test_provider_check_reports_missing_access_without_calling_network(
         "LWA_CLIENT_SECRET",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(canary, "resolve_secret", lambda name: None)
+    monkeypatch.setattr(canary, "resolve_receiver", lambda: None)
     output_path = tmp_path / "provider_canary.json"
 
     exit_code = cli.main(
@@ -609,8 +613,8 @@ def test_provider_check_reports_missing_access_without_calling_network(
         "not_run": 0,
     }
     assert [item["provider_id"] for item in report["results"]] == [
-        "amazon-sp-api-b2b-report",
-        "nexscope-amazon",
+        "serpapi-ebay-discovery",
+        "serpapi-amazon",
         "serpapi-ebay",
         "hiobuy-1688",
     ]
@@ -678,6 +682,8 @@ def test_configurable_profile_selects_serpapi_without_changing_funnel(
             "--amazon-b2b-report",
             str(report_path),
             "--managed-providers",
+            "--amazon-provider",
+            "nexscope-amazon",
             "--ebay-provider",
             "serpapi-ebay",
             "--supply-provider",
@@ -699,3 +705,121 @@ def test_configurable_profile_selects_serpapi_without_changing_funnel(
         "SERPAPI_EBAY_MANAGED"
     )
     assert report["decision"] == "REVIEW_REQUIRED"
+
+
+def test_two_account_discovery_profile_needs_no_candidate_file_or_nexscope(
+    tmp_path: Path, monkeypatch
+) -> None:
+    raw_part_number = "53630-53010"
+    output_path = tmp_path / "managed_run.json"
+    calls: list[str] = []
+
+    discovery = {
+        "schema_version": "0.2",
+        "provider": "SERPAPI_EBAY_SOLD_DISCOVERY",
+        "source_method": "MANAGED_API",
+        "category": {"id": "6028", "name": "Auto Parts & Accessories"},
+        "market_context": {
+            "marketplace_id": "EBAY_US",
+            "site": "www.ebay.com",
+            "locale": "en-US",
+            "ship_to_country": "US",
+            "ship_to_postal_code": "10001",
+            "currency": "USD",
+        },
+        "status": "SUCCESS",
+        "retrieved_at": RETRIEVED_AT,
+        "page": 1,
+        "candidates": [
+            {
+                "raw_part_number": raw_part_number,
+                "canonical_part_number": _canonical(raw_part_number),
+                "identifier_type": "partNumber",
+                "source_field": "title",
+                "source_listing_id": "123456789012",
+                "source_listing_url": "https://www.ebay.com/itm/123456789012",
+                "source_listing_title": f"New OEM Hood Latch {raw_part_number}",
+                "source_listing_position": 1,
+                "source_sold_count": 32,
+            }
+        ],
+        "diagnostics": [],
+    }
+    amazon = _manual_record(raw_part_number)["amazon"]
+    amazon["source_method"] = "MANAGED_API"
+    amazon.pop("relevance_reviewed")
+    amazon["relevance_method"] = "DETERMINISTIC_EXACT"
+    amazon["evidence"][0]["extraction_method"] = "MANAGED_API"
+    ebay = _ebay_acquisition(raw_part_number)
+    ebay["schema_version"] = "0.2"
+    ebay["provider"] = "SERPAPI_EBAY_MANAGED"
+    ebay["source_method"] = "MANAGED_API"
+    ebay["listings"][0]["evidence"][0]["extraction_method"] = "MANAGED_API"
+    supply = _manual_record(raw_part_number)["alibaba_1688"]
+    supply["source_method"] = "MANAGED_API"
+    supply["purchasable"] = None
+    supply["evidence"] = [
+        item for item in supply["evidence"] if item["metric"] != "purchasable"
+    ]
+    for item in supply["evidence"]:
+        item["extraction_method"] = "MANAGED_API"
+
+    monkeypatch.setenv("SERPAPI_API_KEY", "serpapi-secret")
+    monkeypatch.setenv("HIOBUY_API_KEY", "hiobuy-secret")
+    monkeypatch.setattr(
+        cli,
+        "resolve_receiver",
+        lambda path=None: {
+            "name": "Buyer",
+            "mobile": "13800000000",
+            "province": "广东省",
+            "city": "深圳市",
+            "district": "南山区",
+            "address": "测试地址",
+        },
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_ebay_sold_candidates",
+        lambda **kwargs: calls.append("discover:serpapi") or discovery,
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_amazon_competition",
+        lambda *args, **kwargs: calls.append("amazon:serpapi") or amazon,
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_ebay_sold",
+        lambda *args, **kwargs: calls.append("ebay:serpapi") or ebay,
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_1688_supply",
+        lambda *args, **kwargs: calls.append("1688:hiobuy") or supply,
+    )
+
+    exit_code = cli.main(
+        [
+            "--discover-ebay-sold",
+            "--max-moq",
+            "5",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == [
+        "discover:serpapi",
+        "amazon:serpapi",
+        "ebay:serpapi",
+        "1688:hiobuy",
+    ]
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert result["profile"] == "two-account-managed"
+    assert result["execution"]["account_count"] == 2
+    assert result["discovery"]["candidate_count"] == 1
+    assert result["reports"][0]["candidate_source"]["method"] == (
+        "EBAY_SOLD_DISCOVERY_API"
+    )

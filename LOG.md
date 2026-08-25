@@ -1,5 +1,34 @@
 # Proteus Development Log
 
+## 2026-08-25 — Two-account automatic discovery profile and frontend API
+
+- Replaced the default managed MVP dependency set with two upstream accounts:
+  SerpApi supplies eBay Motors sold-category candidates, Amazon competition and
+  exact eBay sold verification; HioBuy supplies exact 1688 detail and bound
+  order preview. Amazon B2B and Nexscope remain explicit compatibility options.
+- Added deterministic eBay-title candidate extraction. Only new listings with
+  an explicit positive sold count can seed tokens, and every token is re-run
+  through the existing exact eBay demand gate before supply is queried.
+- Added a SerpApi Amazon adapter with fixed US context and fresh searches. A
+  next page, malformed product or market mismatch preserves uncertainty and
+  cannot prove the low-competition threshold.
+- Added `proteus setup`, backed by the OS keyring, so both API keys and the
+  HioBuy receiver are entered once. Environment variables remain higher-priority
+  CI overrides; status and API responses expose presence/source only.
+- Added a loopback-only FastAPI interface for health, redacted config/provider
+  status, asynchronous run creation and run retrieval. The initial queue is
+  deliberately in-memory and replaceable behind `FrontendService`.
+- Added `v0_2_candidate_discovery.schema.json`, the
+  `EBAY_SOLD_DISCOVERY_API` provenance method and a managed run envelope. The
+  existing official-tier meaning of `automation_qualified` was not weakened;
+  automatic managed runs identify themselves as `AUTOMATED_MANAGED`.
+- Passed 253 tests, `compileall`, `pip check` and wheel packaging (SHA-256
+  `2C9BC1C0A58C59B0E49A5F3B324A08C46E71D22EEAAED4F935C76A5EF2837302`).
+  The live loopback `/health`, config-status
+  and OpenAPI endpoints returned HTTP 200. With no credentials configured, the
+  new default canary returned `blocked=4`, `live_attempted=false`; no upstream
+  request was sent.
+
 ## 2026-08-25 — Replaceable provider core and managed canary runner
 
 - Added a provider-neutral `preflight/acquire/estimate_cost` lifecycle,

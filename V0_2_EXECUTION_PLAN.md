@@ -1,4 +1,4 @@
-# Proteus V0.2 — Automatic Opportunity Discovery Execution Plan
+# Proteus V0.2.1 — Automatic Opportunity Discovery Execution Plan
 
 > 状态：`ENGINEERING_PREVIEW_IMPLEMENTED / PRODUCT_ACCEPTANCE_OPEN`
 > 日期：2026-08-25
@@ -7,16 +7,30 @@
 
 ## 0. 本次迭代落点
 
+2026-08-25 用户批准了两账号 managed MVP，替代“Amazon Seller 账号必须先就绪”的
+默认前置条件。当前默认链路为：
+
+```text
+SerpApi eBay Motors sold-category discovery
+→ SerpApi Amazon exact competition
+→ SerpApi eBay exact sold demand
+→ HioBuy 1688 exact detail + order preview
+```
+
+它只需要 SerpApi 和 HioBuy 两个账号。Amazon B2B/SP-API 与 Nexscope 保留为显式
+兼容/替换路径，不再阻塞 managed MVP。候选入口虽改为 eBay，但只有同时通过 Amazon、
+eBay、1688 三门才输出商机，产品目标没有收缩为需求抓取。
+
 本仓库现已实现 V0.2 engineering preview：Amazon B2B CSV 候选发现、V0.2
 contracts、Amazon → eBay → 1688 短路、Nexscope managed REST adapters、HioBuy
 1688 `search → detail → order preview` 只读 adapter、V0.1 输入兼容和
 `automation_qualified` 隔离。随后补齐了 provider-neutral protocol、显式 registry、
 SerpApi eBay sold adapter、逐阶段 provider profile 和 `providers check` canary。
 
-这不是产品验收完成。当前尚缺获准生产凭证、Amazon SP-API 报告自动拉取、provider
-readiness/freshness/cost 的真实 20-item benchmark，以及至少一条当前真实
-`automation_qualified=true` 商机。已下载 CSV 属于 report replay；它能自动生成
-候选但仍有人工下载步骤。Nexscope listing 也不能替代 1688 order preview。
+这不是产品验收完成。当前尚缺两个获准生产账号、真实 receiver、provider
+readiness/freshness/cost 的真实 20-item benchmark，以及至少一条当前真实、三门全过的
+managed 商机。`execution.mode=AUTOMATED_MANAGED` 表示运行无需人工候选；旧字段
+`automation_qualified` 继续表示更严格的 official-tier provenance，二者不得混淆。
 
 因此，本轮把“可复用的非 Agent 自动执行骨架”做成可运行版本，同时保留原企划的
 商机目标；没有把产品目标收缩为人工需求抓取，也不把工程通过冒充真实商机。
@@ -27,7 +41,7 @@ V0.2 的目标不是把人工输入的 OEM 逐个查完，也不是继续扩大�
 它必须从一个真实、当前的需求源中自动产生候选，并沿三平台漏斗自动收缩为商机：
 
 ```text
-Amazon B2B demand-gap candidate source
+eBay Motors sold-demand candidate source
 → Amazon competition verification
 → eBay observed-demand verification
 → 1688 exact supply + order-preview verification
@@ -38,10 +52,10 @@ Amazon B2B demand-gap candidate source
 负责配置授权、准备 benchmark gold labels，以及最终商业复核。只有当前、可追溯
 且三个 gate 全部通过的结果才能称为 `OPPORTUNITY_CANDIDATE`。
 
-V0.2 产品验收底线：从最新 Amazon B2B 候选源自动运行一个 20-candidate 小池，
-至少得到一条无需 manual evidence、无需 Agent、带 1688 order preview 的真实
-`OPPORTUNITY_CANDIDATE`。程序能运行或 provider benchmark 通过，都不能替代这
-条产品验收。
+V0.2.1 managed 产品验收底线：从当前 eBay Motors sold 类目自动运行一个
+20-candidate 小池，至少得到一条无需 manual evidence、无需 Agent、带 1688 order
+preview 的真实 `OPPORTUNITY_CANDIDATE`。程序能运行或 provider benchmark 通过，
+都不能替代这条产品验收。Official-tier 自动资格作为增强项单独验收。
 
 ## 2. 冻结原则
 
@@ -49,8 +63,9 @@ V0.2 产品验收底线：从最新 Amazon B2B 候选源自动运行一个 20-ca
    下游平台。
 2. Provider 先过授权、用途、凭证、字段、市场、freshness 和成本 gate，再比较
    技术便利性。官方 API 优先，但“官方”不能覆盖缺字段或用途不兼容。
-3. Nexscope 是可替换的 managed adapter，不是业务模型的一部分，也不享有默认
-   信任。其来源、覆盖、freshness、成本和字段语义都必须由 live probe 证明。
+3. SerpApi/HioBuy 是默认但可替换的 managed adapters，Nexscope 是兼容 adapter；
+   三者都不是业务模型的一部分，也不享有隐式信任。来源、覆盖、freshness、成本和
+   字段语义必须由 live probe 证明。
 4. 任何 provider failure、凭证缺失或字段歧义都进入 `REVIEW_REQUIRED`；不得转换
    为零结果、拒绝或通过。陈旧数据可保留回放时的 gate 结论，但必须
    `automation_qualified=false`，不得计入当前产品验收。
@@ -60,11 +75,23 @@ V0.2 产品验收底线：从最新 Amazon B2B 候选源自动运行一个 20-ca
 6. V0.1 的离线 eBay evidence、manual Amazon/1688 evidence 和现有 CLI 保持可用，
    但任何 `MANUAL` 证据都不能计入 V0.2 自动产品验收。
 
-## 3. 候选源：Amazon B2B Not Yet on Amazon
+## 3. 默认候选源：eBay Motors sold discovery
 
-### 3.1 正常来源
+默认以 eBay Motors `Auto Parts & Accessories` category `6028` 的新品已售结果生成
+候选。只有 listing identity、US market、新品状态和明确正整数 sold count 完整时，
+才从 title 中提取保守 part-shaped token。Token 只是候选，不是最终需求证据：每个
+token 必须重新执行 exact eBay query，未能证明 exact/normalized-exact 的结果进入
+`REVIEW_REQUIRED`。
 
-第一优先候选源是 Amazon Seller Central 的 B2B Selection Recommendations 中
+发现请求固定 US、`show_only=Sold`、new condition、`no_cache=true`，默认一页、最多
+20 个去重候选。结果使用独立 candidate-discovery schema，并保留 listing URL、ID、
+title、position、sold count 和 retrieval time。登录、挑战绕过和代理池仍不在边界内。
+
+## 3A. 兼容候选源：Amazon B2B Not Yet on Amazon
+
+### 3A.1 来源
+
+兼容的 official-tier 候选源是 Amazon Seller Central 的 B2B Selection Recommendations 中
 `List products not yet on Amazon` 可下载报告。Amazon 官方说明该列表来自企业
 买家的搜索、请求等需求信号，按周更新，并可包含 title、brand、category、MPN、
 UPC 和 model number。访问该工具需要具备相应 Seller Central / Professional
@@ -72,10 +99,10 @@ selling plan 权限：
 
 - [Amazon B2B Selection Recommendations](https://sell.amazon.com/blog/amazon-business-products)
 
-V0.2 正常路径通过获准的官方 report/API adapter 获取最新报告。人工下载文件只
-作为开发、回放和 V0.1 兼容输入，不计为自动发现。
+该路径在具备 Seller 权限时可通过获准的 official report/API adapter 获取最新报告。
+人工下载文件只作为开发、回放和 V0.1 兼容输入，不计为自动发现。
 
-### 3.2 候选生成规则
+### 3A.2 候选生成规则
 
 `AmazonB2BNotYetCandidateProvider` 输出 `CandidateSeed`：
 
@@ -279,15 +306,16 @@ src/proteus/
 ```text
 src/proteus/
 ├── providers/
-│   ├── amazon_b2b_report.py    # official candidate source + offline replay
-│   ├── amazon_official.py
-│   ├── ebay_official.py
-│   ├── alibaba1688_official.py
-│   └── ...                     # current managed adapters stay replaceable
-├── candidate_source.py         # normalize, dedupe, automotive filter
-├── pipeline_v0_2.py            # Amazon → eBay → 1688 short circuit
-├── benchmark.py                # metrics and acceptance report
-└── cli.py                      # retain V0.1 invocation; add subcommands
+│   ├── serpapi_ebay_discovery.py
+│   ├── serpapi_amazon.py
+│   ├── serpapi_ebay.py
+│   ├── hiobuy.py
+│   └── adapters.py             # provider-neutral wrappers and registry build
+├── managed.py                  # discovery + Amazon → eBay → 1688 service
+├── credentials.py              # environment override + OS keyring
+├── api.py                      # loopback frontend/task API
+├── benchmark.py                # future metrics and acceptance report
+└── cli.py                      # V0.1 compatibility + setup/api/discovery dispatch
 ```
 
 新增的 V0.2 JSON contracts 至少覆盖：
@@ -302,44 +330,40 @@ src/proteus/
 原始 payload。每个 adapter 保存最小必要 raw evidence，并将 provider/version、
 source method、request ID 和 retrieved time 写入输出。
 
-V0.2 只需轻量本地 run artifacts 和 TTL cache；本轮不引入数据库、队列、并发
-worker 或服务化。正常漏斗顺序执行，单 provider 并发默认为 1。
+V0.2.1 使用轻量 loopback API 和单 worker 内存任务队列，不引入数据库、持久任务
+队列或多用户服务。正常漏斗顺序执行，单 provider 并发默认为 1；进程重启会清空
+任务记录，后续可在不改变 HTTP contract 的前提下替换持久化实现。
 
 ## 7. CLI 设计
 
-本次保持单一参数式 CLI，既有 V0.1 输入仍可用；V0.2 新增 report replay 和 managed
-REST 入口。密钥只从指定环境变量读取：
+既有 V0.1 输入继续可用；V0.2.1 新增自动 discovery、一次性 setup 和 loopback API。
+密钥默认从 OS keyring 读取，环境变量作为显式 CI override：
 
 ```powershell
-# 当前已实现的 V0.2 engineering-preview 路径
-$env:NEXSCOPE_API_KEY = "..."
-$env:HIOBUY_API_KEY = "..."
+# 当前默认的两账号路径
+proteus setup
 proteus `
-  --amazon-b2b-report .\b2b_not_yet_on_amazon.csv `
-  --nexscope `
-  --hiobuy-receiver .\private\receiver.json `
+  --discover-ebay-sold `
   --max-candidates 20 `
   --max-moq 10 `
-  --output .\reports_v0_2.json
+  --output .\managed_run.json
 ```
 
-如果不配置 HioBuy receiver，Nexscope 1688 只形成 listing 线索，供应 gate 必须
-`REVIEW_REQUIRED`。receiver 只进入 preview 请求，不写入报告；代码不暴露任何
-create/pay endpoint。
+如果未配置 HioBuy receiver，自动 profile 在发请求前失败。receiver 只进入 preview
+请求，不写入报告；代码不暴露任何 create/pay endpoint。
 
 `providers check` 已实现；它区分本地阻断、live acquisition 状态和 contract validity，
 但一次 canary 通过不等于 provider/product acceptance。SP-API 自动报告拉取和独立
-`benchmark` 命令仍未实现。离线/manual 与 report replay 输出均为
-`automation_qualified=false`，不能混入自动产品验收统计。
+`benchmark` 命令仍未实现。Managed run 通过 `execution.mode` 与 official-tier
+`automation_qualified` 分开表达。
 
 显式逐阶段选择示例：
 
 ```powershell
 proteus --amazon-b2b-report .\b2b.csv --managed-providers `
-  --amazon-provider nexscope-amazon `
+  --amazon-provider serpapi-amazon `
   --ebay-provider serpapi-ebay `
   --supply-provider hiobuy-1688 `
-  --hiobuy-receiver .\private\receiver.json `
   --max-moq 10 --output .\reports.json
 ```
 
@@ -347,8 +371,8 @@ proteus --amazon-b2b-report .\b2b.csv --managed-providers `
 
 ### 8.1 样本
 
-从同一份最新 US Amazon B2B report 中按固定 seed 抽取 20 个去重后的 automotive
-候选。样本必须覆盖 exact MPN、normalized MPN、UPC/model fallback、明确无结果、
+从同一 eBay Motors sold-category discovery manifest 中按固定顺序抽取 20 个去重后的
+automotive 候选。样本必须覆盖 exact MPN、normalized MPN、明确无结果、
 replacement/cross-reference、left/right 和歧义情况。gold labels 由人工一次性复核
 并版本化；benchmark 执行本身不调用 Agent。
 
@@ -383,21 +407,21 @@ replacement/cross-reference、left/right 和歧义情况。gold labels 由人工
 
 1. **Provider engineering pass**：上述全部指标达线，fixture/replay 和 live
    benchmark 都通过，且没有 failure 被转成零结果或通过。
-2. **Product pass**：正常自动发现路径从最新 report 自动产生 20 个候选，并
-   至少输出一个当前、三门全过、`automation_qualified=true` 的真实
-   `OPPORTUNITY_CANDIDATE`。
+2. **Managed product pass**：默认 eBay sold discovery 自动产生 20 个候选，并
+   至少输出一个当前、三门全过、带成功 1688 order preview 的真实
+   `OPPORTUNITY_CANDIDATE`。Official-tier 的 `automation_qualified=true` 单独验收。
 
 若 engineering pass 成立但没有真实 opportunity，V0.2 只能报告“provider 可用，
 产品假设尚未通过”，不能回退为人工需求抓取并宣称完成。
 
 ## 9. 实现阶段
 
-### Phase 0 — Access proof before adapters
+### Phase 0 — Access proof and live acceptance after offline adapters
 
-- 确认 Amazon B2B report 的账号、marketplace、report/API 权限与用途；取得一份
-  脱敏 20-row schema sample。
-- 对计划使用的 Amazon/eBay 官方 API 完成 role、quota 和 required-field probe。
-- 对 Nexscope 完成 key、endpoint、字段、source/freshness、费率和条款 probe。
+- 取得 SerpApi key，验证 eBay discovery、Amazon exact search 和 eBay exact sold
+  三个 capability 的 quota、字段、freshness 和失败语义。
+- 可选确认 Amazon B2B report 的账号、marketplace、report/API 权限与用途。
+- Nexscope 只在显式选择兼容 profile 时再做 source/freshness/费率 probe。
 - 确认具体 1688 solution 同时授权 buyer-side discovery、offer detail 和 order
   preview；只验证 preview，不创建订单。
 - 输出 provider readiness JSON。任一关键 gate 未过，就停止对应 adapter 的业务
@@ -454,7 +478,8 @@ official retrieval/adapters、readiness/cost gate 和 benchmark 仍是开放项�
 
 In scope：
 
-- Amazon B2B report 自动候选源；
+- eBay Motors sold-category 自动候选源；
+- Amazon B2B report 候选兼容源；
 - provider readiness/freshness/cost gate；
 - Amazon、eBay、1688 official API adapters；
 - 可替换 Nexscope managed adapter；
@@ -467,10 +492,10 @@ Out of scope：
 
 - Agent/LLM 正常路径、语义自动裁决；
 - CAPTCHA、challenge、登录、stealth、指纹或代理池绕过；
-- 10,000-item 规模、并发调度、服务化、Dashboard、SQLite/云数据库；
+- 10,000-item 规模、多用户服务、Dashboard、持久任务队列、SQLite/云数据库；
 - 复杂 ranking、精确利润、物流、关税、退货率和供应商质量评分；
 - 自动 cross-reference 合并、供应商联系、创建订单、采购、刊登或交易；
-- Amazon B2B 报告之外的新候选源。
+- 未经 contract/canary 审核的其他候选源。
 
 ## 12. 回滚与停止条件
 
@@ -488,13 +513,13 @@ Out of scope：
 
 ## 13. 下一实施动作
 
-engineering preview 已有两个 managed adapters；下一步不要继续增加 provider client。
-先完成 Phase 0 的四份 live provider readiness 结果，尤其是：
+两账号 engineering preview 已包含四个 provider capabilities；下一步不要继续增加
+provider client。先取得 SerpApi/HioBuy 凭证并完成四份 live readiness 结果：
 
-1. 取得最新 US `Not Yet on Amazon` 报告/API 的真实字段样本；
-2. 证明至少一个 Amazon competition provider 能绑定 query 与 current results；
-3. 证明 eBay provider 能合法返回 listing-level sold evidence；
-4. 证明获准的 1688 solution 能对 exact offer/SKU 执行 order preview。
+1. 证明 eBay sold-category discovery 能稳定产生可复核的 part-number tokens；
+2. 证明 SerpApi Amazon 能绑定 exact query、US context 与完整结果页；
+3. 证明 SerpApi eBay 能合法返回 listing-level sold evidence；
+4. 证明获准的 HioBuy app 能对 exact offer/SKU 执行 order preview。
 
 自动漏斗的 engineering preview 已实现；只有这四项同时存在并通过 live canary
 与 20-item benchmark，才进入产品验收。否则明确报告被哪一个 provider gate

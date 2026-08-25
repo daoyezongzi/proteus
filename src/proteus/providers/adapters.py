@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from proteus.providers.base import (
+    CandidateDiscoveryRequest,
     Capability,
     CheckStatus,
     PartLookupRequest,
@@ -22,16 +23,21 @@ from proteus.providers.nexscope import (
 )
 from proteus.providers.registry import ProviderRegistry
 from proteus.providers.serpapi_ebay import collect_ebay_sold
+from proteus.providers.serpapi_amazon import collect_amazon_competition
+from proteus.providers.serpapi_ebay_discovery import collect_ebay_sold_candidates
 
 
 NEXSCOPE_AMAZON_ID = "nexscope-amazon"
 NEXSCOPE_EBAY_ID = "nexscope-ebay"
 NEXSCOPE_1688_LISTING_ID = "nexscope-1688-listing"
+SERPAPI_AMAZON_ID = "serpapi-amazon"
 SERPAPI_EBAY_ID = "serpapi-ebay"
+SERPAPI_EBAY_DISCOVERY_ID = "serpapi-ebay-discovery"
 HIOBUY_1688_ID = "hiobuy-1688"
 
 PartCollector = Callable[..., Mapping[str, Any]]
 SupplyCollector = Callable[..., Mapping[str, Any]]
+DiscoveryCollector = Callable[..., Mapping[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +243,73 @@ class SerpApiEbayProvider:
 
 
 @dataclass(slots=True)
+class SerpApiAmazonProvider:
+    api_key: str | None
+    collector: PartCollector = collect_amazon_competition
+    purpose_compatible: bool | None = None
+    cost_per_request_usd: float | None = None
+    provider_id: str = SERPAPI_AMAZON_ID
+    capability: Capability = Capability.AMAZON_COMPETITION
+
+    def preflight(self) -> ProviderReadiness:
+        return ProviderReadiness(
+            self.provider_id,
+            self.capability,
+            _commercial_checks(
+                api_key=self.api_key,
+                variable_name="SERPAPI_API_KEY",
+                market_fixed=True,
+                freshness_known=True,
+                purpose_compatible=self.purpose_compatible,
+                required_fields_known=True,
+                cost_per_request_usd=self.cost_per_request_usd,
+            ),
+        )
+
+    def acquire(self, request: PartLookupRequest) -> Mapping[str, Any]:
+        return self.collector(request.raw_part_number, api_key=self.api_key or "")
+
+    def estimate_cost(self, request: PartLookupRequest) -> float | None:
+        return self.cost_per_request_usd
+
+
+@dataclass(slots=True)
+class SerpApiEbayDiscoveryProvider:
+    api_key: str | None
+    collector: DiscoveryCollector = collect_ebay_sold_candidates
+    purpose_compatible: bool | None = None
+    cost_per_request_usd: float | None = None
+    provider_id: str = SERPAPI_EBAY_DISCOVERY_ID
+    capability: Capability = Capability.EBAY_CANDIDATE_SOURCE
+
+    def preflight(self) -> ProviderReadiness:
+        return ProviderReadiness(
+            self.provider_id,
+            self.capability,
+            _commercial_checks(
+                api_key=self.api_key,
+                variable_name="SERPAPI_API_KEY",
+                market_fixed=True,
+                freshness_known=True,
+                purpose_compatible=self.purpose_compatible,
+                required_fields_known=True,
+                cost_per_request_usd=self.cost_per_request_usd,
+            ),
+        )
+
+    def acquire(self, request: CandidateDiscoveryRequest) -> Mapping[str, Any]:
+        return self.collector(
+            api_key=self.api_key or "",
+            category_id=request.category_id,
+            max_candidates=request.max_candidates,
+            page=request.page,
+        )
+
+    def estimate_cost(self, request: CandidateDiscoveryRequest) -> float | None:
+        return self.cost_per_request_usd
+
+
+@dataclass(slots=True)
 class Nexscope1688ListingProvider:
     api_key: str | None
     collector: PartCollector = collect_1688_search
@@ -353,9 +426,24 @@ def build_provider_registry(
         )
     )
     registry.register(
+        SerpApiAmazonProvider(
+            serpapi_key,
+            collector=functions.get(SERPAPI_AMAZON_ID, collect_amazon_competition),
+        )
+    )
+    registry.register(
         SerpApiEbayProvider(
             serpapi_key,
             collector=functions.get(SERPAPI_EBAY_ID, collect_ebay_sold),
+        )
+    )
+    registry.register(
+        SerpApiEbayDiscoveryProvider(
+            serpapi_key,
+            collector=functions.get(
+                SERPAPI_EBAY_DISCOVERY_ID,
+                collect_ebay_sold_candidates,
+            ),
         )
     )
     registry.register(

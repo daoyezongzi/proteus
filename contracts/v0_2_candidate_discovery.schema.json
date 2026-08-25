@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "v0_2_candidate_discovery.schema.json",
+  "title": "Proteus V0.2 CandidateDiscoveryOutcome",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "provider",
+    "source_method",
+    "category",
+    "market_context",
+    "status",
+    "retrieved_at",
+    "page",
+    "candidates",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.2"},
+    "provider": {"type": "string", "minLength": 1},
+    "source_method": {"const": "MANAGED_API"},
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[0-9]+$"},
+        "name": {"type": "string", "minLength": 1}
+      }
+    },
+    "market_context": {"$ref": "./v0_2_acquisition.schema.json#/$defs/marketContext"},
+    "status": {"$ref": "./v0_2_acquisition.schema.json#/$defs/acquisitionStatus"},
+    "retrieved_at": {"type": "string", "format": "date-time"},
+    "page": {"type": "integer", "minimum": 1},
+    "candidates": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "raw_part_number",
+          "canonical_part_number",
+          "identifier_type",
+          "source_field",
+          "source_listing_id",
+          "source_listing_url",
+          "source_listing_title",
+          "source_listing_position",
+          "source_sold_count"
+        ],
+        "properties": {
+          "raw_part_number": {"type": "string", "minLength": 1},
+          "canonical_part_number": {"type": "string", "pattern": "^[A-Z0-9]+$"},
+          "identifier_type": {"const": "partNumber"},
+          "source_field": {"const": "title"},
+          "source_listing_id": {"type": "string", "minLength": 1},
+          "source_listing_url": {"type": "string", "format": "uri"},
+          "source_listing_title": {"type": "string", "minLength": 1},
+          "source_listing_position": {"type": "integer", "minimum": 1},
+          "source_sold_count": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "raw_marker"],
+        "properties": {
+          "code": {
+            "enum": [
+              "HTTP_ERROR",
+              "TIMEOUT",
+              "AUTH_REQUIRED",
+              "BLOCKED_BY_CREDENTIALS",
+              "MARKET_CONTEXT_MISMATCH",
+              "PARSER_FAILED",
+              "LISTING_SKIPPED",
+              "DUPLICATE_CANDIDATE"
+            ]
+          },
+          "message": {"type": "string", "minLength": 1},
+          "raw_marker": {"type": ["string", "null"]}
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ZERO_RESULTS",
+              "HTTP_ERROR",
+              "TIMEOUT",
+              "AUTH_REQUIRED",
+              "BLOCKED_BY_CREDENTIALS",
+              "MARKET_CONTEXT_MISMATCH",
+              "PARSER_FAILED"
+            ]
+          }
+        }
+      },
+      "then": {"properties": {"candidates": {"maxItems": 0}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "PARTIAL_SUCCESS"}}},
+      "then": {"properties": {"diagnostics": {"minItems": 1}}}
+    }
+  ]
+}

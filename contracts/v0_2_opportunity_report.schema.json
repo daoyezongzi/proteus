@@ -284,7 +284,8 @@
           "enum": [
             "SUPPLIED_POOL",
             "AMAZON_B2B_REPORT_REPLAY",
-            "AMAZON_B2B_REPORT_API"
+            "AMAZON_B2B_REPORT_API",
+            "EBAY_SOLD_DISCOVERY_API"
           ]
         },
         "provider": {
