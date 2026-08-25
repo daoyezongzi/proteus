@@ -1,5 +1,29 @@
 # Proteus Development Log
 
+## 2026-08-25 — Search/crawl wheel research added to the MVP path
+
+- Confirmed the architectural distinction between discovery and decision:
+  Agent/search APIs can return indexed URLs, snippets and sometimes extracted
+  page content, but indexing does not prove that the current runtime can fetch
+  the origin or that an absent result is a valid negative.
+- The live `53630-53010` experiment supports that boundary: general search found
+  exact third-party product pages while direct Amazon/eBay/1688 evidence paths
+  remained unavailable. Search is useful as a candidate and URL discovery layer,
+  not as a replacement for current platform and order-preview evidence.
+- Selected an implementation shortlist instead of building more bespoke parsers:
+  `python-amazon-sp-api` for Amazon Reports; Tavily first and Brave/Exa as search
+  comparisons; SerpApi/DataForSEO for marketplace-managed benchmarks; eBay
+  Browse API for active inventory/fitment; HioBuy for 1688 order preview; and
+  Crawlee Python for queue/retry/resume orchestration.
+- Rejected proxy/impersonation-dependent community eBay actors from the normal
+  path because they conflict with the frozen no-proxy/no-stealth boundary. A
+  third-party managed provider still needs written purpose compatibility and a
+  provider benchmark before integration.
+- Expanded `TODO.md` from provider access alone to the complete deliverable-MVP
+  path: multi-identifier identity resolution, search discovery, unit economics,
+  ranking, backend job service, persistence, secret handling, deployment,
+  front end and real product acceptance.
+
 ## 2026-08-25 — V0.2 one-item live canary remains blocked
 
 - Probed real Lexus/Toyota part `53630-53010`. Public catalog evidence confirms
