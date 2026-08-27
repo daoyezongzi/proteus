@@ -355,7 +355,8 @@ function renderResult(result) {
                  "notice.empty.body",
                  disc.pages_completed ?? 0,
                  disc.pages_requested ?? 0,
-                 disc.category_id ?? "—"
+                 disc.category_id ?? "—",
+                 disc.keyword ?? "—"
                )
              )}</p>
            </div>`
@@ -369,6 +370,7 @@ function renderResult(result) {
 function collect() {
   const body = {
     ebay_category_id: document.getElementById("ebay_category_id").value.trim(),
+    discovery_keyword: document.getElementById("discovery_keyword").value.trim(),
     max_candidates: Number(document.getElementById("max_candidates").value),
     discovery_pages: Number(document.getElementById("discovery_pages").value),
   };

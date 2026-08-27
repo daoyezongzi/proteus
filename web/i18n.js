@@ -10,6 +10,8 @@ const COPY = {
     "sample.note": "倒进筛网的东西。候选来自eBay Motors近期已售listing。",
     "field.category": "eBay类目",
     "field.category.hint": "6028是汽车零件",
+    "field.keyword": "检索关键词",
+    "field.keyword.hint": "搜索引擎不能只按类目浏览，样本取自类目内的这个关键词，不是整个类目。",
     "field.candidates": "候选数",
     "field.pages": "读取页数",
     "stack.title": "筛网组",
@@ -47,8 +49,8 @@ const COPY = {
     "verdict.REJECTED": "已筛掉",
     "notice.boundary.title": "通过意味着什么、不意味着什么",
     "notice.empty.title": "发现阶段没有返回结果",
-    "notice.empty.body": (done, req, cat) =>
-      `在类目 ${cat} 读了 ${req} 页中的 ${done} 页。空结果不等于没有需求 — 也可能是provider失败了。`,
+    "notice.empty.body": (done, req, cat, kw) =>
+      `在类目 ${cat} 内以关键词「${kw}」读了 ${req} 页中的 ${done} 页。空结果不等于没有需求 — 也可能是这个关键词取不到样本，或者provider失败了。`,
     "readings": "读数与来源",
     "needs": (op, t) => `（需要${op} ${t}）`,
     "noreading": "无读数",
@@ -102,6 +104,8 @@ const COPY = {
     "sample.note": "What gets poured into the stack. Candidates come from recently sold eBay Motors listings.",
     "field.category": "eBay category",
     "field.category.hint": "6028 is Motors parts",
+    "field.keyword": "Search keyword",
+    "field.keyword.hint": "The engine cannot browse a category alone. The sample is drawn from this keyword inside the category, not the whole category.",
     "field.candidates": "Candidates",
     "field.pages": "Pages to read",
     "stack.title": "The sieve stack",
@@ -139,8 +143,8 @@ const COPY = {
     "verdict.REJECTED": "Screened out",
     "notice.boundary.title": "What a pass does and doesn't mean",
     "notice.empty.title": "Discovery returned nothing",
-    "notice.empty.body": (done, req, cat) =>
-      `Read ${done} of ${req} page(s) in category ${cat}. An empty result is not evidence of no demand — the provider may have failed.`,
+    "notice.empty.body": (done, req, cat, kw) =>
+      `Read ${done} of ${req} page(s) in category ${cat} for "${kw}". An empty result is not evidence of no demand — the keyword may draw no sample, or the provider may have failed.`,
     "readings": "readings and sources",
     "needs": (op, t) => `(needs ${op} ${t})`,
     "noreading": "no reading",

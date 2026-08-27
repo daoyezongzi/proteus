@@ -192,6 +192,7 @@ class StubService:
                 },
                 "discovery": {
                     "category_id": request.get("ebay_category_id"),
+                    "keyword": request.get("discovery_keyword"),
                     "pages_requested": request.get("discovery_pages"),
                     "pages_completed": request.get("discovery_pages"),
                     "candidate_count": len(reports),

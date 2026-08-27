@@ -201,6 +201,10 @@ body {
 
 .field { display: block; }
 
+/* The keyword bounds what the sample can contain, so it gets a full row: it
+   reads as a stated premise rather than one more number to tune. */
+.field--wide { grid-column: 1 / -1; }
+
 .field__label {
   display: block;
   font-size: 0.7rem;
