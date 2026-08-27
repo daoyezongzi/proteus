@@ -1,3 +1,8 @@
 * text=auto
 *.md text eol=lf
 *.py text eol=lf
+
+# cmd.exe mis-parses a .bat with LF endings: it resumes mid-token and splits
+# commands apart ('set "PORT=8765"' becomes the command '765"'). Pin CRLF so a
+# checkout on any platform produces a file Windows can actually run.
+*.bat text eol=crlf

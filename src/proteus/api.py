@@ -8,11 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
 import os
+from pathlib import Path
 from threading import Lock
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, status
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from proteus import __version__
@@ -436,6 +438,25 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         if value is None:
             raise HTTPException(status_code=404, detail="run not found")
         return value
+
+    # Serve the loopback operator UI last so it cannot shadow any API route.
+    # The directory is absent in a wheel-only install; the API still works.
+    web_root = Path(__file__).resolve().parents[2] / "web"
+    if web_root.is_dir():
+
+        class _NoStoreStatic(StaticFiles):
+            """Serve the UI without caching.
+
+            This is a single-user loopback tool that is edited in place; a
+            cached index.html paired with fresh JS silently breaks the page.
+            """
+
+            def file_response(self, *args: Any, **kwargs: Any):
+                response = super().file_response(*args, **kwargs)
+                response.headers["cache-control"] = "no-store"
+                return response
+
+        app.mount("/", _NoStoreStatic(directory=web_root, html=True), name="web")
 
     return app
 

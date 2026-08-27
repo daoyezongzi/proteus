@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proteus</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Hanken+Grotesk:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&family=Spline+Sans+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead__id">
+    <span class="wordmark">Proteus</span>
+    <p class="thesis" data-i18n="thesis"></p>
+  </div>
+
+  <div class="masthead__meta">
+    <div class="lang" role="group" id="lang">
+      <button class="lang__opt" type="button" data-lang="zh" lang="zh-Hans">中文</button>
+      <button class="lang__opt" type="button" data-lang="en" lang="en">EN</button>
+    </div>
+    <div class="ribbon" id="ribbon" aria-live="polite"></div>
+  </div>
+</header>
+
+<main class="bench">
+
+  <form class="rail" id="runForm" novalidate>
+
+    <section class="block">
+      <h2 class="block__title" data-i18n="sample.title"></h2>
+      <p class="block__note" data-i18n="sample.note"></p>
+      <div class="fields">
+        <label class="field">
+          <span class="field__label" data-i18n="field.category"></span>
+          <input class="field__input" id="ebay_category_id" name="ebay_category_id"
+                 inputmode="numeric" pattern="[0-9]+" value="6028" required>
+          <span class="field__hint" data-i18n="field.category.hint"></span>
+        </label>
+        <label class="field">
+          <span class="field__label" data-i18n="field.candidates"></span>
+          <input class="field__input" id="max_candidates" name="max_candidates"
+                 type="number" min="1" max="100" value="20" required>
+          <span class="field__hint">1–100</span>
+        </label>
+        <label class="field">
+          <span class="field__label" data-i18n="field.pages"></span>
+          <input class="field__input" id="discovery_pages" name="discovery_pages"
+                 type="number" min="1" max="10" value="1" required>
+          <span class="field__hint">1–10</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="block__title" data-i18n="stack.title"></h2>
+      <p class="block__note" data-i18n="stack.note"></p>
+      <ol class="stack" id="stack"></ol>
+    </section>
+
+    <div class="action">
+      <button class="run" id="runButton" type="submit" data-i18n="run"></button>
+      <p class="action__note" id="actionNote"></p>
+    </div>
+
+  </form>
+
+  <section class="results" id="results" aria-live="polite"></section>
+
+</main>
+
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

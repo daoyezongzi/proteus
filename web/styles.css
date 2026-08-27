@@ -1,0 +1,635 @@
+/* Proteus — sieve stack operator bench
+   Palette carries meaning, not decoration:
+     clay = REVIEW_REQUIRED (your eyes are needed)
+     sage = PASSED
+     soft ink = REJECTED (a successful measurement, so it recedes)
+   No red anywhere. A rejection saved you money; it is not an alarm. */
+
+:root {
+  --paper:    #F5F3EE;
+  --well:     #EEEAE1;
+  --rule:     #DCD6CA;
+  --ink:      #191817;
+  --soft:     #6E685E;
+  --clay:     #D97757;
+  --sage:     #4E6E58;
+
+  --display: "Newsreader", Georgia, serif;
+  --body:    "Hanken Grotesk", system-ui, sans-serif;
+  --mono:    "Spline Sans Mono", ui-monospace, monospace;
+
+  --gut: clamp(1.5rem, 3vw, 3rem);
+}
+
+/* Chinese needs its own faces — the Latin display/body faces carry no Han
+   glyphs, so without this the page would silently fall back to a system font
+   and lose the typographic voice. Noto Serif/Sans SC are the closest match in
+   weight and proportion. */
+:root[data-lang="zh"] {
+  --display: "Noto Serif SC", "Newsreader", Georgia, serif;
+  --body: "Noto Sans SC", "Hanken Grotesk", system-ui, sans-serif;
+}
+
+/* Han glyphs have no true italic; a synthesized slant looks broken. Mark the
+   caveat with color and leading instead, which it already carries. */
+:root[data-lang="zh"] .mesh__caveat { font-style: normal; }
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ---------- masthead ---------- */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.25rem 2rem;
+  padding: clamp(1.75rem, 4vw, 3rem) var(--gut) 1.5rem;
+  border-bottom: 1px solid var(--ink);
+}
+
+.masthead__id { max-width: 44ch; }
+
+.masthead__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+
+@media (max-width: 40rem) {
+  .masthead__meta { align-items: flex-start; }
+}
+
+/* Language toggle: a two-position switch, not a dropdown. Both options stay
+   visible so the reader can see what they'd be switching to. */
+.lang {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.lang__opt {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--soft);
+  font-family: var(--body);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+
+.lang__opt + .lang__opt { border-left: 1px solid var(--rule); }
+
+.lang__opt:hover { color: var(--ink); }
+
+.lang__opt[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+  cursor: default;
+}
+
+.wordmark {
+  display: block;
+  font-family: var(--display);
+  font-size: clamp(2.6rem, 6vw, 4.25rem);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 0.92;
+}
+
+.thesis {
+  margin: 0.7rem 0 0;
+  max-width: 40ch;
+  color: var(--soft);
+  font-size: 0.95rem;
+}
+
+.ribbon {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: var(--soft);
+}
+
+.ribbon__loading { font-style: normal; }
+
+.ribbon__item { white-space: nowrap; }
+
+.ribbon__item b {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.ribbon__item[data-state="missing"] b { color: var(--clay); }
+
+/* ---------- bench layout ---------- */
+
+.bench {
+  display: grid;
+  grid-template-columns: minmax(0, 25rem) minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(1.5rem, 3vw, 3.5rem);
+  padding: clamp(1.75rem, 3.5vw, 2.75rem) var(--gut) 5rem;
+  max-width: 96rem;
+  margin: 0 auto;
+}
+
+@media (max-width: 60rem) {
+  .bench { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- rail (controls) ---------- */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  position: sticky;
+  top: 1.5rem;
+}
+
+@media (max-width: 60rem) {
+  .rail { position: static; }
+}
+
+.block__title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.3rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.block__note {
+  margin: 0.3rem 0 1rem;
+  color: var(--soft);
+  font-size: 0.85rem;
+  max-width: 38ch;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  gap: 0.9rem;
+}
+
+.field { display: block; }
+
+.field__label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.field__input {
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: #FFFDF9;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+}
+
+.field__input:focus-visible { border-color: var(--ink); }
+
+.field__input[aria-invalid="true"] { border-color: var(--clay); }
+
+.field__hint {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+  color: var(--soft);
+}
+
+/* ---------- the sieve stack (signature) ---------- */
+
+.stack {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--ink);
+}
+
+.mesh {
+  padding: 0.9rem 0 1rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.mesh:last-child { border-bottom: 1px solid var(--ink); }
+
+.mesh__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+/* Aperture number: the stack IS graded, so ordinals carry real information. */
+.mesh__grade {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--soft);
+  padding-top: 0.15rem;
+}
+
+.mesh__name {
+  font-family: var(--display);
+  font-size: 1.02rem;
+  font-weight: 500;
+  flex: 1;
+}
+
+.mesh__held {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.mesh__control {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0 1.85rem;
+  flex-wrap: wrap;
+}
+
+.mesh__op {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--soft);
+}
+
+.mesh__input {
+  width: 7rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: #FFFDF9;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+}
+
+.mesh__input:focus-visible { border-color: var(--ink); }
+
+.mesh__input[aria-invalid="true"] { border-color: var(--clay); }
+
+.mesh__fixed {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.mesh__caveat {
+  display: block;
+  margin: 0.45rem 0 0 1.85rem;
+  font-family: var(--display);
+  font-style: italic;
+  font-size: 0.85rem;
+  color: var(--soft);
+  max-width: 40ch;
+}
+
+.mesh__caveat--flag { color: var(--clay); }
+
+.mesh__required {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--clay);
+}
+
+/* ---------- run ---------- */
+
+.action { display: flex; flex-direction: column; gap: 0.6rem; }
+
+.run {
+  appearance: none;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--body);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 0.75rem 1.1rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.run:hover:not(:disabled) { background: #2E2C29; }
+
+.run:disabled { cursor: progress; opacity: 0.55; }
+
+.action__note {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 0.8rem;
+  color: var(--soft);
+}
+
+.action__note[data-tone="flag"] { color: var(--clay); }
+
+/* ---------- results ---------- */
+
+.results { min-width: 0; }
+
+.empty {
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--well);
+  padding: clamp(2rem, 5vw, 3.5rem);
+}
+
+.empty__title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.5rem;
+  font-weight: 500;
+}
+
+.empty__body {
+  margin: 0.5rem 0 0;
+  max-width: 46ch;
+  color: var(--soft);
+}
+
+.tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2rem;
+  align-items: baseline;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--ink);
+}
+
+.tally__lead {
+  font-family: var(--display);
+  font-size: 1.4rem;
+  font-weight: 500;
+  margin: 0;
+  flex: 1;
+  min-width: 14rem;
+}
+
+.tally__stat {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.tally__stat b {
+  font-weight: 500;
+  font-size: 1.1rem;
+  color: var(--ink);
+  margin-right: 0.3rem;
+}
+
+.tally__stat[data-tone="pass"] b { color: var(--sage); }
+.tally__stat[data-tone="review"] b { color: var(--clay); }
+
+.notice {
+  margin: 1rem 0 0;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--clay);
+  border-radius: 2px;
+  background: var(--well);
+  font-size: 0.85rem;
+}
+
+.notice__title {
+  margin: 0 0 0.25rem;
+  font-family: var(--display);
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.notice p { margin: 0; color: var(--soft); }
+
+.notice code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+
+/* candidate rows */
+
+.catch { list-style: none; margin: 0; padding: 0; }
+
+.catch__row {
+  border-bottom: 1px solid var(--rule);
+  padding: 1.1rem 0;
+}
+
+.catch__row[data-decision="REJECTED"] { color: var(--soft); }
+
+.catch__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+}
+
+.catch__pn {
+  font-family: var(--mono);
+  font-size: 1.05rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.catch__row[data-decision="REJECTED"] .catch__pn { color: var(--soft); }
+
+.verdict {
+  font-family: var(--body);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+
+.verdict[data-decision="MVP_OPPORTUNITY_CANDIDATE"] { color: var(--sage); }
+.verdict[data-decision="REVIEW_REQUIRED"] { color: var(--clay); }
+.verdict[data-decision="REJECTED"] { color: var(--soft); }
+
+/* the sieve trace: four bars, one per mesh */
+
+.trace {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.trace__bar {
+  width: 20px;
+  height: 15px;
+  border: 1px solid var(--rule);
+  border-radius: 1px;
+}
+
+/* passed: open hatch — material went through */
+.trace__bar[data-status="PASSED"] {
+  border-color: var(--sage);
+  background: repeating-linear-gradient(
+    90deg, var(--sage) 0 1px, transparent 1px 4px
+  );
+}
+
+/* rejected: solid — the mesh held it, a clean measurement */
+.trace__bar[data-status="REJECTED"] {
+  border-color: var(--soft);
+  background: var(--soft);
+}
+
+/* review: torn mesh — the sieve could not measure */
+.trace__bar[data-status="REVIEW_REQUIRED"] {
+  border-color: var(--clay);
+  border-style: dashed;
+  background: repeating-linear-gradient(
+    135deg, var(--clay) 0 1px, transparent 1px 5px
+  );
+}
+
+/* never reached: absent, not gray. NOT_RUN means no evidence exists. */
+.trace__bar[data-status="NOT_RUN"] {
+  border-style: dotted;
+  border-color: var(--rule);
+  background: none;
+}
+
+.catch__title {
+  margin: 0.4rem 0 0;
+  font-size: 0.88rem;
+  color: var(--soft);
+  max-width: 70ch;
+}
+
+.catch__why {
+  margin: 0.5rem 0 0;
+  font-family: var(--display);
+  font-size: 0.95rem;
+}
+
+.catch__link {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--ink);
+  text-decoration-color: var(--rule);
+  text-underline-offset: 2px;
+}
+
+.catch__link:hover { text-decoration-color: var(--ink); }
+
+/* readings drawer */
+
+.readings {
+  margin-top: 0.7rem;
+  border-top: 1px dashed var(--rule);
+}
+
+.readings > summary {
+  cursor: pointer;
+  padding-top: 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.73rem;
+  letter-spacing: 0.03em;
+  color: var(--soft);
+  list-style: none;
+}
+
+.readings > summary::-webkit-details-marker { display: none; }
+
+.readings > summary::before {
+  content: "+ ";
+  color: var(--ink);
+}
+
+.readings[open] > summary::before { content: "– "; }
+
+.readings > summary:hover { color: var(--ink); }
+
+.reading {
+  display: grid;
+  grid-template-columns: minmax(9rem, 13rem) auto 1fr;
+  gap: 0.3rem 0.9rem;
+  align-items: baseline;
+  padding: 0.5rem 0;
+  border-bottom: 1px dotted var(--rule);
+  font-size: 0.82rem;
+}
+
+.reading:last-child { border-bottom: none; }
+
+.reading__gate {
+  font-family: var(--body);
+  font-weight: 600;
+  font-size: 0.7rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.reading__value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.reading__value[data-status="PASSED"] { color: var(--sage); }
+.reading__value[data-status="REVIEW_REQUIRED"] { color: var(--clay); }
+.reading__value[data-status="REJECTED"] { color: var(--soft); }
+.reading__value[data-status="NOT_RUN"] { color: var(--rule); }
+
+.reading__why { color: var(--soft); grid-column: 3; }
+
+.reading__src {
+  grid-column: 2 / -1;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--soft);
+}
+
+@media (max-width: 34rem) {
+  .reading { grid-template-columns: 1fr; }
+  .reading__why, .reading__src { grid-column: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
