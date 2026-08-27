@@ -301,6 +301,7 @@ class SerpApiEbayDiscoveryProvider:
         return self.collector(
             api_key=self.api_key or "",
             category_id=request.category_id,
+            keyword=request.keyword,
             max_candidates=request.max_candidates,
             page=request.page,
         )

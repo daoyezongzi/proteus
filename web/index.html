@@ -1,84 +1,117 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="zh-Hans">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Proteus</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Hanken+Grotesk:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&family=Spline+Sans+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Proteus · Northway 选品台</title>
+  <link rel="stylesheet" href="northway.css">
 </head>
 <body>
+  <a class="skip-link" href="#results">跳到候选结果</a>
 
-<header class="masthead">
-  <div class="masthead__id">
-    <span class="wordmark">Proteus</span>
-    <p class="thesis" data-i18n="thesis"></p>
-  </div>
-
-  <div class="masthead__meta">
-    <div class="lang" role="group" id="lang">
-      <button class="lang__opt" type="button" data-lang="zh" lang="zh-Hans">中文</button>
-      <button class="lang__opt" type="button" data-lang="en" lang="en">EN</button>
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">NORTHWAY PRODUCT-FAMILY MVP</p>
+      <h1>Proteus <span>选品台</span></h1>
+      <p class="masthead__copy">只扫描车型专用小零件；按整个平替产品家族判断竞争。</p>
     </div>
-    <div class="ribbon" id="ribbon" aria-live="polite"></div>
-  </div>
-</header>
+    <div class="system-status" id="systemStatus" role="status" aria-live="polite">
+      <span class="status-dot"></span>
+      <span>正在检查本地服务…</span>
+    </div>
+  </header>
 
-<main class="bench">
+  <main class="workspace">
+    <aside class="control-panel" aria-labelledby="scanTitle">
+      <div class="panel-heading">
+        <p class="step">01 / 扫描范围</p>
+        <h2 id="scanTitle">一次筛完全部窄零件</h2>
+        <p>自动覆盖 <strong id="archetypeCount">9</strong> 个 Northway 风格小类。候选不设数量上限，以页数和请求预算控制成本。</p>
+      </div>
 
-  <form class="rail" id="runForm" novalidate>
+      <form id="runForm" class="scan-form">
+        <label class="field">
+          <span>eBay 扫描页数</span>
+          <input id="discovery_pages" name="discovery_pages" type="number" min="1" max="10" value="1" required>
+          <small>每页最多约 50 条商品</small>
+        </label>
 
-    <section class="block">
-      <h2 class="block__title" data-i18n="sample.title"></h2>
-      <p class="block__note" data-i18n="sample.note"></p>
-      <div class="fields">
         <label class="field">
-          <span class="field__label" data-i18n="field.category"></span>
-          <input class="field__input" id="ebay_category_id" name="ebay_category_id"
-                 inputmode="numeric" pattern="[0-9]+" value="6028" required>
-          <span class="field__hint" data-i18n="field.category.hint"></span>
+          <span>总请求预算</span>
+          <input id="request_budget" name="request_budget" type="number" min="9" max="500" value="80" required>
+          <small id="budgetHint">至少 9 次用于覆盖全部类型；用尽后保留缺口</small>
         </label>
-        <label class="field field--wide">
-          <span class="field__label" data-i18n="field.keyword"></span>
-          <input class="field__input" id="discovery_keyword" name="discovery_keyword"
-                 type="text" maxlength="200" value="auto parts" required>
-          <span class="field__hint" data-i18n="field.keyword.hint"></span>
-        </label>
+
         <label class="field">
-          <span class="field__label" data-i18n="field.candidates"></span>
-          <input class="field__input" id="max_candidates" name="max_candidates"
-                 type="number" min="1" max="100" value="20" required>
-          <span class="field__hint">1–100</span>
+          <span>每个家族 Amazon 查询</span>
+          <input id="max_amazon_queries_per_family" name="max_amazon_queries_per_family" type="number" min="1" max="5" value="3" required>
+          <small>料号 + 车型描述查询</small>
         </label>
+
         <label class="field">
-          <span class="field__label" data-i18n="field.pages"></span>
-          <input class="field__input" id="discovery_pages" name="discovery_pages"
-                 type="number" min="1" max="10" value="1" required>
-          <span class="field__hint">1–10</span>
+          <span>最多平替产品种类</span>
+          <input id="max_competitive_products" name="max_competitive_products" type="number" min="0" max="100" value="3" required>
+          <small>ASIN 和 seller offers 分开统计</small>
         </label>
+
+        <label class="field">
+          <span>平替最低价高于</span>
+          <div class="money-input"><span>$</span><input id="min_family_price_usd" name="min_family_price_usd" type="number" min="0" step="0.01" value="20" required></div>
+          <small>廉价平替会直接暴露</small>
+        </label>
+
+        <label class="field">
+          <span>最低可见 eBay 销量</span>
+          <input id="min_observed_ebay_demand" name="min_observed_ebay_demand" type="number" min="0" value="1" required>
+          <small>初筛下界，不冒充 365 天销量</small>
+        </label>
+
+        <button class="primary-action" id="runButton" type="submit">
+          <span>开始选品扫描</span>
+          <span aria-hidden="true">→</span>
+        </button>
+        <p class="form-status" id="formStatus" role="status" aria-live="polite"></p>
+      </form>
+
+      <div class="boundary">
+        <strong>本版只做初筛</strong>
+        <p>只需要 SerpApi。国内供货、利润和最终适配由候选卡中的人工清单继续核对。</p>
+      </div>
+    </aside>
+
+    <section class="result-panel" id="results" aria-labelledby="resultTitle">
+      <div class="result-heading">
+        <div>
+          <p class="step">02 / 候选排序</p>
+          <h2 id="resultTitle">值得先看的产品家族</h2>
+          <p id="resultSubtitle">通过项更多、证据缺口更少、平替更少的候选排在前面。</p>
+        </div>
+        <button class="export-button" id="exportButton" type="button" hidden>下载完整 JSON</button>
+      </div>
+
+      <div class="empty-state" id="emptyState">
+        <span class="empty-state__mark">P</span>
+        <h3>还没有扫描结果</h3>
+        <p>点击左侧按钮后，会统一扫描全部 Northway 风格小类并按产品家族排序。</p>
+      </div>
+
+      <div id="resultContent" hidden>
+        <section class="run-summary" id="runSummary" aria-label="运行摘要"></section>
+        <div class="run-notice" id="runNotice" hidden></div>
+        <nav class="result-filters" id="resultFilters" aria-label="候选状态分类"></nav>
+        <p class="filter-empty" id="filterEmpty" hidden>当前分类没有候选。</p>
+        <ol class="candidate-list" id="candidateList"></ol>
       </div>
     </section>
+  </main>
 
-    <section class="block">
-      <h2 class="block__title" data-i18n="stack.title"></h2>
-      <p class="block__note" data-i18n="stack.note"></p>
-      <ol class="stack" id="stack"></ol>
-    </section>
-
-    <div class="action">
-      <button class="run" id="runButton" type="submit" data-i18n="run"></button>
-      <p class="action__note" id="actionNote"></p>
+  <template id="skeletonTemplate">
+    <div class="skeleton" aria-hidden="true">
+      <span></span><span></span><span></span>
     </div>
+  </template>
 
-  </form>
-
-  <section class="results" id="results" aria-live="polite"></section>
-
-</main>
-
-<script src="i18n.js"></script>
-<script src="app.js"></script>
+  <script src="northway.js"></script>
 </body>
 </html>

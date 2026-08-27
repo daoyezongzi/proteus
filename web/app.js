@@ -1,9 +1,7 @@
 /* Proteus operator bench.
    Talks only to the local Proteus API. No third-party keys ever reach the browser.
 
-   Mesh labels, operators, defaults and caveats hydrate from /api/v1/mvp/policy,
-   so a backend provider swap (MarketCheck -> NY DMV, and whatever follows)
-   changes this UI without an edit here. */
+   Mesh labels, operators, defaults and caveats hydrate from /api/v1/mvp/policy. */
 
 const API = "/api/v1";
 
@@ -20,8 +18,23 @@ const MESHES = [
     stage: "amazon_us_competition",
     criterion: "amazon_us_exact_competitors",
     field: "max_amazon_us_exact_competitors",
-    name: "mesh.amazon",
+    name: "mesh.amazonProducts",
     unit: "unit.competitors",
+  },
+  {
+    stage: "amazon_us_minimum_price",
+    criterion: "amazon_us_minimum_price",
+    field: "min_amazon_price_usd",
+    name: "mesh.amazonPrice",
+    unit: "unit.usd",
+    step: "0.01",
+  },
+  {
+    stage: "amazon_us_active_offers",
+    criterion: "amazon_us_active_offers",
+    field: "max_amazon_active_sellers",
+    name: "mesh.amazonOffers",
+    unit: "unit.offers",
   },
   {
     stage: "ebay_compatibility",
@@ -29,13 +42,6 @@ const MESHES = [
     field: "max_fitment_listings",
     name: "mesh.fitment",
     unit: "unit.probe",
-  },
-  {
-    stage: "us_active_vehicle_proxy",
-    criterion: "us_active_vehicle_proxy",
-    field: "min_us_active_vins",
-    name: "mesh.vehicles",
-    unit: "unit.vehicles",
   },
 ];
 
@@ -161,12 +167,7 @@ function meshRow(mesh, index) {
 
   const caveats = [];
   if (crit?.strict_365_day_metric === false) caveats.push(t("caveat.notannual"));
-  if (crit?.official_vio === false) {
-    const where = crit.state_code
-      ? t("caveat.stateonly", crit.state_code)
-      : t("caveat.proxy");
-    caveats.push(t("caveat.notvio", where));
-  }
+  if (mesh.criterion === "amazon_us_active_offers") caveats.push(t("caveat.offerproxy"));
 
   return `
     <li class="mesh" data-stage="${esc(mesh.stage)}">
@@ -182,6 +183,7 @@ function meshRow(mesh, index) {
                name="${esc(mesh.field)}"
                type="number"
                min="${isProbe ? 1 : 0}"
+               step="${esc(mesh.step || "1")}"
                value="${esc(value)}"
                ${mustSet ? "required" : ""}>
         <span class="mesh__op">${esc(t(mesh.unit))}</span>
@@ -297,6 +299,66 @@ function renderEmpty() {
     </div>`;
 }
 
+const DISCOVERY_FAILURES = new Set([
+  "HTTP_ERROR",
+  "TIMEOUT",
+  "AUTH_REQUIRED",
+  "BLOCKED_BY_CREDENTIALS",
+  "MARKET_CONTEXT_MISMATCH",
+  "PARSER_FAILED",
+]);
+
+function discoveryNotice(disc) {
+  const diagnostics = Array.isArray(disc.diagnostics) ? disc.diagnostics : [];
+  const primary = diagnostics.find((item) =>
+    DISCOVERY_FAILURES.has(item?.code)
+  );
+  const status = disc.status || primary?.code || "UNKNOWN";
+  const failed = DISCOVERY_FAILURES.has(status);
+  const attempted = disc.pages_attempted ?? disc.pages_completed ?? 0;
+  /* Older backend responses counted a failed request as completed. The
+     diagnostic lets this UI correct that legacy display. */
+  const completed =
+    failed && disc.pages_attempted == null ? 0 : disc.pages_completed ?? 0;
+  const requested = disc.pages_requested ?? 0;
+  const category = disc.category_id ?? "—";
+  const keyword = disc.keyword ?? "—";
+  const resultsSeen = disc.results_seen ?? 0;
+  const eligibleSold = disc.eligible_sold_listings ?? 0;
+  const withPartNumber = disc.listings_with_part_number ?? 0;
+  const emitted = disc.candidates_emitted ?? disc.candidate_count ?? 0;
+
+  let titleKey = "notice.discovery.filtered.title";
+  let bodyKey = "notice.discovery.filtered.body";
+  let args = [
+    completed,
+    requested,
+    category,
+    keyword,
+    resultsSeen,
+    eligibleSold,
+    withPartNumber,
+    emitted,
+  ];
+  if (failed) {
+    titleKey = "notice.discovery.failed.title";
+    bodyKey = "notice.discovery.failed.body";
+    args = [status, attempted, completed, requested, category, keyword];
+  } else if (status === "ZERO_RESULTS") {
+    titleKey = "notice.discovery.zero.title";
+    bodyKey = "notice.discovery.zero.body";
+  }
+
+  const detail = primary
+    ? `<p><code>${esc(primary.code)}</code> ${esc(reason(primary.message))}</p>`
+    : "";
+  return `<div class="notice">
+    <h3 class="notice__title">${esc(t(titleKey))}</h3>
+    <p>${esc(t(bodyKey, ...args))}</p>
+    ${detail}
+  </div>`;
+}
+
 function renderResult(result) {
   lastResult = result;
   const reports = Array.isArray(result.reports) ? result.reports : [];
@@ -348,18 +410,7 @@ function renderResult(result) {
 
     ${
       !reports.length
-        ? `<div class="notice">
-             <h3 class="notice__title">${esc(t("notice.empty.title"))}</h3>
-             <p>${esc(
-               t(
-                 "notice.empty.body",
-                 disc.pages_completed ?? 0,
-                 disc.pages_requested ?? 0,
-                 disc.category_id ?? "—",
-                 disc.keyword ?? "—"
-               )
-             )}</p>
-           </div>`
+        ? discoveryNotice(disc)
         : `<ul class="catch">${sorted.map(candidateRow).join("")}</ul>`
     }
   `;

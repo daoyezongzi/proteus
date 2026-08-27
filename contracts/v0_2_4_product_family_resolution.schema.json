@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "v0_2_4_product_family_resolution.schema.json",
+  "title": "Proteus V0.2.4 ProductFamilyResolution",
+  "description": "Provider-independent scope and sellable-product-family identity contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "resolution_id",
+    "label_role",
+    "scope_status",
+    "category_profile",
+    "source",
+    "family",
+    "reasons",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.2.4"},
+    "resolution_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"
+    },
+    "label_role": {
+      "enum": ["NORTHWAY_GOLD", "NORTHWAY_LIKE", "OUT_OF_SCOPE_NEGATIVE"]
+    },
+    "scope_status": {
+      "enum": ["IN_SCOPE", "OUT_OF_SCOPE", "REVIEW_REQUIRED"]
+    },
+    "category_profile": {
+      "type": ["string", "null"],
+      "enum": [
+        "vehicle_specific_small_trim",
+        "vehicle_specific_cable",
+        null
+      ]
+    },
+    "source": {"$ref": "#/$defs/source"},
+    "family": {
+      "oneOf": [
+        {"$ref": "#/$defs/sellableProductFamily"},
+        {"type": "null"}
+      ]
+    },
+    "reasons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"scope_status": {"const": "IN_SCOPE"}}},
+      "then": {
+        "properties": {
+          "category_profile": {"type": "string"},
+          "family": {"$ref": "#/$defs/sellableProductFamily"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"scope_status": {"const": "OUT_OF_SCOPE"}}},
+      "then": {
+        "properties": {
+          "category_profile": {"type": "null"},
+          "family": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"label_role": {"const": "OUT_OF_SCOPE_NEGATIVE"}}
+      },
+      "then": {
+        "properties": {"scope_status": {"const": "OUT_OF_SCOPE"}}
+      }
+    }
+  ],
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_type",
+        "source_seller",
+        "source_reference",
+        "title",
+        "retrieved_at"
+      ],
+      "properties": {
+        "source_type": {
+          "enum": ["PUBLIC_CATALOG_REFERENCE", "PUBLIC_PART_CATALOG", "EBAY_LISTING"]
+        },
+        "source_seller": {"type": ["string", "null"], "minLength": 1},
+        "source_reference": {"type": "string", "format": "uri"},
+        "title": {"type": "string", "minLength": 1},
+        "retrieved_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "fitment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "make",
+        "model",
+        "year_from",
+        "year_to",
+        "engines",
+        "transmissions"
+      ],
+      "properties": {
+        "make": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "year_from": {"type": ["integer", "null"], "minimum": 1886},
+        "year_to": {"type": ["integer", "null"], "minimum": 1886},
+        "engines": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "transmissions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "identifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw", "canonical", "identifier_type", "role"],
+      "properties": {
+        "raw": {"type": "string", "minLength": 1},
+        "canonical": {"type": "string", "pattern": "^[A-Z0-9]+$"},
+        "identifier_type": {"enum": ["OEM", "MPN", "UPC", "EAN", "UNKNOWN"]},
+        "role": {"enum": ["PRIMARY", "ALIAS", "COMPONENT"]}
+      }
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relation_type", "target_identifier", "evidence_reference"],
+      "properties": {
+        "relation_type": {
+          "enum": [
+            "same_part",
+            "supersedes",
+            "replacement",
+            "compatible_part",
+            "left_right_counterpart",
+            "unknown_relation"
+          ]
+        },
+        "target_identifier": {"type": "string", "minLength": 1},
+        "evidence_reference": {"type": "string", "format": "uri"}
+      }
+    },
+    "criticalSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "value": {"type": "string", "minLength": 1}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_reference", "field", "raw_value"],
+      "properties": {
+        "source_reference": {"type": "string", "format": "uri"},
+        "field": {
+          "enum": ["title", "identifier", "fitment", "specification", "replacement"]
+        },
+        "raw_value": {"type": "string", "minLength": 1}
+      }
+    },
+    "sellableProductFamily": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family_key",
+        "part_type",
+        "fitments",
+        "positions",
+        "sides",
+        "critical_specs",
+        "package_quantity",
+        "package_type",
+        "identifiers",
+        "relations",
+        "confidence",
+        "evidence"
+      ],
+      "properties": {
+        "family_key": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"
+        },
+        "part_type": {"type": "string", "minLength": 1},
+        "fitments": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/fitment"}
+        },
+        "positions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "sides": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["LEFT", "RIGHT"]}
+        },
+        "critical_specs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/criticalSpec"}
+        },
+        "package_quantity": {"type": "integer", "minimum": 1},
+        "package_type": {"enum": ["SINGLE", "PAIR", "KIT"]},
+        "identifiers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/identifier"}
+        },
+        "relations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/relation"}
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/evidence"}
+        }
+      }
+    }
+  }
+}

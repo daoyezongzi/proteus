@@ -12,6 +12,7 @@ from proteus.providers.serpapi_amazon import (
     SerpApiRequest,
     SerpApiResponse,
     collect_amazon_competition,
+    collect_amazon_search,
 )
 
 
@@ -53,6 +54,8 @@ def success_payload() -> dict[str, Any]:
                 "title": "Genuine Toyota Lexus Hood Latch 53630-53010",
                 "link": "https://www.amazon.com/dp/B000000001",
                 "price": "$31.50",
+                "extracted_price": 31.5,
+                "more_buying_choices": "$29.99 (4 new offers)",
             },
             {
                 "asin": "B000000002",
@@ -79,6 +82,10 @@ def test_amazon_exact_search_maps_to_existing_competition_gate() -> None:
     assert outcome["acquisition_status"] == "SUCCESS"
     assert outcome["relevance_method"] == "DETERMINISTIC_EXACT"
     assert outcome["relevant_result_count"] == 1
+    assert outcome["minimum_exact_result_price_usd"] == 31.5
+    assert outcome["price_observation_complete"] is True
+    assert outcome["active_offer_count_lower_bound"] == 4
+    assert outcome["active_offer_count_complete"] is True
     assert API_KEY not in json.dumps(outcome)
     assert evaluate_amazon_competition_gate(
         outcome,
@@ -116,6 +123,38 @@ def test_amazon_pagination_cannot_prove_low_competition() -> None:
     assert evaluate_amazon_competition_gate(outcome)["status"] == "REVIEW_REQUIRED"
 
 
+def test_amazon_plus_offer_count_preserves_a_decisive_lower_bound() -> None:
+    payload = success_payload()
+    payload["organic_results"][0]["more_buying_choices"] = (
+        "$18.75 (343+ used & new offers)"
+    )
+
+    outcome = collect_amazon_competition(
+        PART_NUMBER,
+        api_key=API_KEY,
+        transport=RecordingTransport(response(payload)),
+        retrieved_at=RETRIEVED_AT,
+    )
+
+    assert outcome["active_offer_count_lower_bound"] == 343
+    assert outcome["active_offer_count_complete"] is False
+
+
+def test_amazon_missing_exact_price_cannot_pass_a_strict_price_gate() -> None:
+    payload = success_payload()
+    payload["organic_results"][0].pop("extracted_price")
+
+    outcome = collect_amazon_competition(
+        PART_NUMBER,
+        api_key=API_KEY,
+        transport=RecordingTransport(response(payload)),
+        retrieved_at=RETRIEVED_AT,
+    )
+
+    assert outcome["minimum_exact_result_price_usd"] is None
+    assert outcome["price_observation_complete"] is False
+
+
 def test_amazon_explicit_zero_and_auth_failure_are_not_confused() -> None:
     empty = success_payload()
     empty["organic_results"] = []
@@ -138,3 +177,50 @@ def test_amazon_explicit_zero_and_auth_failure_are_not_confused() -> None:
     assert zero["relevant_result_count"] == 0
     assert auth["acquisition_status"] == "AUTH_REQUIRED"
     assert auth["relevant_result_count"] is None
+
+
+def test_amazon_descriptive_search_preserves_products_for_family_classification() -> None:
+    query = "fog light bezel Chevrolet Silverado 2007-2013 right"
+    payload = success_payload()
+    payload["search_parameters"]["k"] = query
+    payload["organic_results"][0]["title"] = (
+        "Right Fog Light Bezel for 2007-2013 Chevrolet Silverado 25778388"
+    )
+    payload["organic_results"][1]["title"] = "Universal LED fog lamp assembly"
+
+    outcome = collect_amazon_search(
+        query,
+        api_key=API_KEY,
+        transport=RecordingTransport(response(payload)),
+        retrieved_at=RETRIEVED_AT,
+    )
+
+    assert outcome["schema_version"] == "0.2.4"
+    assert outcome["acquisition_status"] == "SUCCESS"
+    assert outcome["result_page_complete"] is True
+    assert outcome["results_seen"] == 2
+    assert [product["asin"] for product in outcome["products"]] == [
+        "B000000001",
+        "B000000002",
+    ]
+    assert outcome["products"][0]["title"].startswith("Right Fog Light Bezel")
+    assert outcome["products"][0]["active_offer_count_lower_bound"] == 4
+    assert API_KEY not in json.dumps(outcome)
+
+
+def test_amazon_descriptive_search_marks_pagination_incomplete() -> None:
+    query = "hood release cable Toyota Yaris"
+    payload = success_payload()
+    payload["search_parameters"]["k"] = query
+    payload["pagination"] = {"next": "https://www.amazon.com/s?page=2"}
+
+    outcome = collect_amazon_search(
+        query,
+        api_key=API_KEY,
+        transport=RecordingTransport(response(payload)),
+        retrieved_at=RETRIEVED_AT,
+    )
+
+    assert outcome["acquisition_status"] == "PARTIAL_SUCCESS"
+    assert outcome["result_page_complete"] is False
+    assert outcome["has_next_page"] is True

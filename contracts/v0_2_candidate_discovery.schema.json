@@ -29,10 +29,27 @@
         "name": {"type": "string", "minLength": 1}
       }
     },
+    "keyword": {"type": "string", "minLength": 1},
     "market_context": {"$ref": "./v0_2_acquisition.schema.json#/$defs/marketContext"},
     "status": {"$ref": "./v0_2_acquisition.schema.json#/$defs/acquisitionStatus"},
     "retrieved_at": {"type": "string", "format": "date-time"},
     "page": {"type": "integer", "minimum": 1},
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "results_seen",
+        "eligible_sold_listings",
+        "listings_with_part_number",
+        "candidates_emitted"
+      ],
+      "properties": {
+        "results_seen": {"type": "integer", "minimum": 0},
+        "eligible_sold_listings": {"type": "integer", "minimum": 0},
+        "listings_with_part_number": {"type": "integer", "minimum": 0},
+        "candidates_emitted": {"type": "integer", "minimum": 0}
+      }
+    },
     "candidates": {
       "type": "array",
       "uniqueItems": true,

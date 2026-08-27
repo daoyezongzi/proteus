@@ -53,6 +53,31 @@ def _nonnegative_integer(value: Any) -> int | None:
     return value
 
 
+def _nonnegative_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if number < 0 or not math.isfinite(number):
+        return None
+    return number
+
+
+def _offer_count(value: Any) -> tuple[int, bool] | None:
+    """Return the visible offer count and whether it is an exact count."""
+
+    text = _nonempty_string(value)
+    if text is None:
+        return None
+    match = re.search(
+        r"\b(?P<count>\d[\d,]*)\s*(?P<plus>\+)?\s+[^()]*?offers?\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return int(match.group("count").replace(",", "")), match.group("plus") is None
+
+
 def _clip(value: Any, limit: int = 400) -> str:
     text = re.sub(r"\s+", " ", str(value)).strip()
     return (text or "unavailable")[:limit]
@@ -109,6 +134,10 @@ def _base(raw_part_number: str, retrieved_at: str) -> dict[str, Any]:
         "market_context": context,
         "relevance_method": None,
         "relevant_result_count": None,
+        "minimum_exact_result_price_usd": None,
+        "price_observation_complete": False,
+        "active_offer_count_lower_bound": None,
+        "active_offer_count_complete": False,
         "evidence": [],
         "retrieved_at": retrieved_at,
     }
@@ -182,12 +211,224 @@ def _parameters_match(payload: Mapping[str, Any], raw_part_number: str) -> bool:
     return query_matches and all(str(params.get(key)) == value for key, value in expected.items())
 
 
+def _query_parameters_match(payload: Mapping[str, Any], query: str) -> bool:
+    """Validate a descriptive Amazon query without treating it as a part number."""
+
+    params = payload.get("search_parameters")
+    if not isinstance(params, Mapping):
+        return False
+    returned_query = _nonempty_string(params.get("k"))
+    expected = {
+        "engine": "amazon",
+        "amazon_domain": "amazon.com",
+        "language": "en_US",
+        "delivery_zip": "10001",
+    }
+    return bool(
+        returned_query is not None
+        and re.sub(r"\s+", " ", returned_query).strip().casefold()
+        == re.sub(r"\s+", " ", query).strip().casefold()
+        and all(str(params.get(key)) == value for key, value in expected.items())
+    )
+
+
 def _has_next_page(payload: Mapping[str, Any]) -> bool:
     for key in ("pagination", "serpapi_pagination"):
         pagination = payload.get(key)
         if isinstance(pagination, Mapping) and _nonempty_string(pagination.get("next")):
             return True
     return False
+
+
+def collect_amazon_search(
+    query: str,
+    *,
+    api_key: str,
+    transport: Transport | None = None,
+    timeout_seconds: float = 30.0,
+    retrieved_at: str | None = None,
+) -> dict[str, Any]:
+    """Collect one bounded Amazon US result page for family-level classification.
+
+    This adapter deliberately performs no product relevance decision.  It preserves
+    the visible product cards so the provider-independent product-family layer can
+    decide whether each ASIN is interchangeable with the candidate family.
+    """
+
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+    query = re.sub(r"\s+", " ", query).strip()
+    timestamp = _retrieved_at(retrieved_at)
+    outcome: dict[str, Any] = {
+        "schema_version": "0.2.4",
+        "provider": SERPAPI_AMAZON_PROVIDER,
+        "source_method": SOURCE_METHOD,
+        "marketplace_id": "AMAZON_US",
+        "query": query,
+        "search_url": _search_url(query),
+        "retrieved_at": timestamp,
+        "acquisition_status": "PARSER_FAILED",
+        "result_page_complete": False,
+        "has_next_page": False,
+        "reported_total_results": None,
+        "results_seen": 0,
+        "products": [],
+        "diagnostics": [],
+    }
+    if not isinstance(api_key, str) or not api_key.strip():
+        outcome["acquisition_status"] = "BLOCKED_BY_CREDENTIALS"
+        outcome["diagnostics"] = [
+            {"code": "BLOCKED_BY_CREDENTIALS", "message": "No SerpApi key was supplied"}
+        ]
+        return outcome
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or timeout_seconds <= 0
+        or not math.isfinite(float(timeout_seconds))
+    ):
+        raise ValueError("timeout_seconds must be a positive number")
+
+    request = SerpApiRequest(_request_url(query, api_key), float(timeout_seconds))
+    try:
+        response = (transport or _urllib_transport)(request)
+    except (TimeoutError, socket.timeout):
+        outcome["acquisition_status"] = "TIMEOUT"
+        outcome["diagnostics"] = [{"code": "TIMEOUT", "message": "transport timed out"}]
+        return outcome
+    except URLError:
+        outcome["acquisition_status"] = "HTTP_ERROR"
+        outcome["diagnostics"] = [{"code": "HTTP_ERROR", "message": "transport URL error"}]
+        return outcome
+    except Exception:
+        outcome["acquisition_status"] = "HTTP_ERROR"
+        outcome["diagnostics"] = [
+            {"code": "HTTP_ERROR", "message": "transport raised an unexpected exception"}
+        ]
+        return outcome
+
+    if not isinstance(response, SerpApiResponse):
+        outcome["diagnostics"] = [
+            {"code": "PARSER_FAILED", "message": "unsupported transport response"}
+        ]
+        return outcome
+    status_error = _http_status(response.status_code)
+    if status_error is not None:
+        outcome["acquisition_status"] = status_error[0]
+        outcome["diagnostics"] = [{"code": status_error[0], "message": status_error[1]}]
+        return outcome
+    try:
+        payload = json.loads(response.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        outcome["diagnostics"] = [
+            {"code": "PARSER_FAILED", "message": "response is not valid UTF-8 JSON"}
+        ]
+        return outcome
+    if not isinstance(payload, Mapping):
+        outcome["diagnostics"] = [
+            {"code": "PARSER_FAILED", "message": "response JSON root is not an object"}
+        ]
+        return outcome
+    if "error" in payload:
+        outcome["acquisition_status"] = "HTTP_ERROR"
+        outcome["diagnostics"] = [
+            {"code": "HTTP_ERROR", "message": "SerpApi returned an API error"}
+        ]
+        return outcome
+    metadata = payload.get("search_metadata")
+    if not isinstance(metadata, Mapping) or metadata.get("status") != "Success":
+        outcome["diagnostics"] = [
+            {"code": "PARSER_FAILED", "message": "search_metadata does not confirm Success"}
+        ]
+        return outcome
+    if not _query_parameters_match(payload, query):
+        outcome["acquisition_status"] = "MARKET_CONTEXT_MISMATCH"
+        outcome["diagnostics"] = [
+            {
+                "code": "MARKET_CONTEXT_MISMATCH",
+                "message": "search parameters do not match AMAZON_US",
+            }
+        ]
+        return outcome
+
+    results = payload.get("organic_results")
+    if not isinstance(results, list):
+        outcome["diagnostics"] = [
+            {"code": "PARSER_FAILED", "message": "organic_results is not an array"}
+        ]
+        return outcome
+    search_information = payload.get("search_information")
+    total = _nonnegative_integer(
+        search_information.get("total_results")
+        if isinstance(search_information, Mapping)
+        else None
+    )
+    outcome["reported_total_results"] = total
+    if not results:
+        if total != 0:
+            outcome["diagnostics"] = [
+                {
+                    "code": "PARSER_FAILED",
+                    "message": "empty results lack explicit total_results=0",
+                }
+            ]
+            return outcome
+        outcome["acquisition_status"] = "ZERO_RESULTS"
+        outcome["result_page_complete"] = True
+        return outcome
+
+    products: list[dict[str, Any]] = []
+    skipped = 0
+    seen_asins: set[str] = set()
+    for result in results:
+        if not isinstance(result, Mapping):
+            skipped += 1
+            continue
+        asin = _nonempty_string(result.get("asin"))
+        title = _nonempty_string(result.get("title"))
+        product_url = _product_url(result)
+        if asin is None or title is None or product_url is None:
+            skipped += 1
+            continue
+        asin = asin.upper()
+        if asin in seen_asins:
+            continue
+        seen_asins.add(asin)
+        buying_choices = _nonempty_string(result.get("more_buying_choices"))
+        parsed_offers = _offer_count(buying_choices)
+        if buying_choices is None:
+            visible_offers, offers_exact = 1, True
+        elif parsed_offers is None:
+            visible_offers, offers_exact = 1, False
+        else:
+            visible_offers, offers_exact = parsed_offers
+        products.append(
+            {
+                "asin": asin,
+                "title": title,
+                "url": product_url,
+                "price_usd": _nonnegative_number(result.get("extracted_price")),
+                "active_offer_count_lower_bound": visible_offers,
+                "active_offer_count_complete": offers_exact,
+            }
+        )
+
+    has_next_page = _has_next_page(payload)
+    outcome["has_next_page"] = has_next_page
+    outcome["results_seen"] = len(results)
+    outcome["products"] = products
+    outcome["result_page_complete"] = not has_next_page and skipped == 0
+    outcome["acquisition_status"] = (
+        "PARTIAL_SUCCESS" if has_next_page or skipped else "SUCCESS"
+    )
+    if skipped:
+        outcome["diagnostics"] = [
+            {
+                "code": "PRODUCT_CARD_SKIPPED",
+                "message": f"Skipped {skipped} incomplete Amazon product cards",
+            }
+        ]
+    return outcome
 
 
 def collect_amazon_competition(
@@ -260,6 +501,8 @@ def collect_amazon_competition(
         outcome["acquisition_status"] = "ZERO_RESULTS"
         outcome["relevance_method"] = "DETERMINISTIC_EXACT"
         outcome["relevant_result_count"] = 0
+        outcome["active_offer_count_lower_bound"] = 0
+        outcome["active_offer_count_complete"] = True
         outcome["evidence"] = [
             _evidence(
                 "relevant_result_count",
@@ -293,9 +536,51 @@ def collect_amazon_competition(
 
     incomplete = bool(skipped or _has_next_page(payload))
     observed_count = len(relevant)
+    prices: list[float] = []
+    offer_count_lower_bound = 0
+    offer_counts_complete = True
+    product_observations: list[dict[str, Any]] = []
+    for result, match_type, product_url in relevant:
+        price = _nonnegative_number(result.get("extracted_price"))
+        if price is not None:
+            prices.append(price)
+
+        buying_choices = _nonempty_string(result.get("more_buying_choices"))
+        parsed_offers = _offer_count(buying_choices)
+        if buying_choices is None:
+            # A rendered organic result proves at least its featured offer. If
+            # Amazon exposed no "more buying choices" signal, that visible
+            # offer is treated as the complete search-card count.
+            visible_offers = 1
+            offers_exact = True
+        elif parsed_offers is None:
+            visible_offers = 1
+            offers_exact = False
+        else:
+            visible_offers, offers_exact = parsed_offers
+        offer_count_lower_bound += visible_offers
+        offer_counts_complete = offer_counts_complete and offers_exact
+        product_observations.append(
+            {
+                "asin": _nonempty_string(result.get("asin")),
+                "match_type": match_type,
+                "url": product_url,
+                "price_usd": price,
+                "more_buying_choices": buying_choices,
+                "active_offer_count_lower_bound": visible_offers,
+                "active_offer_count_complete": offers_exact,
+            }
+        )
+
+    price_complete = not incomplete and len(prices) == len(relevant)
+    offers_complete = not incomplete and offer_counts_complete
     outcome["acquisition_status"] = "PARTIAL_SUCCESS" if incomplete else "SUCCESS"
     outcome["relevance_method"] = None if incomplete else "DETERMINISTIC_EXACT"
     outcome["relevant_result_count"] = None if incomplete else observed_count
+    outcome["minimum_exact_result_price_usd"] = min(prices) if price_complete and prices else None
+    outcome["price_observation_complete"] = price_complete
+    outcome["active_offer_count_lower_bound"] = offer_count_lower_bound
+    outcome["active_offer_count_complete"] = offers_complete
     outcome["evidence"] = [
         _evidence(
             "observed_relevant_result_count" if incomplete else "relevant_result_count",
@@ -310,14 +595,27 @@ def collect_amazon_competition(
             confidence=0.7 if incomplete else 1.0,
         )
     ]
-    for result, match_type, product_url in relevant:
+    for product in product_observations:
         outcome["evidence"].append(
             _evidence(
                 "amazon_relevant_product",
-                {"asin": _nonempty_string(result.get("asin")), "match_type": match_type},
-                url=product_url,
+                {
+                    key: product[key]
+                    for key in (
+                        "asin",
+                        "match_type",
+                        "price_usd",
+                        "active_offer_count_lower_bound",
+                        "active_offer_count_complete",
+                    )
+                },
+                url=product["url"],
                 retrieved_at=timestamp,
-                raw_evidence=f"title={_clip(result.get('title'), 240)}",
+                raw_evidence=(
+                    f"asin={_clip(product.get('asin'), 40)}; "
+                    f"price_usd={product.get('price_usd')}; "
+                    f"more_buying_choices={_clip(product.get('more_buying_choices'), 180)}"
+                ),
             )
         )
     return outcome
@@ -328,4 +626,5 @@ __all__ = [
     "SerpApiRequest",
     "SerpApiResponse",
     "collect_amazon_competition",
+    "collect_amazon_search",
 ]

@@ -8,6 +8,89 @@
 
 ---
 
+## 2026-08-28 当前修订：Northway 产品家族筛选（覆盖后续旧主筛选定义）
+
+Proteus 的当前目标不再是寻找“精确 OEM 搜索结果少”的泛汽配候选，而是寻找：
+
+> **符合 northwayautoparts 店铺产品形态、且整个可替换产品家族在 Amazon 美国站真正
+> 缺少平替的车型专用小型汽车零件。**
+
+northwayautoparts 只作为产品形态和黄金标注参考，不作为固定候选池，也不能因为某个
+商品出现在该店铺就自动判定它是当前商机。参考产品分成两个首批 profile：
+
+```text
+vehicle_specific_small_trim
+  fog-light bezel / tow-hook cover / bumper reflector /
+  headlight-washer cover / lower air deflector
+
+vehicle_specific_cable
+  hood-latch release cable / accelerator cable /
+  door-handle Bowden cable / transmission shift-control cable
+```
+
+黄金参考集至少覆盖店铺公开商品中的下列关系：
+
+- `25778388` 与 `25778389`：同类左右件，必须是两个可售产品家族；
+- `25881881` 与 `25881882`：同类左右反光片，不能因相邻编号而合并；
+- `25928247 + 25928248`：左右套装，不能与单独左件或右件混算；
+- `25928246`、`23397792`：车型专用小型外饰替换件；
+- `5363089114`、`78180-35260`、`3U0837085`、`2048800859`：车型专用机械拉索。
+
+`467903X100` 保留为 Northway-like 外部扩展样本，不再是唯一黄金样本；
+`00289-ACRKT`、通用挡泥板、清洁剂和其他 `Universal fit` 商品作为范围负样本。
+样本只进入可版本化 benchmark/fixture，不得在业务判断代码中硬编码预期结论。
+
+新的产品身份单位是 `sellable_product_family`：
+
+```text
+part type
++ make / model / year range
++ required engine or transmission qualifier
++ mounting position and left/right side
++ critical specification or connector
++ single / pair / kit quantity
+```
+
+OEM、MPN、UPC、`Replacement/Replaces`、supersession 和 cross-reference 只用于发现、
+交叉引用和证据追溯，不再单独定义竞争范围。Amazon 必须按产品家族生成多个独立
+query，再合并并去重真正可互换的产品。以下三个读数不得混淆：
+
+```text
+competitive_product_count   # 产品家族内不同平替产品/ASIN 数
+offer_count_by_asin         # 每个产品/ASIN 下的 seller offers
+family_price_floor_usd      # 整个平替产品家族的最低可见价格
+```
+
+当前目标漏斗为：
+
+```text
+all 9 Northway archetypes in one bounded run
+→ per-archetype discovery status and query manifest
+→ Northway micro-category scope
+→ product-family resolution
+→ OEM / replacement / cross-reference expansion
+→ Amazon family-query pack and substitute-product count
+→ family price floor and per-ASIN offer counts
+→ family-bound eBay demand evidence
+→ China non-OEM supply manual verification in the initial MVP
+→ ranking and complete JSON review export
+```
+
+范围外硬拒绝包括 `Universal fit`、化学品/清洁剂、通用装饰、复杂电子件、灯具总成、
+制动/转向/气囊等安全核心件、大型钣金和重型总成。数据不完整时继续采集其他独立
+证据并最终 `REVIEW_REQUIRED`；只有范围外、身份冲突或已有明确业务 gate 失败时才允许
+停止昂贵的后续采集。候选数量不设 `max_candidates` 截断，但每次运行仍必须保存并受
+显式扫描页范围、预算和 provider 限速约束。
+
+V0.2.4 初筛运行时已经实现产品家族解析、家族竞争统计、Northway profiles、排序和完整
+JSON 导出。为保持初筛简单，本版只要求 SerpApi；国内非原厂供货、利润和最终适配以
+候选卡人工清单复核，不因缺少第二套凭证将候选误判为失败。当前实现状态和剩余增强以
+[V0_2_EXECUTION_PLAN.md](V0_2_EXECUTION_PLAN.md) 与 [TODO.md](TODO.md) 为准。公开运行
+不再要求选择零件类型，而是统一扫描九类；明确淘汰项默认隐藏、可按状态分类查看，完整
+JSON 仍保留所有结果。
+
+---
+
 ## 2026-08-27 当前修订（覆盖 V0 主筛选定义）
 
 原企划将 1688 可采购性列为第三项主 gate。当前版本根据产品目标将“市场商机”和

@@ -39,9 +39,9 @@ def sold_category_payload() -> dict[str, Any]:
         "search_metadata": {"id": "discovery_123", "status": "Success"},
         "search_parameters": {
             "engine": "ebay",
+            "_nkw": "OEM",
             "ebay_domain": "ebay.com",
             "category_id": "6028",
-            "show_only": "Sold",
             "LH_ItemCondition": "1000",
             "_salic": "1",
             "_stpos": "10001",
@@ -94,6 +94,12 @@ def test_category_sold_search_discovers_traceable_part_candidates() -> None:
         "name": "Auto Parts & Accessories",
     }
     assert len(outcome["candidates"]) == 1
+    assert outcome["stats"] == {
+        "results_seen": 2,
+        "eligible_sold_listings": 2,
+        "listings_with_part_number": 1,
+        "candidates_emitted": 1,
+    }
     candidate = outcome["candidates"][0]
     assert candidate["raw_part_number"] == "53630-53010"
     assert candidate["canonical_part_number"] == "5363053010"
@@ -103,9 +109,9 @@ def test_category_sold_search_discovers_traceable_part_candidates() -> None:
 
     query = parse_qs(urlparse(transport.requests[0].url).query)
     assert query["category_id"] == ["6028"]
-    assert query["show_only"] == ["Sold"]
+    assert query["_nkw"] == ["OEM"]
+    assert "show_only" not in query
     assert "_sop" not in query
-    assert "_nkw" not in query
 
 
 def test_discovery_missing_explicit_sold_count_fails_closed() -> None:
@@ -126,3 +132,22 @@ def test_discovery_missing_explicit_sold_count_fails_closed() -> None:
     assert outcome["status"] == "PARTIAL_SUCCESS"
     assert outcome["candidates"] == []
     assert any(item["code"] == "LISTING_SKIPPED" for item in outcome["diagnostics"])
+
+
+def test_successful_provider_empty_result_is_not_misclassified_as_http_error() -> None:
+    payload = sold_category_payload()
+    payload["organic_results"] = []
+    payload["search_information"]["total_results"] = 0
+    payload["error"] = "eBay hasn't returned any results for this query."
+
+    outcome = collect_ebay_sold_candidates(
+        api_key=API_KEY,
+        category_id="6028",
+        max_candidates=20,
+        transport=RecordingTransport(response(payload)),
+        retrieved_at=RETRIEVED_AT,
+    )
+
+    assert outcome["status"] == "ZERO_RESULTS"
+    assert outcome["candidates"] == []
+    assert outcome["diagnostics"] == []

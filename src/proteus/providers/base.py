@@ -10,6 +10,12 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 from proteus.normalization import normalize_part_number
 
 
+# Marketplace search engines generally cannot browse a category with no query,
+# so discovery is keyword-shaped. This lives here, provider-neutral, because it
+# constrains the request contract rather than one vendor's URL.
+DEFAULT_DISCOVERY_KEYWORD = "OEM"
+
+
 class Capability(str, Enum):
     AMAZON_CANDIDATE_SOURCE = "AMAZON_CANDIDATE_SOURCE"
     EBAY_CANDIDATE_SOURCE = "EBAY_CANDIDATE_SOURCE"
@@ -65,10 +71,13 @@ class CandidateDiscoveryRequest:
     category_id: str
     max_candidates: int
     page: int = 1
+    keyword: str = DEFAULT_DISCOVERY_KEYWORD
 
     def __post_init__(self) -> None:
         if not isinstance(self.category_id, str) or not self.category_id.isdigit():
             raise ValueError("category_id must contain digits only")
+        if not isinstance(self.keyword, str) or not self.keyword.strip():
+            raise ValueError("keyword must be a non-empty string")
         for name, value in (
             ("max_candidates", self.max_candidates),
             ("page", self.page),

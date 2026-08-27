@@ -1,7 +1,7 @@
 """Local UI harness: real API surface, stubbed provider results.
 
 Not part of the product. It exists so the operator UI can be driven in a
-browser without live SerpApi/NHTSA calls, covering all four gate statuses.
+browser without live provider calls, covering all five gate statuses.
 Run: python web/_dev_server.py
 """
 
@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from proteus.api import create_app  # noqa: E402
 from proteus.automatic_mvp import automatic_mvp_policy  # noqa: E402
+from proteus.northway_mvp import run_northway_mvp  # noqa: E402
 
 
 def _stage(status, *, value, operator, threshold, reason, at="2026-08-27T09:14:00Z"):
@@ -47,20 +48,24 @@ PASS = {
     "evidence": {},
     "stages": {
         "ebay_recent_sold_lower_bound": _stage(
-            "PASSED", value=34, operator="GT", threshold=20,
+            "PASSED", value=34, operator="GT", threshold=0,
             reason="Observed distinct exact sold listings exceed the configured MVP threshold.",
         ),
         "amazon_us_competition": _stage(
             "PASSED", value=3, operator="LTE", threshold=5,
             reason="Complete Amazon US exact competitor count is within the threshold.",
         ),
+        "amazon_us_minimum_price": _stage(
+            "PASSED", value=36.5, operator="GT", threshold=20.0,
+            reason="Amazon minimum exact-result price is above the threshold.",
+        ),
+        "amazon_us_active_offers": _stage(
+            "PASSED", value=4, operator="LTE", threshold=10,
+            reason="Complete Amazon active-offer count is within the seller saturation limit.",
+        ),
         "ebay_compatibility": _stage(
             "PASSED", value=12, operator="GT", threshold=0,
             reason="At least one exact sold listing exposed normalized YMMT fitment.",
-        ),
-        "us_active_vehicle_proxy": _stage(
-            "PASSED", value=18422, operator="GTE", threshold=5000,
-            reason="Complete New York registration model estimate meets the MVP threshold.",
         ),
     },
 }
@@ -77,24 +82,22 @@ REVIEW = {
     "decision": "REVIEW_REQUIRED",
     "stages": {
         "ebay_recent_sold_lower_bound": _stage(
-            "PASSED", value=27, operator="GT", threshold=20,
+            "PASSED", value=27, operator="GT", threshold=0,
             reason="Observed distinct exact sold listings exceed the configured MVP threshold.",
         ),
         "amazon_us_competition": _stage(
             "PASSED", value=5, operator="LTE", threshold=5,
             reason="Complete Amazon US exact competitor count is within the threshold.",
         ),
-        "ebay_compatibility": _stage(
-            "PASSED", value=6, operator="GT", threshold=0,
-            reason="At least one exact sold listing exposed normalized YMMT fitment.",
+        "amazon_us_minimum_price": _stage(
+            "PASSED", value=28.99, operator="GT", threshold=20.0,
+            reason="Amazon minimum exact-result price is above the threshold.",
         ),
-        "us_active_vehicle_proxy": _stage(
-            "REVIEW_REQUIRED", value=2140, operator="GTE", threshold=5000,
-            reason=(
-                "New York registration estimate is below threshold, but one-state sampled "
-                "coverage cannot decisively reject nationwide vehicle population."
-            ),
+        "amazon_us_active_offers": _stage(
+            "REVIEW_REQUIRED", value=8, operator="LTE", threshold=10,
+            reason="Amazon active-offer count is only a lower bound and cannot prove the seller limit.",
         ),
+        "ebay_compatibility": _not_run(),
     },
 }
 
@@ -110,15 +113,16 @@ REJECTED = {
     "decision": "REJECTED",
     "stages": {
         "ebay_recent_sold_lower_bound": _stage(
-            "PASSED", value=61, operator="GT", threshold=20,
+            "PASSED", value=61, operator="GT", threshold=0,
             reason="Observed distinct exact sold listings exceed the configured MVP threshold.",
         ),
         "amazon_us_competition": _stage(
             "REJECTED", value=147, operator="LTE", threshold=5,
             reason="Complete Amazon US exact competitor count exceeds the threshold.",
         ),
+        "amazon_us_minimum_price": _not_run(),
+        "amazon_us_active_offers": _not_run(),
         "ebay_compatibility": _not_run(),
-        "us_active_vehicle_proxy": _not_run(),
     },
 }
 
@@ -134,15 +138,16 @@ EARLY_REVIEW = {
     "decision": "REVIEW_REQUIRED",
     "stages": {
         "ebay_recent_sold_lower_bound": _stage(
-            "REVIEW_REQUIRED", value=9, operator="GT", threshold=20,
+            "REVIEW_REQUIRED", value=0, operator="GT", threshold=0,
             reason=(
                 "The provider-visible recent subset does not prove the trailing-year "
                 "threshold; it is not treated as a rejection."
             ),
         ),
         "amazon_us_competition": _not_run(),
+        "amazon_us_minimum_price": _not_run(),
+        "amazon_us_active_offers": _not_run(),
         "ebay_compatibility": _not_run(),
-        "us_active_vehicle_proxy": _not_run(),
     },
 }
 
@@ -188,13 +193,17 @@ class StubService:
                 "execution": {
                     "mode": "AUTOMATIC_HEURISTIC_MVP",
                     "human_review_required": True,
-                    "provider_count": 2,
+                    "provider_count": 1,
                 },
                 "discovery": {
                     "category_id": request.get("ebay_category_id"),
                     "keyword": request.get("discovery_keyword"),
                     "pages_requested": request.get("discovery_pages"),
                     "pages_completed": request.get("discovery_pages"),
+                    "results_seen": len(reports),
+                    "eligible_sold_listings": len(reports),
+                    "listings_with_part_number": len(reports),
+                    "candidates_emitted": len(reports),
                     "candidate_count": len(reports),
                     "diagnostics": [],
                 },
@@ -210,6 +219,105 @@ class StubService:
         return {"run_id": run_id, "status": "QUEUED"}
 
     def get_mvp_run(self, run_id: str) -> dict | None:
+        return self._runs.get(run_id)
+
+    def submit_northway_run(self, request: dict) -> dict:
+        self._n += 1
+        run_id = f"northway-dev-{self._n}"
+
+        candidates = [
+            {
+                "raw_part_number": "25778388",
+                "canonical_part_number": "25778388",
+                "source_listing_id": "northway-right",
+                "source_listing_url": "https://www.ebay.com/itm/100000000001",
+                "source_listing_title": (
+                    "Right Fog Light Bezel for 2007-2013 Chevrolet Silverado 25778388"
+                ),
+                "source_listing_position": 1,
+                "source_sold_count": 12,
+            },
+            {
+                "raw_part_number": "25778389",
+                "canonical_part_number": "25778389",
+                "source_listing_id": "northway-left",
+                "source_listing_url": "https://www.ebay.com/itm/100000000002",
+                "source_listing_title": (
+                    "Left Fog Light Bezel for 2007-2013 Chevrolet Silverado 25778389"
+                ),
+                "source_listing_position": 2,
+                "source_sold_count": 7,
+            },
+        ]
+
+        def discover(**kwargs):
+            selected = candidates if kwargs.get("keyword") == "fog light bezel OEM" else []
+            return {
+                "status": "SUCCESS" if selected else "ZERO_RESULTS",
+                "retrieved_at": "2026-08-28T09:00:00Z",
+                "stats": {
+                    "results_seen": len(selected),
+                    "eligible_sold_listings": len(selected),
+                    "listings_with_part_number": len(selected),
+                    "candidates_emitted": len(selected),
+                },
+                "candidates": selected,
+                "diagnostics": [],
+            }
+
+        def amazon_search(query: str, **_kwargs):
+            left = "25778389" in query
+            products = []
+            count = 4 if left else 1
+            part_number = "25778389" if left else "25778388"
+            side = "Left" if left else "Right"
+            for index in range(count):
+                products.append(
+                    {
+                        "asin": f"B000000{index + (10 if left else 1):03d}",
+                        "title": (
+                            f"Brand {index + 1} {side} Fog Light Bezel for 2007-2013 "
+                            f"Chevrolet Silverado {part_number}"
+                        ),
+                        "url": f"https://www.amazon.com/dp/B000000{index + (10 if left else 1):03d}",
+                        "price_usd": 12.99 if left else 31.99,
+                        "active_offer_count_lower_bound": index + 1,
+                        "active_offer_count_complete": True,
+                    }
+                )
+            return {
+                "schema_version": "0.2.4",
+                "provider": "DEV_AMAZON_REPLAY",
+                "marketplace_id": "AMAZON_US",
+                "query": query,
+                "search_url": "https://www.amazon.com/s",
+                "retrieved_at": "2026-08-28T09:01:00Z",
+                "acquisition_status": "SUCCESS",
+                "result_page_complete": True,
+                "has_next_page": False,
+                "reported_total_results": len(products),
+                "results_seen": len(products),
+                "products": products,
+                "diagnostics": [],
+            }
+
+        result = run_northway_mvp(
+            serpapi_key="dev-only",
+            collectors={"discovery": discover, "amazon_search": amazon_search},
+            **request,
+        )
+        self._runs[run_id] = {
+            "run_id": run_id,
+            "status": "COMPLETED",
+            "created_at": "2026-08-28T09:00:00Z",
+            "started_at": "2026-08-28T09:00:00Z",
+            "completed_at": "2026-08-28T09:01:00Z",
+            "error": None,
+            "result": result,
+        }
+        return {"run_id": run_id, "status": "QUEUED"}
+
+    def get_northway_run(self, run_id: str) -> dict | None:
         return self._runs.get(run_id)
 
     def submit_run(self, request: dict) -> dict:

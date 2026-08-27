@@ -492,7 +492,7 @@ body {
 .verdict[data-decision="REVIEW_REQUIRED"] { color: var(--clay); }
 .verdict[data-decision="REJECTED"] { color: var(--soft); }
 
-/* the sieve trace: four bars, one per mesh */
+/* the sieve trace: one bar per mesh */
 
 .trace {
   display: flex;

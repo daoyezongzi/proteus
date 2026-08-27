@@ -1,10 +1,84 @@
 # Proteus Current Work
 
+## V0.2.4 Northway product-family MVP — initial screening runnable
+
+- [x] Replace “low exact-OEM result count” as the product objective with low
+  competition across the complete sellable substitute-product family.
+- [x] Use northwayautoparts as the product-shape reference rather than a fixed
+  candidate source or an automatic pass label.
+- [x] Freeze two first-batch profiles: `vehicle_specific_small_trim` and
+  `vehicle_specific_cable`; explicitly exclude Universal-fit goods, chemicals,
+  generic accessories, complex electronics, safety-critical systems, lamps,
+  large body panels and heavy assemblies.
+- [x] Freeze the reference-label roles: Northway listing/part examples are
+  `NORTHWAY_GOLD`, `467903X100` is a Northway-like extension sample, and
+  `00289-ACRKT` plus universal controls are negative samples.
+- [x] Separate substitute product/ASIN count, seller offers per ASIN and the
+  substitute-family price floor. OEM price cannot mask a cheap aftermarket
+  substitute, and offer count cannot masquerade as product variety.
+- [x] Freeze incomplete-evidence behavior: continue collecting independent
+  evidence on `PARTIAL_SUCCESS` or missing fields; stop expensive downstream
+  acquisition only after an explicit scope, identity or business-gate failure.
+- [x] Freeze run bounds: remove `max_candidates` as an emitted-candidate cap but
+  retain explicit scan pages/cursors, provider rate limits and run budgets.
+- [x] Require complete JSON review export with every candidate, category
+  profile, scan manifest, product family, query pack, rule readings, evidence,
+  provider attempts, failure reasons and final rank.
+- [x] Create versioned Northway gold/negative fixtures. Cover left/right
+  (`25778388/25778389`, `25881881/25881882`), pair-versus-single
+  (`25928247/25928248`), trim and cable archetypes, `467903X100`,
+  `00289-ACRKT` and a Universal-fit control. The frozen cases live in
+  `fixtures/northway_v0_2_4_product_family_cases.json`.
+- [x] Add a provider-independent `sellable_product_family` schema with part
+  type, fitment, engine/transmission qualifiers, position/side, critical specs,
+  package quantity, identifiers, typed relations, confidence and evidence in
+  `contracts/v0_2_4_product_family_resolution.schema.json`.
+- [x] Implement deterministic scope classification before family-level market acquisition;
+  years, vehicle names and generic title fragments must never become part
+  numbers or candidates by themselves.
+- [ ] Implement typed identity relations for `same_part`, `supersedes`,
+  `replacement`, `compatible_part`, `left_right_counterpart` and
+  `unknown_relation`; unresolved conflicts stay `REVIEW_REQUIRED`.
+- [x] Generate and preserve a per-family Amazon query pack across exact IDs,
+  verified replacements/cross-references and fitment-aware product names.
+- [x] Aggregate Amazon results by ASIN and conservative interchangeable-product
+  clusters; calculate `competitive_product_cluster_count`,
+  `competitive_asin_count`, `offer_count_by_asin`, family offer
+  lower bound and `family_price_floor_usd` with explicit completeness flags.
+- [x] Bind the initial eBay demand lower bound to accepted source listings in
+  each resolved family. Keep China non-OEM supply as a visible manual-review
+  item for this one-credential initial-screening MVP.
+- [x] Remove `max_candidates` from the V0.2.4 request/UI contract while leaving
+  the V0.2.3 compatibility endpoint intact; process every unique candidate from
+  the configured scan manifest until the explicit request budget is exhausted.
+- [x] Remove the public single-archetype selector. One initial-screening run now
+  covers all nine Northway archetypes and records per-archetype query/status
+  metadata for later frontend work.
+- [x] Keep rejected candidates out of the default result view while preserving
+  them under a dedicated status category and in the complete JSON export.
+- [x] Add deterministic priority sorting with scope, identity and family
+  competition as hard prerequisites, plus an original-order view.
+- [x] Add full JSON export and validate it against
+  `contracts/v0_2_4_northway_mvp_result.schema.json`.
+- [x] Run deterministic replay/browser validation and one bounded live fog-light
+  bezel probe. The live page examined 60 results, emitted 14 candidates and
+  produced 3 market shortlists under a five-request probe budget.
+- [ ] Finish relation extraction beyond the implemented `replacement` and
+  `unknown_relation` baseline, especially `supersedes`, verified compatible
+  parts and explicit left/right counterpart graph edges.
+- [ ] Manually review the first live shortlist JSON for product identity,
+  domestic aftermarket supply and margin; feed false merges/misses back into
+  the versioned fixture before expanding beyond the two current profiles.
+
 ## V0.2.3 automatic MVP — implementation complete, live acceptance open
 
+This section describes the current compatibility implementation. Its exact-OEM
+and title-token readings do not satisfy the V0.2.4 Northway product-family
+objective until the tasks above are complete.
+
 - [x] Add a threshold-driven automatic path that discovers candidates and runs
-  eBay recent sold, Amazon US exact competition, eBay Product compatibility and
-  an anonymous NY DMV/NHTSA vehicle-model proxy without Agent calls.
+  eBay recent sold, Amazon US exact competition/price/active-offer checks and
+  eBay Product compatibility without Agent calls.
 - [x] Implement bounded SerpApi asynchronous submit/poll and reuse it for eBay
   category search, exact sold search and eBay Product compatibility.
 - [x] Replace the obsolete eBay `_sacat` request parameter with documented
@@ -15,18 +89,33 @@
   and keep HioBuy optional.
 - [x] Run a one-part live NY DMV/NHTSA vehicle canary; 2015 Toyota Camry returned
   62,334 NY year/make registrations, 9 sampled VINs, 8 usable decodes and an
-  estimated 23,375 model registrations.
-- [ ] Freeze a 20-candidate accuracy/cost benchmark and validate category-specific
-  thresholds; the NY metric remains a state proxy, not nationwide VIO.
-- [ ] Re-run the SerpApi eBay canary after its sold/complete engine recovers or
-  SerpApi support confirms the failure. On 2026-08-27 both an exact part query
-  and the popular `brake pads` control returned the provider error
-  `eBay hasn't returned any results for this query`; `show_only=Complete` did
-  not reach a terminal result within the bounded wait.
-- [ ] Manually label benchmark results and approve category-specific
-  `min_us_active_vins`; the current default request example is illustrative.
-- [ ] Replace the recent-sold and NY registration proxies with authorized
-  365-day/VIO sources before promoting any result to strict
+  estimated 23,375 model registrations. The adapter remains available for
+  research but has been removed from the automatic-MVP decision path.
+- [x] Separate discovery provider failures, explicit zero results and
+  no-extracted-candidate outcomes in both the automatic-run summary and UI;
+  failed requests no longer increment `pages_completed`.
+- [x] Add frontend-editable Amazon minimum-price and active-offer saturation
+  gates. Price defaults to `> $20`; the seller/offer ceiling defaults to `10`.
+  Incomplete price/count evidence fails closed to `REVIEW_REQUIRED`, while a
+  visible lower bound already over the ceiling is a decisive rejection.
+- [x] Debug the successful `6028` / `auto parts` page that emitted no
+  candidates. The page contained sold results but their titles lacked tokens
+  accepted by the conservative part-number extractor; switch the editable
+  default keyword to `OEM` and expose discovery funnel counts in the run/UI.
+- [x] Change the editable eBay recent-sold default to `> 0` (at least one exact
+  sold listing) and remove the NY vehicle-population gate and
+  `min_us_active_vins` from the automatic MVP and frontend.
+- [ ] Preserve the former broad 20-candidate benchmark as a compatibility test,
+  but do not use it for product acceptance until V0.2.4 scope and family-
+  identity precision pass on the Northway reference set.
+- [ ] Re-run the SerpApi eBay canary after its search endpoint recovers or
+  SerpApi support confirms the failure. The latest 2026-08-27 probe reached DNS,
+  TCP 443 and the website, but `/search` consistently ended TLS with
+  `UNEXPECTED_EOF_WHILE_READING`; the UI now reports this as provider failure,
+  not zero demand.
+- [ ] Replace the automatic recent-sold proxy with authorized 365-day evidence
+  before treating its demand signal as strict. Acquire official VIO separately
+  through the strict-screening profile before producing any
   `MARKET_OPPORTUNITY_CANDIDATE`.
 
 ## V0.2.2 strict market screening — contract complete
@@ -45,8 +134,10 @@
   `GET /api/v1/screening/policy` and `POST /api/v1/screening/evaluate`
   contracts. Missing, malformed or unbound evidence fails closed to
   `REVIEW_REQUIRED`.
-- [x] Keep the strict evaluator independent of HioBuy. V0.2.3 automatic MVP setup
-  uses anonymous NY DMV/NHTSA by default; MarketCheck and HioBuy/receiver stay optional.
+- [x] Keep the strict evaluator independent of HioBuy. The current V0.2.3
+  automatic MVP no longer uses a vehicle-population gate; the anonymous NY
+  DMV/NHTSA adapter remains research-only, while MarketCheck and HioBuy/receiver
+  stay optional.
 - [ ] Obtain one authorized eBay Product Research export sample, freeze its
   columns/timezone/window semantics, and implement the deterministic 365-day
   importer. An HTML scraper or inferred sold count is not acceptable evidence.

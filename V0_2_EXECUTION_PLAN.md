@@ -1,16 +1,164 @@
-# Proteus V0.2.3 — Automatic MVP + Strict Market Screening Execution Plan
+# Proteus V0.2.4 — Northway Product-Family Screening Execution Plan
 
-> 状态：`AUTOMATIC_MVP_IMPLEMENTED / LIVE_ACCEPTANCE_OPEN / STRICT_ACQUISITION_OPEN`
-> 更新：2026-08-27
+> 状态：`NORTHWAY_INITIAL_SCREENING_MVP_RUNNABLE / MANUAL_REVIEW_REQUIRED / V0.2.3_COMPATIBLE`
+> 更新：2026-08-28
 > 上位企划：[proteus.md](proteus.md)
 > V0.1 基线：[V0_1_SCOPE_CONTRACT.md](V0_1_SCOPE_CONTRACT.md)
 
-## 0. 2026-08-27 权威执行边界
+## 0. 2026-08-28 权威执行边界
 
-本节覆盖本文后面关于 V0.2.1 默认链路的旧描述；后续章节保留为兼容实现和决策历史，
-不再代表当前主产品验收。
+本节覆盖后文以“精确 OEM 竞争数”为主要产品身份口径的旧描述。V0.2.3 自动 MVP、
+严格三门 evaluator 和历史供货 profile 继续保留为兼容实现，但在产品家族竞争完成前，
+它们不能单独产出“真正低竞争、缺少平替”的选品结论。
 
-### 0A. 自动 MVP（当前可运行产品面）
+### 0A. 产品目标和范围
+
+当前研究问题固定为：
+
+> 在 Northway 风格的车型专用小型替换件中，哪些产品同时存在需求、整个平替产品家族
+> 竞争较少、家族价格下限可接受，并且国内可以供应非原厂替代品？
+
+首批只允许两个独立 category profile：
+
+| Profile | Included archetypes | Critical identity fields |
+| --- | --- | --- |
+| `vehicle_specific_small_trim` | fog-light bezel, tow-hook cover, bumper reflector, headlight-washer cover, lower air deflector | make/model/year, position, left/right, finish, single/pair |
+| `vehicle_specific_cable` | hood-latch, accelerator, door-handle Bowden and transmission shift-control cables | make/model/year, engine/transmission qualifier, route/end connector, position |
+
+硬性排除 `Universal fit`、清洁剂/化学品、通用装饰、复杂电子件、灯具总成、制动/转向/
+气囊等安全核心件、大型钣金、重型总成和无法解析到明确车型/位置的泛化商品。范围判定
+发生在昂贵市场采集之前，不能再通过整个 eBay `6028` 类目配合宽泛 `OEM` 关键词来
+定义产品空间。
+
+### 0B. 黄金样本体系
+
+黄金标准来自 northwayautoparts 的产品结构，而不是单个预设“必过”零件：
+
+```text
+NORTHWAY_GOLD
+  25778388 / 25778389
+  25881881 / 25881882
+  25928246 / 25928247 / 25928248
+  23397792
+  5363089114 / 78180-35260 / 3U0837085 / 2048800859
+
+NORTHWAY_LIKE
+  467903X100
+
+OUT_OF_SCOPE_NEGATIVE
+  00289-ACRKT
+  universal mud flap and other Universal-fit controls
+```
+
+`NORTHWAY_GOLD` 用于检查产品类型、车型、左右侧、位置、套装数量、Replacement/Replaces
+和交叉号能否正确解析；它不保证对应商品当前仍低竞争。`NORTHWAY_LIKE` 检查规则能否
+泛化到店铺之外的同形态产品；负样本必须在范围或家族竞争阶段被拒绝。所有标签由人工
+复核并版本化，不能硬编码到正常运行逻辑。
+
+### 0C. 产品家族和查询契约
+
+系统必须先构造 `sellable_product_family`：
+
+```json
+{
+  "part_type": "transmission shift-control cable",
+  "fitment": {
+    "make": ["Hyundai"],
+    "model": ["Elantra"],
+    "year_from": 2011,
+    "year_to": 2013,
+    "engine": [],
+    "transmission": ["automatic"]
+  },
+  "position": null,
+  "side": null,
+  "critical_specs": [],
+  "package_quantity": 1,
+  "identifiers": [],
+  "relations": [],
+  "confidence": null,
+  "evidence": []
+}
+```
+
+编号关系必须区分 `same_part`、`supersedes`、`replacement`、`compatible_part`、
+`left_right_counterpart` 和 `unknown_relation`。不同左右侧、单件与左右套装、关键接口或
+变速箱配置不一致时不得合并。
+
+每个家族按固定 query pack 搜索 Amazon US，并逐条保存 query 与来源：
+
+```text
+1. exact OEM / MPN and normalized variants
+2. Replacement/Replaces and verified cross-reference numbers
+3. part type + make + model + year range
+4. part type + fitment + side/position
+5. part type + fitment + critical specification
+```
+
+不同 query 的结果先独立保存，再按 ASIN 和可互换产品身份合并。不能因为标题包含同一
+OEM 就认定相关，也不能因为标题未包含 OEM 就忽略明显的可互换平替。
+
+### 0D. 竞争、价格、报价和供应读数
+
+Amazon 输出至少分离：
+
+```text
+competitive_product_count   # 家族内不同平替产品/ASIN 数
+offer_count_by_asin         # 每个 ASIN 的 active seller offers
+family_offer_count_lower_bound
+family_price_floor_usd      # 所有相关平替产品中的最低可见价
+```
+
+OEM 原厂件价格不能掩盖廉价非原厂替代品；seller offers 不能冒充产品种类。只有家族结果
+页完整，或已观察到的下界足以明确越过阈值时，才能形成确定性竞争结论。阈值继续配置化，
+最终值由 Northway gold benchmark 冻结。
+
+国内供应验证面向对应的非原厂产品家族，至少绑定产品类型、车型、左右/位置、关键规格、
+供应商、offer/SKU、MOQ 和来源证据。只发现原厂件、通用近似品或规格不一致商品不能
+证明可供应。
+
+### 0E. 采集、排序和导出语义
+
+- 一次公开初筛运行固定覆盖两个 profile 下的全部九个 archetype；用户不先选择零件类型，
+  每类分别保存实际关键词、页数、状态和统计，随后统一去重与排序；
+- 取消候选产出的 `max_candidates` 截断：处理本次显式扫描页范围内发现的全部去重候选；
+- 保留 `discovery_pages`、provider rate limit、预算和可恢复游标，不能把“不限候选”
+  解释成无界扫描整个类目；
+- `PARTIAL_SUCCESS`、缺字段或 provider 暂时失败时继续采集其他独立证据；只有明确范围
+  淘汰、身份冲突或已有确定性业务 gate 失败时才跳过昂贵后续步骤；
+- 页面先排没有明确失败的候选，再按通过项降序、缺失证据升序、平替产品数升序排序；
+  产品范围、家族身份和家族竞争是排名硬前提，不能让关键证据缺失的 `4/5` 假机会置顶；
+- 页面默认不展示明确淘汰项，通过状态分类可以单独查看；这只是展示过滤，完整结果仍保留；
+- JSON 导出保存全部通过、拒绝和待复核候选，以及实际 profile、扫描页/游标、query pack、
+  家族身份、三个竞争读数、阈值、逐字段证据、provider attempts、失败原因和最终排序。
+
+### 0F. 实施顺序和停止条件
+
+```text
+Phase 1  versioned Northway gold/negative fixtures and category profiles
+Phase 2  sellable product-family resolver and relation graph
+Phase 3  family query pack and Amazon substitute-product aggregation
+Phase 4  family-bound eBay demand and China non-OEM supply verification
+Phase 5  full-candidate JSON export, ranking and operator UI
+Phase 6  replay/live benchmark and threshold approval
+```
+
+先用店铺参考集验证产品身份，不先扩大 provider、VIO 或年度销量集成。若左右件/套装、
+Replacement/Replaces 或通用负样本无法稳定区分，就停止进入 live 批量搜索并修复 identity
+层；provider 能运行、页面有候选或旧五道门通过都不能替代该验收。
+
+当前已实现独立 V0.2.4 初筛路径：范围分类、产品家族解析、Amazon query pack、平替
+聚合、价格/ASIN/offer 分离、排序和完整 JSON 导出均可运行；V0.2.3 旧路径继续保留为
+兼容接口。按照 2026-08-28 的 MVP 收敛决定，本版只要求 SerpApi，国内非原厂供货和
+利润显示为人工复核清单，不再为初筛引入第二套必需凭证。当前输出是待人工复核的市场
+shortlist，不是采购或上架结论。公开运行入口已经固定为九类统一扫描，并输出
+`per_archetype` 和 `discovery_queries` 供后续前端美化直接使用。
+
+## 0. 2026-08-27 V0.2.3 兼容执行历史
+
+本节保留为 V0.2.3 兼容实现和决策历史，不再代表当前主产品验收。
+
+### 0A. 自动 MVP（当前可运行的 V0.2.3 兼容面）
 
 用户已接受“机器先粗筛、后续人工复核”的阶段性边界，因此 V0.2.3 新增独立 profile：
 

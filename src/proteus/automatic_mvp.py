@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
 from proteus.io import InputDataError
 from proteus.normalization import normalize_part_number
-from proteus.providers.ny_registration import collect_ny_registered_vehicle_proxy
 from proteus.providers.serpapi_amazon import collect_amazon_competition
 from proteus.providers.serpapi_ebay import collect_ebay_sold
 from proteus.providers.serpapi_ebay_discovery import (
     DEFAULT_CATEGORY_ID,
+    DEFAULT_DISCOVERY_KEYWORD,
     collect_ebay_sold_candidates,
 )
 from proteus.providers.serpapi_ebay_product import collect_ebay_compatibility
@@ -23,9 +23,6 @@ DISCOVERY_COLLECTOR = "ebay_candidate_discovery"
 EBAY_DEMAND_COLLECTOR = "ebay_recent_sold"
 AMAZON_COLLECTOR = "amazon_us_competition"
 EBAY_COMPATIBILITY_COLLECTOR = "ebay_compatibility"
-VEHICLE_PROXY_COLLECTOR = "vehicle_population_proxy"
-# Compatibility key for callers that injected the old MarketCheck collector.
-MARKETCHECK_COLLECTOR = "marketcheck_us_vehicle_proxy"
 
 
 def _utc_now() -> str:
@@ -44,6 +41,15 @@ def _limit(name: str, value: int, minimum: int, maximum: int) -> int:
     return value
 
 
+def _number_limit(name: str, value: float, minimum: float, maximum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    number = float(value)
+    if not minimum <= number <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return number
+
+
 def automatic_mvp_policy() -> dict[str, Any]:
     return {
         "profile": "automatic-mvp",
@@ -51,7 +57,7 @@ def automatic_mvp_policy() -> dict[str, Any]:
         "criteria": {
             "ebay_recent_sold_lower_bound": {
                 "operator": "GT",
-                "default_threshold": 20,
+                "default_threshold": 0,
                 "source": "SerpApi eBay sold-result distinct exact listing count",
                 "strict_365_day_metric": False,
             },
@@ -60,17 +66,18 @@ def automatic_mvp_policy() -> dict[str, Any]:
                 "default_threshold": 5,
                 "marketplace_id": "AMAZON_US",
             },
-            "us_active_vehicle_proxy": {
-                "operator": "GTE",
-                "default_threshold": None,
-                "threshold_required_per_run": True,
-                "country_code": "US",
-                "official_vio": False,
-                "state_code": "NY",
-                "source": (
-                    "Anonymous NY DMV active-registration count with a bounded "
-                    "NHTSA VIN-decoded model estimate"
-                ),
+            "amazon_us_minimum_price": {
+                "operator": "GT",
+                "default_threshold": 20.0,
+                "currency_code": "USD",
+                "source": "Minimum price across complete exact Amazon search results",
+            },
+            "amazon_us_active_offers": {
+                "operator": "LTE",
+                "default_threshold": 10,
+                "marketplace_id": "AMAZON_US",
+                "source": "Amazon search-card active-offer count saturation proxy",
+                "strict_incomplete_count": True,
             },
         },
         "providers": {
@@ -78,13 +85,13 @@ def automatic_mvp_policy() -> dict[str, Any]:
             "ebay_recent_sold": "serpapi-ebay",
             "amazon_us_competition": "serpapi-amazon",
             "compatibility": "serpapi-ebay-product",
-            "us_active_vehicle_proxy": "ny-dmv-nhtsa-registration-estimate",
         },
         "human_review_required": True,
         "qualification_boundary": (
-            "This heuristic MVP finds review candidates. It does not prove strict 365-day "
-            "eBay units or official nationwide vehicles-in-operation. The vehicle "
-            "gate is a New York model estimate and requires human review."
+            "This heuristic MVP finds review candidates. Amazon price and active-offer "
+            "gates use provider-visible exact search-card data and fail closed when "
+            "incomplete. It does not prove strict 365-day eBay units, so every "
+            "candidate still requires human review."
         ),
     }
 
@@ -92,9 +99,9 @@ def automatic_mvp_policy() -> dict[str, Any]:
 def _stage(
     status: str,
     *,
-    value: int | None,
+    value: int | float | None,
     operator: str | None,
-    threshold: int | None,
+    threshold: int | float | None,
     reason: str,
     evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -174,8 +181,9 @@ def _blank_report(candidate: Mapping[str, Any]) -> dict[str, Any]:
         "stages": {
             "ebay_recent_sold_lower_bound": _not_run("Not evaluated"),
             "amazon_us_competition": _not_run("Not evaluated"),
+            "amazon_us_minimum_price": _not_run("Not evaluated"),
+            "amazon_us_active_offers": _not_run("Not evaluated"),
             "ebay_compatibility": _not_run("Not evaluated"),
-            "us_active_vehicle_proxy": _not_run("Not evaluated"),
         },
     }
 
@@ -186,7 +194,8 @@ def _evaluate_candidate(
     serpapi_key: str,
     ebay_threshold: int,
     amazon_threshold: int,
-    vehicle_threshold: int,
+    amazon_price_threshold: float,
+    amazon_seller_threshold: int,
     max_fitment_listings: int,
     collectors: Mapping[str, Callable[..., Mapping[str, Any]]],
 ) -> dict[str, Any]:
@@ -249,6 +258,18 @@ def _evaluate_candidate(
         "relevant_result_count": amazon.get("relevant_result_count")
         if isinstance(amazon, Mapping)
         else None,
+        "minimum_exact_result_price_usd": amazon.get("minimum_exact_result_price_usd")
+        if isinstance(amazon, Mapping)
+        else None,
+        "price_observation_complete": amazon.get("price_observation_complete")
+        if isinstance(amazon, Mapping)
+        else False,
+        "active_offer_count_lower_bound": amazon.get("active_offer_count_lower_bound")
+        if isinstance(amazon, Mapping)
+        else None,
+        "active_offer_count_complete": amazon.get("active_offer_count_complete")
+        if isinstance(amazon, Mapping)
+        else False,
     }
     count = amazon.get("relevant_result_count") if isinstance(amazon, Mapping) else None
     acquisition_status = amazon.get("acquisition_status") if isinstance(amazon, Mapping) else None
@@ -284,6 +305,90 @@ def _evaluate_candidate(
         operator="LTE",
         threshold=amazon_threshold,
         reason="Complete Amazon US exact competitor count is within the threshold.",
+        evidence=amazon,
+    )
+
+    price = amazon.get("minimum_exact_result_price_usd")
+    price_complete = amazon.get("price_observation_complete") is True
+    if (
+        not price_complete
+        or isinstance(price, bool)
+        or not isinstance(price, (int, float))
+        or price < 0
+    ):
+        stages["amazon_us_minimum_price"] = _stage(
+            "REVIEW_REQUIRED",
+            value=None,
+            operator="GT",
+            threshold=amazon_price_threshold,
+            reason="Amazon minimum exact-result price is incomplete or unavailable.",
+            evidence=amazon,
+        )
+        return report
+    normalized_price = float(price)
+    if normalized_price <= amazon_price_threshold:
+        stages["amazon_us_minimum_price"] = _stage(
+            "REJECTED",
+            value=normalized_price,
+            operator="GT",
+            threshold=amazon_price_threshold,
+            reason="Amazon minimum exact-result price is at or below the threshold.",
+            evidence=amazon,
+        )
+        report["decision"] = "REJECTED"
+        return report
+    stages["amazon_us_minimum_price"] = _stage(
+        "PASSED",
+        value=normalized_price,
+        operator="GT",
+        threshold=amazon_price_threshold,
+        reason="Amazon minimum exact-result price is above the threshold.",
+        evidence=amazon,
+    )
+
+    offer_count = amazon.get("active_offer_count_lower_bound")
+    offer_count_complete = amazon.get("active_offer_count_complete") is True
+    if (
+        isinstance(offer_count, bool)
+        or not isinstance(offer_count, int)
+        or offer_count < 0
+    ):
+        stages["amazon_us_active_offers"] = _stage(
+            "REVIEW_REQUIRED",
+            value=None,
+            operator="LTE",
+            threshold=amazon_seller_threshold,
+            reason="Amazon active-offer count is unavailable.",
+            evidence=amazon,
+        )
+        return report
+    if offer_count > amazon_seller_threshold:
+        stages["amazon_us_active_offers"] = _stage(
+            "REJECTED",
+            value=offer_count,
+            operator="LTE",
+            threshold=amazon_seller_threshold,
+            reason="Amazon active-offer count lower bound exceeds the seller saturation limit.",
+            evidence=amazon,
+        )
+        report["decision"] = "REJECTED"
+        return report
+    if not offer_count_complete:
+        stages["amazon_us_active_offers"] = _stage(
+            "REVIEW_REQUIRED",
+            value=offer_count,
+            operator="LTE",
+            threshold=amazon_seller_threshold,
+            reason="Amazon active-offer count is only a lower bound and cannot prove the seller limit.",
+            evidence=amazon,
+        )
+        return report
+    stages["amazon_us_active_offers"] = _stage(
+        "PASSED",
+        value=offer_count,
+        operator="LTE",
+        threshold=amazon_seller_threshold,
+        reason="Complete Amazon active-offer count is within the seller saturation limit.",
         evidence=amazon,
     )
 
@@ -324,65 +429,6 @@ def _evaluate_candidate(
         evidence=compatibility,
     )
 
-    vehicle_collector = collectors.get(VEHICLE_PROXY_COLLECTOR)
-    if not callable(vehicle_collector):
-        vehicle_collector = collectors.get(MARKETCHECK_COLLECTOR)
-    if not callable(vehicle_collector):
-        raise ValueError("Vehicle proxy collector is not configured")
-    vehicle = vehicle_collector(fitments)
-    report["evidence"]["us_active_vehicle_proxy"] = {
-        key: vehicle.get(key)
-        for key in (
-            "provider",
-            "metric",
-            "retrieved_at",
-            "fitment_resolution",
-            "official_vio",
-            "qualification_boundary",
-            "country_code",
-            "state_code",
-            "sampling_randomized",
-            "sampling_method",
-            "groups",
-        )
-    }
-    proxy = vehicle.get("vehicle_count_proxy") if isinstance(vehicle, Mapping) else None
-    if (
-        vehicle.get("status") != "SUCCESS"
-        or isinstance(proxy, bool)
-        or not isinstance(proxy, int)
-        or proxy < 0
-    ):
-        stages["us_active_vehicle_proxy"] = _stage(
-            "REVIEW_REQUIRED",
-            value=None,
-            operator="GTE",
-            threshold=vehicle_threshold,
-            reason="Complete New York registration model estimate is unavailable.",
-            evidence=vehicle,
-        )
-        return report
-    if proxy < vehicle_threshold:
-        stages["us_active_vehicle_proxy"] = _stage(
-            "REVIEW_REQUIRED",
-            value=proxy,
-            operator="GTE",
-            threshold=vehicle_threshold,
-            reason=(
-                "New York registration estimate is below threshold, but one-state sampled "
-                "coverage cannot decisively reject nationwide vehicle population."
-            ),
-            evidence=vehicle,
-        )
-        return report
-    stages["us_active_vehicle_proxy"] = _stage(
-        "PASSED",
-        value=proxy,
-        operator="GTE",
-        threshold=vehicle_threshold,
-        reason="Complete New York registration model estimate meets the MVP threshold.",
-        evidence=vehicle,
-    )
     report["decision"] = "MVP_OPPORTUNITY_CANDIDATE"
     return report
 
@@ -390,13 +436,14 @@ def _evaluate_candidate(
 def run_automatic_mvp(
     *,
     serpapi_key: str | None,
-    min_us_active_vins: int,
-    marketcheck_key: str | None = None,
     max_candidates: int = 20,
     ebay_category_id: str = DEFAULT_CATEGORY_ID,
+    discovery_keyword: str = DEFAULT_DISCOVERY_KEYWORD,
     discovery_pages: int = 1,
-    min_ebay_trailing_year_units_exclusive: int = 20,
+    min_ebay_trailing_year_units_exclusive: int = 0,
     max_amazon_us_exact_competitors: int = 5,
+    min_amazon_price_usd: float = 20.0,
+    max_amazon_active_sellers: int = 10,
     max_fitment_listings: int = 3,
     collectors: Mapping[str, Callable[..., Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
@@ -407,32 +454,22 @@ def run_automatic_mvp(
     _limit("discovery_pages", discovery_pages, 1, 10)
     _limit("min_ebay_trailing_year_units_exclusive", min_ebay_trailing_year_units_exclusive, 0, 1000000)
     _limit("max_amazon_us_exact_competitors", max_amazon_us_exact_competitors, 0, 100000)
-    _limit("min_us_active_vins", min_us_active_vins, 1, 100000000)
+    _number_limit("min_amazon_price_usd", min_amazon_price_usd, 0.0, 1000000.0)
+    _limit("max_amazon_active_sellers", max_amazon_active_sellers, 0, 1000000)
     _limit("max_fitment_listings", max_fitment_listings, 1, 10)
     if not isinstance(ebay_category_id, str) or not ebay_category_id.isdigit():
         raise ValueError("ebay_category_id must contain digits only")
+    if not isinstance(discovery_keyword, str) or not discovery_keyword.strip():
+        raise ValueError("discovery_keyword must be a non-empty string")
 
     active_collectors: dict[str, Callable[..., Mapping[str, Any]]] = {
         DISCOVERY_COLLECTOR: collect_ebay_sold_candidates,
         EBAY_DEMAND_COLLECTOR: collect_ebay_sold,
         AMAZON_COLLECTOR: collect_amazon_competition,
         EBAY_COMPATIBILITY_COLLECTOR: collect_ebay_compatibility,
-        VEHICLE_PROXY_COLLECTOR: collect_ny_registered_vehicle_proxy,
     }
     if collectors is not None:
         active_collectors.update(collectors)
-        if (
-            MARKETCHECK_COLLECTOR in collectors
-            and VEHICLE_PROXY_COLLECTOR not in collectors
-        ):
-            legacy_collector = collectors[MARKETCHECK_COLLECTOR]
-
-            def collect_legacy_vehicle_proxy(
-                fitments: Sequence[Mapping[str, Any]],
-            ) -> Mapping[str, Any]:
-                return legacy_collector(fitments, api_key=marketcheck_key)
-
-            active_collectors[VEHICLE_PROXY_COLLECTOR] = collect_legacy_vehicle_proxy
     missing = [name for name in active_collectors if not callable(active_collectors[name])]
     if missing:
         raise ValueError(f"Collectors are not callable: {', '.join(missing)}")
@@ -440,29 +477,56 @@ def run_automatic_mvp(
     discovered: list[Mapping[str, Any]] = []
     seen: set[str] = set()
     discovery_diagnostics: list[dict[str, Any]] = []
+    discovery_status = "SUCCESS"
+    pages_attempted = 0
     pages_completed = 0
+    discovery_stats = {
+        "results_seen": 0,
+        "eligible_sold_listings": 0,
+        "listings_with_part_number": 0,
+        "candidates_emitted": 0,
+    }
     for page in range(1, discovery_pages + 1):
         if len(discovered) >= max_candidates:
             break
+        pages_attempted += 1
         outcome = active_collectors[DISCOVERY_COLLECTOR](
             api_key=serpapi_secret,
             category_id=ebay_category_id,
+            keyword=discovery_keyword,
             max_candidates=max_candidates - len(discovered),
             page=page,
         )
-        pages_completed += 1
         for item in outcome.get("diagnostics", []):
             if isinstance(item, Mapping):
                 discovery_diagnostics.append({"page": page, **dict(item)})
-        if outcome.get("status") not in {"SUCCESS", "PARTIAL_SUCCESS"}:
+        page_stats = outcome.get("stats")
+        if isinstance(page_stats, Mapping):
+            for name in discovery_stats:
+                value = page_stats.get(name)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    discovery_stats[name] += value
+        page_status = outcome.get("status")
+        if page_status == "ZERO_RESULTS":
+            pages_completed += 1
+            if not discovered:
+                discovery_status = "ZERO_RESULTS"
+            break
+        if page_status not in {"SUCCESS", "PARTIAL_SUCCESS"}:
+            discovery_status = (
+                str(page_status) if isinstance(page_status, str) else "PARSER_FAILED"
+            )
             discovery_diagnostics.append(
                 {
                     "page": page,
                     "code": "DISCOVERY_STOPPED",
-                    "message": f"Discovery ended with {outcome.get('status')}",
+                    "message": f"Discovery ended with {discovery_status}",
                 }
             )
             break
+        pages_completed += 1
+        if page_status == "PARTIAL_SUCCESS":
+            discovery_status = "PARTIAL_SUCCESS"
         candidates = outcome.get("candidates")
         if not isinstance(candidates, list):
             break
@@ -480,13 +544,17 @@ def run_automatic_mvp(
             if len(discovered) >= max_candidates:
                 break
 
+    # Page-level providers report raw emissions; the run summary reports the
+    # canonical candidates that remain after cross-page deduplication.
+    discovery_stats["candidates_emitted"] = len(discovered)
     reports = [
         _evaluate_candidate(
             candidate,
             serpapi_key=serpapi_secret,
             ebay_threshold=min_ebay_trailing_year_units_exclusive,
             amazon_threshold=max_amazon_us_exact_competitors,
-            vehicle_threshold=min_us_active_vins,
+            amazon_price_threshold=float(min_amazon_price_usd),
+            amazon_seller_threshold=max_amazon_active_sellers,
             max_fitment_listings=max_fitment_listings,
             collectors=active_collectors,
         )
@@ -499,20 +567,25 @@ def run_automatic_mvp(
         "policy": {
             "min_ebay_trailing_year_units_exclusive": min_ebay_trailing_year_units_exclusive,
             "max_amazon_us_exact_competitors": max_amazon_us_exact_competitors,
-            "min_us_active_vins": min_us_active_vins,
+            "min_amazon_price_usd": float(min_amazon_price_usd),
+            "max_amazon_active_sellers": max_amazon_active_sellers,
             "max_fitment_listings": max_fitment_listings,
         },
         "execution": {
             "mode": "AUTOMATIC_HEURISTIC_MVP",
             "human_review_required": True,
             "account_count": 1,
-            "provider_count": 2,
+            "provider_count": 1,
         },
         "discovery": {
+            "status": discovery_status,
             "category_id": ebay_category_id,
+            "keyword": discovery_keyword,
             "pages_requested": discovery_pages,
+            "pages_attempted": pages_attempted,
             "pages_completed": pages_completed,
             "candidate_count": len(discovered),
+            **discovery_stats,
             "diagnostics": discovery_diagnostics,
         },
         "reports": reports,
@@ -530,8 +603,6 @@ __all__ = [
     "DISCOVERY_COLLECTOR",
     "EBAY_COMPATIBILITY_COLLECTOR",
     "EBAY_DEMAND_COLLECTOR",
-    "MARKETCHECK_COLLECTOR",
-    "VEHICLE_PROXY_COLLECTOR",
     "automatic_mvp_policy",
     "run_automatic_mvp",
 ]

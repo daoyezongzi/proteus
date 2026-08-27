@@ -207,6 +207,11 @@ def _http_status(status_code: int) -> tuple[str, str] | None:
     return "HTTP_ERROR", f"HTTP {status_code}: SerpApi request failed"
 
 
+# SerpApi's eBay engine answers show_only=Sold with zero results and the error
+# "eBay hasn't returned any results for this query", which read as absent demand
+# for every part number. Sold evidence comes from each card's quantity_sold
+# label, and _observed_demand counts only listings carrying one, so omitting the
+# filter cannot let an unsold listing become demand evidence.
 def _request_url(raw_part_number: str, api_key: str) -> str:
     return f"{SEARCH_ENDPOINT}?{urlencode({
         'engine': 'ebay',
@@ -215,7 +220,6 @@ def _request_url(raw_part_number: str, api_key: str) -> str:
         '_salic': '1',
         '_stpos': '10001',
         'LH_ItemCondition': '1000',
-        'show_only': 'Sold',
         '_ipg': '50',
         'no_cache': 'true',
         'output': 'json',
@@ -234,7 +238,6 @@ def _parameters_match(payload: Mapping[str, Any], raw_part_number: str) -> bool:
     expected = {
         "engine": "ebay",
         "ebay_domain": "ebay.com",
-        "show_only": "Sold",
         "LH_ItemCondition": "1000",
         "_salic": "1",
         "_stpos": "10001",

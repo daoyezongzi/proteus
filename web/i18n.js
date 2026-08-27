@@ -15,29 +15,30 @@ const COPY = {
     "field.candidates": "候选数",
     "field.pages": "读取页数",
     "stack.title": "筛网组",
-    "stack.note": "四层筛网，从粗到细。候选必须全部通过。",
+    "stack.note": "五层筛网，从粗到细。候选必须全部通过。",
     "run": "开始筛选",
     "run.busy": "筛选中…",
     "run.progress": "正在把候选倒进筛网组，这会花一些时间。",
     "empty.title": "还没有运行",
-    "empty.body": "设好四层筛孔，然后开始筛选。结果会出现在这里，每一道门都带读数和来源。",
+    "empty.body": "设好五层筛孔，然后开始筛选。结果会出现在这里，每一道门都带读数和来源。",
     "unit.sold": "个精确已售listing",
     "unit.competitors": "个精确竞品",
+    "unit.usd": "美元",
+    "unit.offers": "个在售报价",
     "unit.probe": "个listing",
-    "unit.vehicles": "辆在册车辆",
     "mesh.ebay": "eBay需求",
     "mesh.amazon": "Amazon竞争",
+    "mesh.amazonProducts": "Amazon精确商品",
+    "mesh.amazonPrice": "Amazon最低价",
+    "mesh.amazonOffers": "Amazon卖家/报价",
     "mesh.fitment": "车型适配",
-    "mesh.vehicles": "路上的车",
     "op.GT": "大于",
     "op.LTE": "不超过",
     "op.GTE": "不少于",
     "op.probe": "最多查",
     "mustset": "必须填",
     "caveat.notannual": "这是provider能看到的近期子集，不是真正的365天销量。",
-    "caveat.notvio": (where) => `由${where}估算 — 不是官方全美保有量。`,
-    "caveat.stateonly": (code) => `${code}一个州`,
-    "caveat.proxy": "代理指标",
+    "caveat.offerproxy": "按精确商品卡片显示的在售报价衡量拥挤度；带“+”的读数只是下界，不能用来证明低饱和。",
     "held": (n) => `拦下 ${n}`,
     "tally.screened": (n) => `筛了 ${n} 个候选`,
     "tally.none": "没有发现候选",
@@ -48,13 +49,19 @@ const COPY = {
     "verdict.REVIEW_REQUIRED": "要你亲自看",
     "verdict.REJECTED": "已筛掉",
     "notice.boundary.title": "通过意味着什么、不意味着什么",
-    "notice.empty.title": "发现阶段没有返回结果",
-    "notice.empty.body": (done, req, cat, kw) =>
-      `在类目 ${cat} 内以关键词「${kw}」读了 ${req} 页中的 ${done} 页。空结果不等于没有需求 — 也可能是这个关键词取不到样本，或者provider失败了。`,
+    "notice.discovery.failed.title": "发现阶段失败",
+    "notice.discovery.failed.body": (status, attempted, done, req, cat, kw) =>
+      `在类目 ${cat} 内以关键词「${kw}」请求 ${req} 页，尝试 ${attempted} 页，成功读取 ${done} 页。Provider状态：${status}。这不是“没有需求”。`,
+    "notice.discovery.zero.title": "发现阶段返回零条结果",
+    "notice.discovery.zero.body": (done, req, cat, kw) =>
+      `在类目 ${cat} 内以关键词「${kw}」请求 ${req} 页，成功读取 ${done} 页，但provider明确返回零条结果。可以更换关键词后重试。`,
+    "notice.discovery.filtered.title": "没有提取出可用候选",
+    "notice.discovery.filtered.body": (done, req, cat, kw, seen, sold, withPart, emitted) =>
+      `在类目 ${cat} 内以关键词「${kw}」请求 ${req} 页，成功读取 ${done} 页。检查 ${seen} 条结果：${sold} 条有明确销量，${withPart} 条标题含可提取零件号，最终产出 ${emitted} 个候选。`,
     "readings": "读数与来源",
     "needs": (op, t) => `（需要${op} ${t}）`,
     "noreading": "无读数",
-    "passedall": "四层全过。动手之前请核对证据。",
+    "passedall": "五层全过。动手之前请核对证据。",
     "srclisting": "来源listing ↗",
     "err.unreachable": "接口连不上",
     "err.startapi": "先启动后端：python -m proteus api",
@@ -81,21 +88,33 @@ const COPY = {
       "完整的Amazon US精确竞品数超过阈值。",
     "Amazon exact-result count is incomplete or unavailable.":
       "Amazon精确结果数不完整或不可用。",
+    "Amazon minimum exact-result price is incomplete or unavailable.":
+      "Amazon精确结果的最低价不完整或不可用。",
+    "Amazon minimum exact-result price is at or below the threshold.":
+      "Amazon精确结果最低价等于或低于阈值。",
+    "Amazon minimum exact-result price is above the threshold.":
+      "Amazon精确结果最低价高于阈值。",
+    "Amazon active-offer count is unavailable.":
+      "Amazon在售报价数不可用。",
+    "Amazon active-offer count lower bound exceeds the seller saturation limit.":
+      "Amazon在售报价数下界超过卖家饱和上限。",
+    "Amazon active-offer count is only a lower bound and cannot prove the seller limit.":
+      "Amazon在售报价数只是下界，无法证明未超过卖家上限。",
+    "Complete Amazon active-offer count is within the seller saturation limit.":
+      "完整的Amazon在售报价数在卖家饱和上限内。",
     "At least one exact sold listing exposed normalized YMMT fitment.":
       "至少一个精确已售listing给出了规范化的YMMT适配。",
     "No exact sold listing exposed usable automotive compatibility.":
       "没有精确已售listing给出可用的车型适配。",
-    "Complete New York registration model estimate meets the MVP threshold.":
-      "完整的纽约州在册车型估算达到阈值。",
-    "Complete New York registration model estimate is unavailable.":
-      "纽约州在册车型估算不可用。",
-    "New York registration estimate is below threshold, but one-state sampled coverage cannot decisively reject nationwide vehicle population.":
-      "纽约州在册估算低于阈值，但单州抽样覆盖不足以否决全美保有量。",
+    "transport URL error": "连接provider搜索端点失败。",
+    "transport timed out": "连接provider搜索端点超时。",
+    "transport raised an unexpected exception": "连接provider搜索端点时发生异常。",
+    "SerpApi returned an API error": "SerpApi返回了API错误。",
     "Not evaluated": "未评估",
 
     /* Policy boundary text, keyed by its exact committed English. */
-    "This heuristic MVP finds review candidates. It does not prove strict 365-day eBay units or official nationwide vehicles-in-operation. The vehicle gate is a New York model estimate and requires human review.":
-      "这条启发式MVP找的是待人工复核的候选。它不能证明严格的365天eBay销量，也不能证明官方全美保有量。车辆这一门是纽约州的车型估算，必须人工复核。",
+    "This heuristic MVP finds review candidates. Amazon price and active-offer gates use provider-visible exact search-card data and fail closed when incomplete. It does not prove strict 365-day eBay units, so every candidate still requires human review.":
+      "这条启发式MVP找的是待人工复核的候选。Amazon价格和在售报价门使用provider可见的精确商品卡片数据，数据不完整时不会放行。它不能证明严格的365天eBay销量，因此每个候选仍需人工复核。",
   },
 
   en: {
@@ -109,29 +128,30 @@ const COPY = {
     "field.candidates": "Candidates",
     "field.pages": "Pages to read",
     "stack.title": "The sieve stack",
-    "stack.note": "Four meshes, coarsest first. A candidate has to pass every one.",
+    "stack.note": "Five meshes, coarsest first. A candidate has to pass every one.",
     "run": "Run the sieve",
     "run.busy": "Running…",
     "run.progress": "Pouring candidates through the stack. This can take a while.",
     "empty.title": "Nothing has run yet",
-    "empty.body": "Set the four apertures, then run the sieve. Results land here with the reading and the source behind every gate.",
+    "empty.body": "Set the five apertures, then run the sieve. Results land here with the reading and the source behind every gate.",
     "unit.sold": "distinct sold listings",
     "unit.competitors": "exact competitors",
+    "unit.usd": "USD",
+    "unit.offers": "active offers",
     "unit.probe": "listings to probe",
-    "unit.vehicles": "registered vehicles",
     "mesh.ebay": "eBay demand",
     "mesh.amazon": "Amazon competition",
+    "mesh.amazonProducts": "Amazon exact products",
+    "mesh.amazonPrice": "Amazon minimum price",
+    "mesh.amazonOffers": "Amazon sellers / offers",
     "mesh.fitment": "Vehicle fitment",
-    "mesh.vehicles": "Vehicles on the road",
     "op.GT": "more than",
     "op.LTE": "at most",
     "op.GTE": "at least",
     "op.probe": "check up to",
     "mustset": "must be set",
     "caveat.notannual": "A recent visible subset, not a true 365-day count.",
-    "caveat.notvio": (where) => `Estimated from ${where} — not official nationwide VIO.`,
-    "caveat.stateonly": (code) => `${code} only`,
-    "caveat.proxy": "a proxy",
+    "caveat.offerproxy": "Uses active offers shown on exact product cards as a saturation proxy. A '+' reading is only a lower bound and cannot prove low saturation.",
     "held": (n) => `held ${n}`,
     "tally.screened": (n) => `Screened ${n} candidate${n === 1 ? "" : "s"}`,
     "tally.none": "No candidates were discovered",
@@ -142,9 +162,15 @@ const COPY = {
     "verdict.REVIEW_REQUIRED": "Needs your eyes",
     "verdict.REJECTED": "Screened out",
     "notice.boundary.title": "What a pass does and doesn't mean",
-    "notice.empty.title": "Discovery returned nothing",
-    "notice.empty.body": (done, req, cat, kw) =>
-      `Read ${done} of ${req} page(s) in category ${cat} for "${kw}". An empty result is not evidence of no demand — the keyword may draw no sample, or the provider may have failed.`,
+    "notice.discovery.failed.title": "Discovery failed",
+    "notice.discovery.failed.body": (status, attempted, done, req, cat, kw) =>
+      `Requested ${req} page(s) in category ${cat} for "${kw}"; attempted ${attempted} and completed ${done}. Provider status: ${status}. This is not evidence of no demand.`,
+    "notice.discovery.zero.title": "Discovery returned zero results",
+    "notice.discovery.zero.body": (done, req, cat, kw) =>
+      `Requested ${req} page(s) in category ${cat} for "${kw}" and completed ${done}; the provider explicitly returned zero results. Try another keyword.`,
+    "notice.discovery.filtered.title": "No usable candidates were extracted",
+    "notice.discovery.filtered.body": (done, req, cat, kw, seen, sold, withPart, emitted) =>
+      `Requested ${req} page(s) in category ${cat} for "${kw}" and completed ${done}. Checked ${seen} result(s): ${sold} had explicit sales, ${withPart} had an extractable part number in the title, and ${emitted} candidate(s) were emitted.`,
     "readings": "readings and sources",
     "needs": (op, t) => `(needs ${op} ${t})`,
     "noreading": "no reading",

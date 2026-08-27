@@ -1,5 +1,179 @@
 # Proteus Development Log
 
+## 2026-08-28 — All-archetype scan and status-filtered review surface
+
+- Removed the public single-part-type input. Every Northway V0.2.4 run now
+  scans all nine narrow archetypes, preserves each discovery keyword/status in
+  `discovery.per_archetype`, and exposes the full query manifest for later UI
+  work. The request budget must cover every requested discovery page first.
+- Kept the interface change functional and minimal: actionable/review results
+  are shown by default, rejected results live in a separate selectable status
+  category, and the complete JSON export still contains every report.
+- Updated the result schema, API contract, replay harness, focused tests,
+  README usage instructions, execution plan and current TODO. No visual redesign
+  was included; stable data and DOM hooks are reserved for that later pass.
+- Passed all 325 offline tests, Python compilation, dependency checks,
+  JavaScript syntax checks, JSON parsing, schema validation and whitespace
+  validation. Functional browser replay confirmed the default/rejected category
+  switch, and the live API exposed nine archetypes with no single-type field.
+
+## 2026-08-28 — V0.2.4 Northway initial-screening MVP runnable
+
+- Implemented a separate `northway-product-family-mvp` runtime while preserving
+  the V0.2.3 exact-OEM compatibility API. The new UI needs only SerpApi; domestic
+  supply and margin are explicit manual-review items rather than extra required
+  credentials for the initial screen.
+- Added nine narrow trim/cable archetypes, deterministic out-of-scope controls,
+  sellable-family resolution, left/right and pair identity, four/two-digit year
+  normalization, fitment-aware Amazon query packs and conservative result
+  classification.
+- Separated substitute-product clusters, relevant ASIN count, seller offers by
+  ASIN, total offer lower bound, family price floor and aftermarket price floor.
+  Incomplete searches can reject on a decisive observed lower bound but cannot
+  prove low competition.
+- Added `/api/v1/northway/policy`, asynchronous run/status endpoints and a JSON
+  download endpoint. The V0.2.4 request has no `max_candidates`; pages and a
+  total provider request budget bound the run, and budget-exhausted candidates
+  remain in the export with evidence gaps.
+- Replaced the default operator surface with a Chinese-first Northway selection
+  bench. It shows ranked family cards, pass/review/reject stages, Amazon queries,
+  related products, source links and the three-item manual review checklist.
+- Deterministic browser replay produced one market shortlist and one rejection
+  from left/right fog-bezel families; JSON download fired successfully and the
+  final desktop layout was visually verified.
+- A real SerpApi fog-light-bezel probe inspected 60 eBay results, found 41 sold
+  listings, emitted 14 candidate listing groups and resolved seven families.
+  With a five-request budget and one Amazon query per family it returned three
+  market shortlists, three review cases and eight rejections. The probe exposed
+  `11-14` short-year parsing, which was fixed and covered by a regression test.
+- Full unit tests, Python compilation, JavaScript syntax validation, dependency
+  checks, strict JSON parsing and `git diff --check` passed. The only test warning
+  is the existing Starlette/httpx TestClient deprecation notice.
+
+## 2026-08-28 — Northway product-family target frozen
+
+- Reviewed the current product brief, execution plan, TODO, development log and
+  the latest local Proteus task history. The drift occurred because runnable
+  acquisition proxies and non-empty discovery were optimized before product
+  identity: broad eBay `6028` discovery plus `OEM` title-token extraction can
+  emit years, generic terms and highly substitutable products even when an
+  exact OEM query looks sparse.
+- Replaced the product objective with Northway-style vehicle-specific small
+  replacement parts whose complete substitute-product family is genuinely
+  under-supplied on Amazon US. northwayautoparts is a product-shape and gold-
+  labeling reference, not a fixed candidate feed or an automatic pass list.
+- Froze two first-batch category profiles: small vehicle-specific trim/covers
+  and simple vehicle-specific mechanical cables. Universal-fit goods,
+  chemicals, generic accessories, complex electronics, safety-critical parts,
+  lamp assemblies, large panels and heavy assemblies are explicitly out of
+  scope.
+- Reclassified the benchmark roles: Northway listing/part examples form the
+  primary gold set; `467903X100` is an external Northway-like extension case;
+  `00289-ACRKT` and Universal-fit goods are negative controls.
+- Defined `sellable_product_family` from part type, fitment, required engine or
+  transmission qualifiers, mounting position/side, critical specifications and
+  package quantity. OEM/MPN/UPC and Replacement/Replaces relations now serve
+  discovery and traceability rather than defining the competition boundary.
+- Separated substitute product/ASIN count, seller offers per ASIN and the
+  substitute-family price floor. The lowest aftermarket family price cannot be
+  hidden by an expensive OEM result, and offer saturation cannot be reported as
+  product variety.
+- Froze the bounded-unlimited run rule: no `max_candidates` truncation inside a
+  configured scan manifest, while pages/cursors, rate limits and budgets remain
+  explicit. Incomplete evidence continues to other independent collectors;
+  only an explicit scope, identity or business-gate failure may short-circuit
+  expensive downstream work.
+- Required a complete JSON review artifact containing every candidate, actual
+  category profile and scan manifest, family identity, query pack, rule
+  readings, source evidence, provider attempts, failure reasons and rank.
+- Updated `proteus.md`, `V0_2_EXECUTION_PLAN.md` and `TODO.md`, then added the
+  provider-independent V0.2.4 product-family resolution JSON Schema and a
+  versioned Northway fixture covering seven store-derived gold cases, the
+  `467903X100` extension case and two out-of-scope controls.
+- Added contract tests for schema validity, all fixture outcomes, profile
+  coverage, left/right separation, pair semantics, extension-sample role and
+  negative-family suppression. All 18 focused tests passed and both new JSON
+  files passed strict parsing.
+- This entry records the design/fixture checkpoint. The later V0.2.4 entry above
+  supersedes its implementation-status sentence with a runnable initial-screening
+  path; the V0.2.3 compatibility runtime itself remains unchanged.
+
+## 2026-08-28 — Discovery extraction debug and five-gate automatic MVP
+
+- Reproduced `6028` / `auto parts` against the live provider. The request was
+  successful and returned 60 cards; 49 had explicit sold evidence, but none of
+  those 49 titles contained a token accepted by the conservative part-number
+  extractor. This was a keyword/rule mismatch, not a false provider failure.
+- Ran the same category with `OEM` and immediately extracted the requested 20
+  candidates (including `00289-ACRKT`, `12204-37010` and `42602-0R040`), so the
+  editable discovery keyword now defaults to `OEM`.
+- Added discovery funnel statistics for results seen, eligible sold listings,
+  listings with an extractable part number and emitted candidates. The
+  bilingual empty-result notice now exposes these counts; the schema keeps the
+  field optional so historical V0.2 discovery records remain replayable.
+- Changed the frontend-editable eBay recent-sold threshold default from `20` to
+  `0`. The rule remains strict `eligible_listing_count > threshold`, so the
+  default requires at least one exact sold listing rather than treating a
+  missing/invalid count as a pass.
+- Removed the NY vehicle-population proxy from the automatic MVP, including its
+  request field, policy criterion, report stage and sixth frontend mesh. eBay
+  compatibility remains the fifth gate; the separate strict-market-screening
+  VIO contract and adapters remain available.
+- Passed all 293 offline tests, Python bytecode compilation, dependency checks,
+  JavaScript syntax checks and `git diff --check`. Restarted the loopback API
+  and verified the live policy and OpenAPI defaults.
+- Browser-tested the real operator bench on desktop and at a 390px mobile
+  viewport. Both show five non-overlapping gates, editable `OEM` / `0` / `20` /
+  `10` defaults, no horizontal overflow and no browser console errors.
+
+## 2026-08-27 — Configurable Amazon price and offer-saturation gates
+
+- Added two independent automatic-MVP gates after exact Amazon product count:
+  the minimum price across exact search results must be strictly above a
+  frontend-editable USD threshold (default `$20`), and the active-offer
+  saturation proxy must be at or below a frontend-editable ceiling (default
+  `10`). The existing exact-product ceiling remains a separate rule.
+- Preserved strict uncertainty semantics. Missing prices cannot pass; a value
+  such as `343+ used & new offers` is retained as a lower bound and decisively
+  rejects against `10`, while an incomplete lower bound below the ceiling
+  requires human review.
+- Extended the SerpApi Amazon evidence with exact-result minimum price,
+  per-product offer-count observations and completeness flags. The metric is
+  explicitly an active-offer proxy, not a claim of deduplicated seller count.
+- Added both controls to the bilingual operator bench and the asynchronous API
+  request contract, including decimal price input and the requested seller
+  ceiling default of `10`.
+- Passed all 295 offline tests, Python bytecode compilation, dependency checks,
+  JavaScript syntax checks and `git diff --check`. Restarted the loopback API;
+  live health, policy, OpenAPI and served frontend probes all expose defaults
+  `$20` and `10`.
+- Browser-tested the real loopback operator bench on desktop and a 390px mobile
+  viewport. Both new controls are visible and editable (`25.50` / `7` probe),
+  defaults restore to `20` / `10`, all six gates fit without overlap, and the
+  page emitted no console errors.
+
+## 2026-08-27 — Discovery zero-result and provider-failure states separated
+
+- Reproduced the empty discovery card with one live `6028` / `auto parts`
+  request. DNS, TCP 443 and the SerpApi home page were reachable, while the
+  search endpoint consistently ended its TLS connection with
+  `UNEXPECTED_EOF_WHILE_READING`; this is a provider/search-path transport
+  failure, not evidence of zero demand.
+- Corrected automatic-run accounting so `pages_attempted` and
+  `pages_completed` are distinct and a failed page is never reported as
+  successfully read. The discovery summary now carries its aggregate status.
+- Corrected the SerpApi parser contract: a top-level `error` paired with
+  `search_metadata.status=Success` is the provider's documented empty-result
+  shape and now maps to `ZERO_RESULTS`, while actual transport/API failures
+  remain explicit.
+- Split the frontend's former ambiguous empty notice into provider failure,
+  explicit zero results and successful-page/no-extracted-candidate states. The
+  failure view surfaces the first redacted backend diagnostic without exposing
+  provider credentials or raw responses.
+- Passed all 290 offline tests, Python bytecode compilation, JavaScript syntax
+  checks and direct frontend notice probes. Live acceptance remains blocked by
+  the current TLS failure on the SerpApi search endpoint.
+
 ## 2026-08-27 — Anonymous NY DMV/NHTSA vehicle proxy replaces MarketCheck default
 
 - Replaced the automatic MVP's required MarketCheck vehicle stage with an

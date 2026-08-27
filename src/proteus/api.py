@@ -14,8 +14,9 @@ from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, status
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from proteus import __version__
 from proteus.credentials import (
@@ -27,6 +28,7 @@ from proteus.credentials import (
     resolve_secret,
 )
 from proteus.normalization import normalize_part_number
+from proteus.northway_mvp import ARCHETYPES, northway_mvp_policy
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
     SERPAPI_AMAZON_ID,
@@ -34,7 +36,7 @@ from proteus.providers.adapters import (
     SERPAPI_EBAY_ID,
     build_provider_registry,
 )
-from proteus.providers.base import Capability
+from proteus.providers.base import Capability, DEFAULT_DISCOVERY_KEYWORD
 from proteus.screening import evaluate_strict_market_screening, screening_policy
 from proteus.automatic_mvp import automatic_mvp_policy
 
@@ -56,6 +58,10 @@ class FrontendService(Protocol):
 
     def get_mvp_run(self, run_id: str) -> dict | None: ...
 
+    def submit_northway_run(self, request: dict) -> dict: ...
+
+    def get_northway_run(self, run_id: str) -> dict | None: ...
+
 
 class ApiRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -71,11 +77,47 @@ class AutomaticMvpRunRequest(BaseModel):
 
     max_candidates: int = Field(default=20, ge=1, le=100)
     ebay_category_id: str = Field(default="6028", pattern=r"^[0-9]+$")
+    # The marketplace engine cannot browse a category with no query, so the
+    # sample is drawn from this keyword within the category.
+    discovery_keyword: str = Field(
+        default=DEFAULT_DISCOVERY_KEYWORD, min_length=1, max_length=200
+    )
     discovery_pages: int = Field(default=1, ge=1, le=10)
-    min_ebay_trailing_year_units_exclusive: int = Field(default=20, ge=0, le=1000000)
+
+    @field_validator("discovery_keyword")
+    @classmethod
+    def validate_discovery_keyword(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("discovery_keyword must not be blank")
+        return value.strip()
+    min_ebay_trailing_year_units_exclusive: int = Field(default=0, ge=0, le=1000000)
     max_amazon_us_exact_competitors: int = Field(default=5, ge=0, le=100000)
-    min_us_active_vins: int = Field(ge=1, le=100000000)
+    min_amazon_price_usd: float = Field(default=20.0, ge=0, le=1000000)
+    max_amazon_active_sellers: int = Field(default=10, ge=0, le=1000000)
     max_fitment_listings: int = Field(default=3, ge=1, le=10)
+
+
+class NorthwayMvpRunRequest(BaseModel):
+    """One bounded run across every Northway product archetype."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    discovery_pages: int = Field(default=1, ge=1, le=10)
+    request_budget: int = Field(default=80, ge=len(ARCHETYPES), le=500)
+    max_amazon_queries_per_family: int = Field(default=3, ge=1, le=5)
+    max_competitive_products: int = Field(default=3, ge=0, le=100)
+    min_family_price_usd: float = Field(default=20.0, ge=0, le=1000000)
+    min_observed_ebay_demand: int = Field(default=1, ge=0, le=1000000)
+
+    @model_validator(mode="after")
+    def validate_discovery_budget(self) -> "NorthwayMvpRunRequest":
+        required = len(ARCHETYPES) * self.discovery_pages
+        if self.request_budget < required:
+            raise ValueError(
+                "request_budget must cover every archetype discovery page "
+                f"({required} requests required)"
+            )
+        return self
 
 
 class EvidenceSource(BaseModel):
@@ -264,6 +306,7 @@ class DefaultFrontendService:
     def __init__(self) -> None:
         self._manager = InMemoryRunManager(self._run)
         self._mvp_manager = InMemoryRunManager(self._run_mvp)
+        self._northway_manager = InMemoryRunManager(self._run_northway)
 
     def configuration_status(self) -> dict:
         return configuration_status()
@@ -365,6 +408,20 @@ class DefaultFrontendService:
     def get_mvp_run(self, run_id: str) -> dict | None:
         return self._mvp_manager.get(run_id)
 
+    def _run_northway(self, request: dict) -> Mapping[str, Any]:
+        from proteus.northway_mvp import run_northway_mvp
+
+        return run_northway_mvp(
+            serpapi_key=resolve_secret(SERPAPI_API_KEY),
+            **request,
+        )
+
+    def submit_northway_run(self, request: dict) -> dict:
+        return self._northway_manager.submit(request)
+
+    def get_northway_run(self, run_id: str) -> dict | None:
+        return self._northway_manager.get(run_id)
+
 
 def create_app(*, service: FrontendService | None = None) -> FastAPI:
     active_service = service or DefaultFrontendService()
@@ -380,8 +437,12 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         return {
             "status": "ok",
             "version": __version__,
-            "profile": "automatic-mvp",
-            "compatibility_profiles": ["strict-market-screening", "two-account-managed"],
+            "profile": "northway-product-family-mvp",
+            "compatibility_profiles": [
+                "automatic-mvp",
+                "strict-market-screening",
+                "two-account-managed",
+            ],
         }
 
     @app.get("/api/v1/config/status")
@@ -427,6 +488,35 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         if value is None:
             raise HTTPException(status_code=404, detail="run not found")
         return value
+
+    @app.get("/api/v1/northway/policy")
+    def northway_policy() -> dict:
+        return northway_mvp_policy()
+
+    @app.post("/api/v1/northway/runs", status_code=status.HTTP_202_ACCEPTED)
+    def submit_northway_run(request: NorthwayMvpRunRequest) -> dict:
+        return active_service.submit_northway_run(request.model_dump())
+
+    @app.get("/api/v1/northway/runs/{run_id}")
+    def get_northway_run(run_id: str) -> dict:
+        value = active_service.get_northway_run(run_id)
+        if value is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return value
+
+    @app.get("/api/v1/northway/runs/{run_id}/export")
+    def export_northway_run(run_id: str) -> JSONResponse:
+        value = active_service.get_northway_run(run_id)
+        if value is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if value.get("status") != "COMPLETED" or not isinstance(value.get("result"), Mapping):
+            raise HTTPException(status_code=409, detail="run is not complete")
+        return JSONResponse(
+            value["result"],
+            headers={
+                "Content-Disposition": f'attachment; filename="proteus-{run_id}.json"'
+            },
+        )
 
     @app.post("/api/v1/runs", status_code=status.HTTP_202_ACCEPTED)
     def submit_run(request: ApiRunRequest) -> dict:
@@ -487,6 +577,7 @@ __all__ = [
     "DefaultFrontendService",
     "FrontendService",
     "InMemoryRunManager",
+    "NorthwayMvpRunRequest",
     "ScreeningPolicyResponse",
     "StrictScreeningRequest",
     "StrictScreeningResponse",

@@ -52,14 +52,13 @@ def success_payload() -> dict[str, Any]:
             "status": "Success",
             "ebay_url": (
                 "https://www.ebay.com/sch/i.html?_nkw=53630-53010"
-                "&show_only=Sold&LH_ItemCondition=1000&_salic=1&_stpos=10001"
+                "&LH_ItemCondition=1000&_salic=1&_stpos=10001"
             ),
         },
         "search_parameters": {
             "engine": "ebay",
             "_nkw": PART_NUMBER,
             "ebay_domain": "ebay.com",
-            "show_only": "Sold",
             "LH_ItemCondition": "1000",
             "_salic": "1",
             "_stpos": "10001",
@@ -119,7 +118,6 @@ def test_exact_sold_result_maps_to_provider_neutral_acquisition() -> None:
         "engine": ["ebay"],
         "no_cache": ["true"],
         "output": ["json"],
-        "show_only": ["Sold"],
     }
     stage = evaluate_ebay_demand_gate(
         outcome,

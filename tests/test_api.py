@@ -36,10 +36,12 @@ class FakeFrontendService:
         assert request == {
             "max_candidates": 10,
             "ebay_category_id": "6028",
+            "discovery_keyword": "OEM",
             "discovery_pages": 1,
-            "min_ebay_trailing_year_units_exclusive": 20,
+            "min_ebay_trailing_year_units_exclusive": 0,
             "max_amazon_us_exact_competitors": 5,
-            "min_us_active_vins": 5000,
+            "min_amazon_price_usd": 20.0,
+            "max_amazon_active_sellers": 10,
             "max_fitment_listings": 3,
         }
         return {"run_id": "mvp-123", "status": "QUEUED"}
@@ -51,6 +53,33 @@ class FakeFrontendService:
                 "status": "COMPLETED",
                 "result": {"reports": []},
             }
+        return None
+
+    def submit_northway_run(self, request: dict) -> dict:
+        assert request == {
+            "discovery_pages": 1,
+            "request_budget": 12,
+            "max_amazon_queries_per_family": 3,
+            "max_competitive_products": 3,
+            "min_family_price_usd": 20.0,
+            "min_observed_ebay_demand": 1,
+        }
+        return {"run_id": "northway-123", "status": "QUEUED"}
+
+    def get_northway_run(self, run_id: str) -> dict | None:
+        if run_id == "northway-123":
+            return {
+                "run_id": run_id,
+                "status": "COMPLETED",
+                "result": {
+                    "schema_version": "0.2.4",
+                    "profile": "northway-product-family-mvp",
+                    "reports": [],
+                    "ranking": [],
+                },
+            }
+        if run_id == "northway-running":
+            return {"run_id": run_id, "status": "RUNNING", "result": None}
         return None
 
 
@@ -97,7 +126,7 @@ def test_frontend_api_exposes_threshold_driven_automatic_mvp_jobs() -> None:
     policy = client.get("/api/v1/mvp/policy")
     submitted = client.post(
         "/api/v1/mvp/runs",
-        json={"max_candidates": 10, "min_us_active_vins": 5000},
+        json={"max_candidates": 10},
     )
     run = client.get("/api/v1/mvp/runs/mvp-123")
     missing = client.get("/api/v1/mvp/runs/missing")
@@ -115,6 +144,59 @@ def test_frontend_api_exposes_threshold_driven_automatic_mvp_jobs() -> None:
         "requestBody"
     ]["content"]["application/json"]["schema"]
     assert request_schema["$ref"].endswith("/AutomaticMvpRunRequest")
+    model = openapi["components"]["schemas"]["AutomaticMvpRunRequest"]
+    assert "min_us_active_vins" not in model["properties"]
+
+
+def test_frontend_api_exposes_northway_family_screening_and_json_export() -> None:
+    client = TestClient(create_app(service=FakeFrontendService()))
+
+    policy = client.get("/api/v1/northway/policy")
+    submitted = client.post(
+        "/api/v1/northway/runs",
+        json={"request_budget": 12},
+    )
+    run = client.get("/api/v1/northway/runs/northway-123")
+    export = client.get("/api/v1/northway/runs/northway-123/export")
+    running_export = client.get("/api/v1/northway/runs/northway-running/export")
+
+    assert policy.status_code == 200
+    assert policy.json()["profile"] == "northway-product-family-mvp"
+    assert policy.json()["run_bounds"]["candidate_cap"] is None
+    assert submitted.status_code == 202
+    assert submitted.json() == {"run_id": "northway-123", "status": "QUEUED"}
+    assert run.json()["result"]["schema_version"] == "0.2.4"
+    assert export.status_code == 200
+    assert export.headers["content-disposition"].endswith('northway-123.json"')
+    assert export.json()["ranking"] == []
+    assert running_export.status_code == 409
+
+    openapi = client.get("/api/openapi.json").json()
+    model = openapi["components"]["schemas"]["NorthwayMvpRunRequest"]
+    assert "max_candidates" not in model["properties"]
+    assert "archetype" not in model["properties"]
+
+
+def test_frontend_api_rejects_legacy_single_archetype_field() -> None:
+    client = TestClient(create_app(service=FakeFrontendService()))
+
+    response = client.post(
+        "/api/v1/northway/runs",
+        json={"archetype": "universal_mud_flap"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_frontend_api_requires_budget_for_every_archetype_page() -> None:
+    client = TestClient(create_app(service=FakeFrontendService()))
+
+    response = client.post(
+        "/api/v1/northway/runs",
+        json={"discovery_pages": 2, "request_budget": 12},
+    )
+
+    assert response.status_code == 422
 
 
 def test_frontend_can_evaluate_normalized_strict_screening_evidence() -> None:
