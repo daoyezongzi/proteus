@@ -7,9 +7,9 @@ const COPY = {
   zh: {
     "thesis": "把一堆零件号筛到少数值得你花时间的。每个读数都留着来源。",
     "sample.title": "样本",
-    "sample.note": "倒进筛网的东西。候选来自 eBay Motors 近期已售 listing。",
-    "field.category": "eBay 类目",
-    "field.category.hint": "6028 是汽车零件",
+    "sample.note": "倒进筛网的东西。候选来自eBay Motors近期已售listing。",
+    "field.category": "eBay类目",
+    "field.category.hint": "6028是汽车零件",
     "field.candidates": "候选数",
     "field.pages": "读取页数",
     "stack.title": "筛网组",
@@ -19,12 +19,12 @@ const COPY = {
     "run.progress": "正在把候选倒进筛网组，这会花一些时间。",
     "empty.title": "还没有运行",
     "empty.body": "设好四层筛孔，然后开始筛选。结果会出现在这里，每一道门都带读数和来源。",
-    "unit.sold": "个精确已售 listing",
+    "unit.sold": "个精确已售listing",
     "unit.competitors": "个精确竞品",
-    "unit.probe": "个 listing",
+    "unit.probe": "个listing",
     "unit.vehicles": "辆在册车辆",
-    "mesh.ebay": "eBay 需求",
-    "mesh.amazon": "Amazon 竞争",
+    "mesh.ebay": "eBay需求",
+    "mesh.amazon": "Amazon竞争",
     "mesh.fitment": "车型适配",
     "mesh.vehicles": "路上的车",
     "op.GT": "大于",
@@ -32,10 +32,9 @@ const COPY = {
     "op.GTE": "不少于",
     "op.probe": "最多查",
     "mustset": "必须填",
-    "caveat.notannual": "这是 provider 能看到的近期子集，不是真正的 365 天销量。",
-    /* Latin runs inside Han text need breathing space on both sides. */
-    "caveat.notvio": (where) => `由 ${where} 估算 — 不是官方全美保有量。`,
-    "caveat.stateonly": (code) => `${code} 一个州`,
+    "caveat.notannual": "这是provider能看到的近期子集，不是真正的365天销量。",
+    "caveat.notvio": (where) => `由${where}估算 — 不是官方全美保有量。`,
+    "caveat.stateonly": (code) => `${code}一个州`,
     "caveat.proxy": "代理指标",
     "held": (n) => `拦下 ${n}`,
     "tally.screened": (n) => `筛了 ${n} 个候选`,
@@ -49,15 +48,15 @@ const COPY = {
     "notice.boundary.title": "通过意味着什么、不意味着什么",
     "notice.empty.title": "发现阶段没有返回结果",
     "notice.empty.body": (done, req, cat) =>
-      `在类目 ${cat} 读了 ${req} 页中的 ${done} 页。空结果不等于没有需求 — 也可能是 provider 失败了。`,
+      `在类目 ${cat} 读了 ${req} 页中的 ${done} 页。空结果不等于没有需求 — 也可能是provider失败了。`,
     "readings": "读数与来源",
     "needs": (op, t) => `（需要${op} ${t}）`,
     "noreading": "无读数",
     "passedall": "四层全过。动手之前请核对证据。",
-    "srclisting": "来源 listing ↗",
+    "srclisting": "来源listing ↗",
     "err.unreachable": "接口连不上",
     "err.startapi": "先启动后端：python -m proteus api",
-    "err.missing": (names) => `${names} 未配置 — 先运行 proteus setup。`,
+    "err.missing": (names) => `${names} 未配置 — 先运行proteus setup。`,
     "err.rejected": "请求被拒绝。",
     "err.status": (code) => `接口返回 ${code}。`,
     "err.runfailed": "运行失败。",
@@ -69,21 +68,21 @@ const COPY = {
 
     /* Backend reason strings, keyed by exact English. */
     "Observed distinct exact sold listings exceed the configured MVP threshold.":
-      "观察到的精确已售 listing 数超过设定阈值。",
+      "观察到的精确已售listing数超过设定阈值。",
     "Provider did not return a valid distinct exact sold-listing count.":
-      "Provider 没有返回有效的精确已售 listing 计数。",
+      "Provider没有返回有效的精确已售listing计数。",
     "The provider-visible recent subset does not prove the trailing-year threshold; it is not treated as a rejection.":
-      "provider 可见的近期子集不足以证明全年阈值；这不算否决。",
+      "provider可见的近期子集不足以证明全年阈值；这不算否决。",
     "Complete Amazon US exact competitor count is within the threshold.":
-      "完整的 Amazon US 精确竞品数在阈值内。",
+      "完整的Amazon US精确竞品数在阈值内。",
     "Complete Amazon US exact competitor count exceeds the threshold.":
-      "完整的 Amazon US 精确竞品数超过阈值。",
+      "完整的Amazon US精确竞品数超过阈值。",
     "Amazon exact-result count is incomplete or unavailable.":
-      "Amazon 精确结果数不完整或不可用。",
+      "Amazon精确结果数不完整或不可用。",
     "At least one exact sold listing exposed normalized YMMT fitment.":
-      "至少一个精确已售 listing 给出了规范化的 YMMT 适配。",
+      "至少一个精确已售listing给出了规范化的YMMT适配。",
     "No exact sold listing exposed usable automotive compatibility.":
-      "没有精确已售 listing 给出可用的车型适配。",
+      "没有精确已售listing给出可用的车型适配。",
     "Complete New York registration model estimate meets the MVP threshold.":
       "完整的纽约州在册车型估算达到阈值。",
     "Complete New York registration model estimate is unavailable.":
@@ -94,7 +93,7 @@ const COPY = {
 
     /* Policy boundary text, keyed by its exact committed English. */
     "This heuristic MVP finds review candidates. It does not prove strict 365-day eBay units or official nationwide vehicles-in-operation. The vehicle gate is a New York model estimate and requires human review.":
-      "这条启发式 MVP 找的是待人工复核的候选。它不能证明严格的 365 天 eBay 销量，也不能证明官方全美保有量。车辆这一门是纽约州的车型估算，必须人工复核。",
+      "这条启发式MVP找的是待人工复核的候选。它不能证明严格的365天eBay销量，也不能证明官方全美保有量。车辆这一门是纽约州的车型估算，必须人工复核。",
   },
 
   en: {
@@ -181,11 +180,26 @@ function setLang(next) {
   document.documentElement.dataset.lang = next;
 }
 
+/* A Latin run set solid against Han reads cramped, so Chinese copy is written
+   without hand-placed spaces and the gap is inserted here instead. Doing it by
+   hand double-spaces whenever an interpolated value ends in Han itself. */
+const HAN = "\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF";
+const LATIN = "0-9A-Za-z";
+const HAN_THEN_LATIN = new RegExp(`([${HAN}])([${LATIN}])`, "g");
+const LATIN_THEN_HAN = new RegExp(`([${LATIN}])([${HAN}])`, "g");
+
+function space(text) {
+  return text
+    .replace(HAN_THEN_LATIN, "$1 $2")
+    .replace(LATIN_THEN_HAN, "$1 $2");
+}
+
 /* Look up a key; fall through to English, then to the key itself so an
    untranslated backend string still reads correctly. */
 function t(key, ...args) {
   const hit = COPY[LANG]?.[key] ?? COPY.en?.[key] ?? key;
-  return typeof hit === "function" ? hit(...args) : hit;
+  const text = typeof hit === "function" ? hit(...args) : hit;
+  return LANG === "zh" ? space(String(text)) : text;
 }
 
 function currentLang() { return LANG; }
