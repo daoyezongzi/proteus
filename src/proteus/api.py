@@ -294,13 +294,31 @@ class DefaultFrontendService:
             ]
             + [
                 {
+                    "provider_id": "ny-dmv-nhtsa-registration-estimate",
+                    "capability": "US_ACTIVE_VEHICLE_PROXY",
+                    "ready": True,
+                    "checks": [
+                        {
+                            "name": "ANONYMOUS_PUBLIC_APIS",
+                            "status": "PASS",
+                            "message": "NY DMV Socrata and NHTSA vPIC require no account.",
+                        },
+                        {
+                            "name": "OFFICIAL_VIO",
+                            "status": "FAIL",
+                            "message": "This is a sampled New York registration estimate, not nationwide official VIO.",
+                        },
+                    ],
+                },
+                {
                     "provider_id": "marketcheck-active-used-inventory",
                     "capability": "US_ACTIVE_VEHICLE_PROXY",
                     "ready": marketcheck_key is not None,
+                    "optional": True,
                     "checks": [
                         {
                             "name": "CREDENTIALS_AVAILABLE",
-                            "status": "PASS" if marketcheck_key is not None else "FAIL",
+                            "status": "PASS" if marketcheck_key is not None else "UNKNOWN",
                             "message": "Credential alias MARKETCHECK_API_KEY is configured."
                             if marketcheck_key is not None
                             else "Credential alias MARKETCHECK_API_KEY is not configured.",
@@ -336,7 +354,6 @@ class DefaultFrontendService:
 
         return run_automatic_mvp(
             serpapi_key=resolve_secret(SERPAPI_API_KEY),
-            marketcheck_key=resolve_secret(MARKETCHECK_API_KEY),
             **request,
         )
 

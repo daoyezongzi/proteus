@@ -11,10 +11,10 @@ from proteus.automatic_mvp import (
     EBAY_COMPATIBILITY_COLLECTOR,
     EBAY_DEMAND_COLLECTOR,
     MARKETCHECK_COLLECTOR,
+    VEHICLE_PROXY_COLLECTOR,
     automatic_mvp_policy,
     run_automatic_mvp,
 )
-from proteus.io import InputDataError
 
 
 def _discovery(**_kwargs: Any) -> dict[str, Any]:
@@ -73,13 +73,14 @@ def _compatibility(_listing_id: str, **_kwargs: Any) -> dict[str, Any]:
     }
 
 
-def _marketcheck(_fitments: list[dict], **_kwargs: Any) -> dict[str, Any]:
+def _vehicle_proxy(_fitments: list[dict], **_kwargs: Any) -> dict[str, Any]:
     return {
         "status": "SUCCESS",
-        "metric": "US_USED_ACTIVE_INVENTORY_DISTINCT_VIN_PROXY",
+        "metric": "NY_REGISTERED_VEHICLE_MODEL_ESTIMATE_PROXY",
         "vehicle_count_proxy": 10000,
         "official_vio": False,
-        "fitment_resolution": "YMMT_ONLY",
+        "fitment_resolution": "YEAR_MAKE_MODEL_SAMPLED",
+        "state_code": "NY",
         "retrieved_at": "2026-08-27T10:04:00Z",
     }
 
@@ -90,7 +91,7 @@ def _collectors(**overrides: Callable[..., dict]) -> dict[str, Callable[..., dic
         EBAY_DEMAND_COLLECTOR: _ebay,
         AMAZON_COLLECTOR: _amazon,
         EBAY_COMPATIBILITY_COLLECTOR: _compatibility,
-        MARKETCHECK_COLLECTOR: _marketcheck,
+        VEHICLE_PROXY_COLLECTOR: _vehicle_proxy,
     }
     values.update(overrides)
     return values
@@ -99,7 +100,6 @@ def _collectors(**overrides: Callable[..., dict]) -> dict[str, Callable[..., dic
 def test_automatic_mvp_selects_candidate_for_mandatory_human_review() -> None:
     result = run_automatic_mvp(
         serpapi_key="serp-secret",
-        marketcheck_key="market-secret",
         min_us_active_vins=5000,
         collectors=_collectors(),
     )
@@ -115,7 +115,6 @@ def test_automatic_mvp_selects_candidate_for_mandatory_human_review() -> None:
     assert report["evidence"]["us_active_vehicle_proxy"]["official_vio"] is False
     assert result["summary"]["mvp_opportunity_candidates"] == 1
     assert "serp-secret" not in str(result)
-    assert "market-secret" not in str(result)
 
 
 def test_insufficient_recent_sold_subset_requires_review_not_rejection() -> None:
@@ -132,7 +131,6 @@ def test_insufficient_recent_sold_subset_requires_review_not_rejection() -> None
 
     result = run_automatic_mvp(
         serpapi_key="serp-secret",
-        marketcheck_key="market-secret",
         min_us_active_vins=5000,
         collectors=_collectors(
             **{EBAY_DEMAND_COLLECTOR: low_demand, AMAZON_COLLECTOR: amazon}
@@ -151,7 +149,6 @@ def test_amazon_over_threshold_is_a_decisive_rejection() -> None:
 
     result = run_automatic_mvp(
         serpapi_key="serp-secret",
-        marketcheck_key="market-secret",
         min_us_active_vins=5000,
         collectors=_collectors(**{AMAZON_COLLECTOR: crowded}),
     )
@@ -161,15 +158,14 @@ def test_amazon_over_threshold_is_a_decisive_rejection() -> None:
 
 def test_vehicle_proxy_below_threshold_requires_review_not_rejection() -> None:
     def sparse(fitments: list[dict], **kwargs: Any) -> dict[str, Any]:
-        outcome = _marketcheck(fitments, **kwargs)
+        outcome = _vehicle_proxy(fitments, **kwargs)
         outcome["vehicle_count_proxy"] = 4999
         return outcome
 
     result = run_automatic_mvp(
         serpapi_key="serp-secret",
-        marketcheck_key="market-secret",
         min_us_active_vins=5000,
-        collectors=_collectors(**{MARKETCHECK_COLLECTOR: sparse}),
+        collectors=_collectors(**{VEHICLE_PROXY_COLLECTOR: sparse}),
     )
 
     report = result["reports"][0]
@@ -187,11 +183,39 @@ def test_policy_names_proxy_boundary_and_configurable_thresholds() -> None:
     assert policy["criteria"]["us_active_vehicle_proxy"]["official_vio"] is False
 
 
-def test_missing_marketcheck_key_blocks_before_discovery() -> None:
-    with pytest.raises(InputDataError, match="MARKETCHECK_API_KEY"):
-        run_automatic_mvp(
-            serpapi_key="serp-secret",
-            marketcheck_key=None,
-            min_us_active_vins=5000,
-            collectors=_collectors(),
-        )
+def test_partial_vehicle_proxy_cannot_pass_the_vehicle_gate() -> None:
+    def partial(fitments: list[dict], **kwargs: Any) -> dict[str, Any]:
+        outcome = _vehicle_proxy(fitments, **kwargs)
+        outcome["status"] = "PARTIAL_SUCCESS"
+        return outcome
+
+    result = run_automatic_mvp(
+        serpapi_key="serp-secret",
+        min_us_active_vins=5000,
+        collectors=_collectors(**{VEHICLE_PROXY_COLLECTOR: partial}),
+    )
+
+    assert result["reports"][0]["decision"] == "REVIEW_REQUIRED"
+    assert result["reports"][0]["stages"]["us_active_vehicle_proxy"]["value"] is None
+
+
+def test_legacy_marketcheck_collector_key_remains_injectable() -> None:
+    received: list[str | None] = []
+
+    def legacy(fitments: list[dict], *, api_key: str | None) -> dict[str, Any]:
+        received.append(api_key)
+        return _vehicle_proxy(fitments)
+
+    collectors = _collectors()
+    collectors.pop(VEHICLE_PROXY_COLLECTOR)
+    collectors[MARKETCHECK_COLLECTOR] = legacy
+    result = run_automatic_mvp(
+        serpapi_key="serp-secret",
+        marketcheck_key="market-secret",
+        min_us_active_vins=5000,
+        collectors=collectors,
+    )
+
+    assert received == ["market-secret"]
+    assert result["reports"][0]["decision"] == "MVP_OPPORTUNITY_CANDIDATE"
+    assert "market-secret" not in str(result)

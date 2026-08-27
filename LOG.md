@@ -1,5 +1,26 @@
 # Proteus Development Log
 
+## 2026-08-27 — Anonymous NY DMV/NHTSA vehicle proxy replaces MarketCheck default
+
+- Replaced the automatic MVP's required MarketCheck vehicle stage with an
+  anonymous NY DMV Socrata + NHTSA vPIC adapter. NY DMV supplies active
+  year/make VIN totals; a bounded fixed-offset VIN sample is decoded by NHTSA
+  and matched to eBay year/make/model fitments.
+- Added fail-closed partial semantics, deterministic sampling evidence, model
+  normalization, fitment deduplication and injectable transports. No API
+  credential is needed; incomplete count/sample/decode never becomes zero or a
+  passing vehicle gate. MarketCheck remains an optional compatibility adapter.
+- A real anonymous 2015 Toyota Camry canary succeeded: 62,334 NY active
+  year/make registrations, 9 sampled VINs, 8 usable decodes, 3 Camry matches,
+  and an estimated 23,375 NY model registrations. This is not nationwide
+  official VIO and no formal confidence interval is claimed.
+- Automatic MVP configuration now requires only `SERPAPI_API_KEY`;
+  `/api/v1/mvp/*` paths, request fields and async job shape are unchanged, so
+  frontend work can continue without migration.
+- Live end-to-end selection acceptance remains open because the SerpApi eBay
+  engine previously returned errors/timeouts and the 20-candidate benchmark has
+  not yet passed.
+
 ## 2026-08-27 — Automatic two-key MVP implemented; live eBay acceptance blocked upstream
 
 - Added an independent `automatic-mvp` path that performs deterministic eBay

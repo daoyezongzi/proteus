@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
 from proteus.io import InputDataError
 from proteus.normalization import normalize_part_number
-from proteus.providers.marketcheck import collect_us_used_active_vin_proxy
+from proteus.providers.ny_registration import collect_ny_registered_vehicle_proxy
 from proteus.providers.serpapi_amazon import collect_amazon_competition
 from proteus.providers.serpapi_ebay import collect_ebay_sold
 from proteus.providers.serpapi_ebay_discovery import (
@@ -23,6 +23,8 @@ DISCOVERY_COLLECTOR = "ebay_candidate_discovery"
 EBAY_DEMAND_COLLECTOR = "ebay_recent_sold"
 AMAZON_COLLECTOR = "amazon_us_competition"
 EBAY_COMPATIBILITY_COLLECTOR = "ebay_compatibility"
+VEHICLE_PROXY_COLLECTOR = "vehicle_population_proxy"
+# Compatibility key for callers that injected the old MarketCheck collector.
 MARKETCHECK_COLLECTOR = "marketcheck_us_vehicle_proxy"
 
 
@@ -64,7 +66,11 @@ def automatic_mvp_policy() -> dict[str, Any]:
                 "threshold_required_per_run": True,
                 "country_code": "US",
                 "official_vio": False,
-                "source": "MarketCheck deduplicated active used dealer-listing VIN count",
+                "state_code": "NY",
+                "source": (
+                    "Anonymous NY DMV active-registration count with a bounded "
+                    "NHTSA VIN-decoded model estimate"
+                ),
             },
         },
         "providers": {
@@ -72,12 +78,13 @@ def automatic_mvp_policy() -> dict[str, Any]:
             "ebay_recent_sold": "serpapi-ebay",
             "amazon_us_competition": "serpapi-amazon",
             "compatibility": "serpapi-ebay-product",
-            "us_active_vehicle_proxy": "marketcheck-active-used-inventory",
+            "us_active_vehicle_proxy": "ny-dmv-nhtsa-registration-estimate",
         },
         "human_review_required": True,
         "qualification_boundary": (
             "This heuristic MVP finds review candidates. It does not prove strict 365-day "
-            "eBay units or official US vehicles-in-operation."
+            "eBay units or official nationwide vehicles-in-operation. The vehicle "
+            "gate is a New York model estimate and requires human review."
         ),
     }
 
@@ -177,7 +184,6 @@ def _evaluate_candidate(
     candidate: Mapping[str, Any],
     *,
     serpapi_key: str,
-    marketcheck_key: str,
     ebay_threshold: int,
     amazon_threshold: int,
     vehicle_threshold: int,
@@ -318,7 +324,12 @@ def _evaluate_candidate(
         evidence=compatibility,
     )
 
-    vehicle = collectors[MARKETCHECK_COLLECTOR](fitments, api_key=marketcheck_key)
+    vehicle_collector = collectors.get(VEHICLE_PROXY_COLLECTOR)
+    if not callable(vehicle_collector):
+        vehicle_collector = collectors.get(MARKETCHECK_COLLECTOR)
+    if not callable(vehicle_collector):
+        raise ValueError("Vehicle proxy collector is not configured")
+    vehicle = vehicle_collector(fitments)
     report["evidence"]["us_active_vehicle_proxy"] = {
         key: vehicle.get(key)
         for key in (
@@ -328,11 +339,16 @@ def _evaluate_candidate(
             "fitment_resolution",
             "official_vio",
             "qualification_boundary",
+            "country_code",
+            "state_code",
+            "sampling_randomized",
+            "sampling_method",
+            "groups",
         )
     }
     proxy = vehicle.get("vehicle_count_proxy") if isinstance(vehicle, Mapping) else None
     if (
-        vehicle.get("status") not in {"SUCCESS", "PARTIAL_SUCCESS"}
+        vehicle.get("status") != "SUCCESS"
         or isinstance(proxy, bool)
         or not isinstance(proxy, int)
         or proxy < 0
@@ -342,7 +358,7 @@ def _evaluate_candidate(
             value=None,
             operator="GTE",
             threshold=vehicle_threshold,
-            reason="US active used-inventory VIN proxy is unavailable.",
+            reason="Complete New York registration model estimate is unavailable.",
             evidence=vehicle,
         )
         return report
@@ -353,8 +369,8 @@ def _evaluate_candidate(
             operator="GTE",
             threshold=vehicle_threshold,
             reason=(
-                "Observable used-inventory proxy is below threshold, but proxy coverage cannot "
-                "decisively reject actual US vehicle population."
+                "New York registration estimate is below threshold, but one-state sampled "
+                "coverage cannot decisively reject nationwide vehicle population."
             ),
             evidence=vehicle,
         )
@@ -364,7 +380,7 @@ def _evaluate_candidate(
         value=proxy,
         operator="GTE",
         threshold=vehicle_threshold,
-        reason="Observable deduplicated US used-inventory VIN proxy meets the threshold.",
+        reason="Complete New York registration model estimate meets the MVP threshold.",
         evidence=vehicle,
     )
     report["decision"] = "MVP_OPPORTUNITY_CANDIDATE"
@@ -374,8 +390,8 @@ def _evaluate_candidate(
 def run_automatic_mvp(
     *,
     serpapi_key: str | None,
-    marketcheck_key: str | None,
     min_us_active_vins: int,
+    marketcheck_key: str | None = None,
     max_candidates: int = 20,
     ebay_category_id: str = DEFAULT_CATEGORY_ID,
     discovery_pages: int = 1,
@@ -387,7 +403,6 @@ def run_automatic_mvp(
     """Automatically discover and screen rough candidates for later human review."""
 
     serpapi_secret = _required_secret(serpapi_key, "SERPAPI_API_KEY")
-    marketcheck_secret = _required_secret(marketcheck_key, "MARKETCHECK_API_KEY")
     _limit("max_candidates", max_candidates, 1, 100)
     _limit("discovery_pages", discovery_pages, 1, 10)
     _limit("min_ebay_trailing_year_units_exclusive", min_ebay_trailing_year_units_exclusive, 0, 1000000)
@@ -402,10 +417,22 @@ def run_automatic_mvp(
         EBAY_DEMAND_COLLECTOR: collect_ebay_sold,
         AMAZON_COLLECTOR: collect_amazon_competition,
         EBAY_COMPATIBILITY_COLLECTOR: collect_ebay_compatibility,
-        MARKETCHECK_COLLECTOR: collect_us_used_active_vin_proxy,
+        VEHICLE_PROXY_COLLECTOR: collect_ny_registered_vehicle_proxy,
     }
     if collectors is not None:
         active_collectors.update(collectors)
+        if (
+            MARKETCHECK_COLLECTOR in collectors
+            and VEHICLE_PROXY_COLLECTOR not in collectors
+        ):
+            legacy_collector = collectors[MARKETCHECK_COLLECTOR]
+
+            def collect_legacy_vehicle_proxy(
+                fitments: Sequence[Mapping[str, Any]],
+            ) -> Mapping[str, Any]:
+                return legacy_collector(fitments, api_key=marketcheck_key)
+
+            active_collectors[VEHICLE_PROXY_COLLECTOR] = collect_legacy_vehicle_proxy
     missing = [name for name in active_collectors if not callable(active_collectors[name])]
     if missing:
         raise ValueError(f"Collectors are not callable: {', '.join(missing)}")
@@ -457,7 +484,6 @@ def run_automatic_mvp(
         _evaluate_candidate(
             candidate,
             serpapi_key=serpapi_secret,
-            marketcheck_key=marketcheck_secret,
             ebay_threshold=min_ebay_trailing_year_units_exclusive,
             amazon_threshold=max_amazon_us_exact_competitors,
             vehicle_threshold=min_us_active_vins,
@@ -479,6 +505,7 @@ def run_automatic_mvp(
         "execution": {
             "mode": "AUTOMATIC_HEURISTIC_MVP",
             "human_review_required": True,
+            "account_count": 1,
             "provider_count": 2,
         },
         "discovery": {
@@ -504,6 +531,7 @@ __all__ = [
     "EBAY_COMPATIBILITY_COLLECTOR",
     "EBAY_DEMAND_COLLECTOR",
     "MARKETCHECK_COLLECTOR",
+    "VEHICLE_PROXY_COLLECTOR",
     "automatic_mvp_policy",
     "run_automatic_mvp",
 ]

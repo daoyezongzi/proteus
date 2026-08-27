@@ -168,8 +168,7 @@ def configuration_status(
         except InputDataError:
             receiver_configured = False
     serpapi_ready = credentials[SERPAPI_API_KEY]["configured"]
-    marketcheck_ready = credentials[MARKETCHECK_API_KEY]["configured"]
-    automatic_mvp_ready = serpapi_ready and marketcheck_ready
+    automatic_mvp_ready = serpapi_ready
     supply_ready = (
         serpapi_ready
         and credentials[HIOBUY_API_KEY]["configured"]
@@ -178,9 +177,9 @@ def configuration_status(
     return {
         "profile": "automatic-mvp",
         "ready": automatic_mvp_ready,
-        "account_count": 2,
-        "required_credentials": [SERPAPI_API_KEY, MARKETCHECK_API_KEY],
-        "optional_credentials": [HIOBUY_API_KEY],
+        "account_count": 1,
+        "required_credentials": [SERPAPI_API_KEY],
+        "optional_credentials": [MARKETCHECK_API_KEY, HIOBUY_API_KEY],
         "credentials": credentials,
         "receiver": {
             "configured": receiver_configured,
@@ -193,11 +192,7 @@ def configuration_status(
             },
             "automatic_mvp": {
                 "ready": automatic_mvp_ready,
-                "blockers": [
-                    name
-                    for name in (SERPAPI_API_KEY, MARKETCHECK_API_KEY)
-                    if not credentials[name]["configured"]
-                ],
+                "blockers": [] if serpapi_ready else [SERPAPI_API_KEY],
                 "human_review_required": True,
             },
             "strict_market_screening": {
@@ -248,7 +243,7 @@ def _prompt_receiver(backend: SecretBackend) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="proteus setup",
-        description="Store the SerpApi and MarketCheck credentials in the OS keyring.",
+        description="Store the SerpApi credential in the OS keyring.",
     )
     parser.add_argument(
         "--status",
@@ -269,7 +264,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if not args.status:
             _prompt_secret(SERPAPI_API_KEY, backend)
-            _prompt_secret(MARKETCHECK_API_KEY, backend)
             if args.with_hiobuy:
                 _prompt_secret(HIOBUY_API_KEY, backend)
                 _prompt_receiver(backend)
@@ -281,7 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         "Proteus automatic MVP: "
         f"serpapi={'configured' if status['credentials'][SERPAPI_API_KEY]['configured'] else 'missing'}, "
-        f"marketcheck={'configured' if status['credentials'][MARKETCHECK_API_KEY]['configured'] else 'missing'}, "
+        f"optional_marketcheck={'configured' if status['credentials'][MARKETCHECK_API_KEY]['configured'] else 'not_configured'}, "
         "optional_hiobuy="
         f"{'configured' if status['profiles']['supply_verified']['ready'] else 'not_ready'}."
     )

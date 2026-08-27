@@ -19,22 +19,25 @@ SerpApi eBay sold-category 自动发现
 → SerpApi eBay exact sold 可见结果数 > 阈值
 → SerpApi Amazon US 完整精确竞争数 <= 阈值
 → SerpApi eBay Product compatibility
-→ MarketCheck US used active inventory distinct-VIN proxy >= 阈值
+→ NY DMV active registrations + NHTSA VIN model estimate >= 阈值
 → MVP_OPPORTUNITY_CANDIDATE + human_review_required=true
 ```
 
 该链路是自动商机候选缩圈，不是需求抓取器，也不冒充严格证据：
 
 - eBay 指标是 provider 当前可见的精确已售结果下界，不是 Product Research 365 天销量；
-- MarketCheck 指标是美国二手经销商在售库存的去重 VIN 代理量，不是官方 VIO；
+- 车辆指标是 NY DMV 活跃注册总量结合 NHTSA 有界 VIN 样本得到的车型估算，不是全国官方 VIO；
+- 采样为无排序固定偏移窗口，不声明统计置信区间；样本或解码不完整时返回
+  `PARTIAL_SUCCESS`，自动车辆门只能 `REVIEW_REQUIRED`；
 - Amazon 只有完整精确计数高于阈值时才能确定性拒绝；
 - eBay 可见销量不足或 vehicle proxy 不足均为 `REVIEW_REQUIRED`，不能据此否定全年销量
   或真实保有量；
 - 所有通过项仍强制人工检查零件同一性、适配覆盖、左右件/套装关系和数据新鲜度。
 
-自动 profile 默认只需要 `SERPAPI_API_KEY` 与 `MARKETCHECK_API_KEY`，通过
+自动 profile 默认只需要 `SERPAPI_API_KEY`；NY DMV Socrata 和 NHTSA vPIC 匿名可用。通过
 `POST /api/v1/mvp/runs` 提交；五段 collector 可独立替换。严格 profile 和下文三项
 不可降级 gate 保持不变。
+MarketCheck 保留为可选增强，不再是自动 MVP 的阻塞依赖。
 
 当前目标是寻找“市场商机”，不是只抓需求，也不是把 1688 可采购性混入市场需求判定：
 
@@ -99,8 +102,8 @@ SerpApi 继续承担它能稳定证明的搜索任务；年度销量和美国保
 4. SerpApi eBay discovery `HTTP_ERROR` 和 exact 查询 `TIMEOUT` 的修复/基准；
 5. 20 个真实零件 benchmark，以及至少一条三门全过的当前真实商机。
 
-因此当前完成的是可替换 provider contract、严格 evaluator、简化配置和前端接口预留，
-不是“全自动选品已经验收”。
+因此当前完成的是可替换 provider contract、匿名车辆代理、简化配置和前端接口预留，
+不是“全国 VIO 和 eBay 365 天销量均已自动验收”。
 
 ## 0B. V0.2.1 历史兼容落点
 

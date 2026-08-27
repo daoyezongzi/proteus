@@ -7,12 +7,12 @@ SerpApi eBay Motors 已售结果自动发现零件号
 → eBay 精确已售结果数 > 可配置阈值（默认 20）
 → Amazon 美国站精确竞争对手 <= 可配置阈值（默认 5）
 → eBay Product 车型适配
-→ MarketCheck 美国二手在售去重 VIN 代理量 >= 本次阈值
+→ NY DMV 活跃注册 + NHTSA VIN 解码的车型估算 >= 本次阈值
 → MVP_OPPORTUNITY_CANDIDATE（必须人工复核）
 ```
 
 这条链路的目标是自动缩小人工选品范围，不需要 HioBuy，也不需要 Agent 逐项搜索。
-第三方采集器由明确的 collector 接口注入，后续可替换 SerpApi 或 MarketCheck 而不改
+第三方采集器由明确的 collector 接口注入，后续可替换 SerpApi、NY DMV/NHTSA 或 MarketCheck 而不改
 阈值编排和前端任务接口。
 
 仓库同时保留更严格的市场判定：
@@ -36,23 +36,24 @@ AND 适配车型在美国的保有量 >= 本次运行显式阈值
 | 能力 | 默认服务 | 选择原因 | 当前接入状态 |
 | --- | --- | --- | --- |
 | 候选发现、eBay 已售粗筛、Amazon US 精确搜索、eBay 车型适配 | [SerpApi](https://serpapi.com/ebay-search-api) | 一枚 Key 覆盖四个自动步骤 | 已接入异步 eBay submit/poll、Amazon 和 eBay Product adapter；真实批量基准仍待完成 |
-| 美国车型规模自动代理量 | [MarketCheck](https://docs.marketcheck.com/docs/api/cars/inventory/inventory-search) | 一枚 Key，无登录自动化；支持 YMMT、美国、二手、VIN 去重 | 自动 MVP adapter 已接入；它是二手在售 VIN 代理量，不是官方 VIO |
+| 美国车型规模自动代理量 | [NY DMV Socrata](https://data.ny.gov/Transportation/Vehicle-Snowmobile-and-Boat-Registrations/w4pv-hbkt/data) + [NHTSA vPIC](https://vpic.nhtsa.dot.gov/api/) | 两个匿名公共 API；NY DMV 提供年份/品牌注册总量，NHTSA 对有界 VIN 样本解码车型 | 自动 MVP 已接入；是纽约州车型注册估算，不是全国官方 VIO；MarketCheck 仅作可选增强 |
 | eBay 近 365 天销量 | [eBay Product Research](https://www.ebay.com/help/selling/selling-tools/product-research?id=4853)（Terapeak）导出/规范化证据 | eBay 官方 Seller Hub 数据覆盖三年，能满足完整 365 天窗口 | 严格证据 API 已预留；导入器和真实样本待接入 |
 | 美国适配车辆保有量 | [TecAlliance TecDoc VIO](https://www.tecalliance.net/products?highlight=vio-data&solution=data-insights) | 同时覆盖车辆/适配语义与 VIO，避免再拼一个车型映射服务 | provider-neutral contract 已预留；商业开通和真实 adapter 待完成 |
 | VIO 备选 | [Experian Automotive VIO](https://www.experian.com/automotive/vehicles-in-operation-vio-data) | 美国 VIO 数据的替代来源 | 仅列为替换方案 |
 | 1688 供货核验 | HioBuy（可选兼容） | 只在后续采购可行性阶段需要 | 不再阻塞市场筛选，也不再是默认配置项 |
 
-自动 MVP 默认需要 SerpApi 和 MarketCheck 两枚 Key。严格 Product Research/VIO 证据只在
-真正执行严格筛选时需要。
+自动 MVP 默认只需要 SerpApi 一枚 Key；NY DMV 和 NHTSA 不需要账号。严格 Product
+Research/VIO 证据只在真正执行严格筛选时需要。MarketCheck 可选，不再阻塞自动 MVP。
+纽约车辆指标仅覆盖 NY，模型数由确定性有限 VIN 样本估算，不声称全国 VIO 或统计置信区间。
 TecAlliance 的客户级 endpoint 和认证方式以商业合同为准，仓库不会猜测或硬编码未公开
 接口。
 
 ## 当前可以做什么
 
-- 保存并脱敏检查 SerpApi、MarketCheck 配置；
+- 保存并脱敏检查 SerpApi 配置；MarketCheck 仍可作为可选增强配置；
 - 设置三项阈值后异步启动自动候选发现和粗筛；
-- 通过 eBay Product compatibility 自动取得车型适配，再用 MarketCheck 查询美国二手
-  在售去重 VIN 代理量；
+- 通过 eBay Product compatibility 自动取得车型适配，再用 NY DMV 活跃注册总量和
+  NHTSA VIN 样本估算车型规模；
 - 复用现有 SerpApi Amazon/eBay managed adapters 和 provider registry；
 - 通过稳定、供应商无关的 schema 接收 eBay 年销量、Amazon 竞争和美国 VIO 证据；
 - 确定性执行三项规则并输出每一门的 `PASSED`、`REJECTED` 或
@@ -77,17 +78,17 @@ py -3.12 -m venv .venv
 
 ## 配置
 
-默认询问 SerpApi Key 和 MarketCheck Key，并把它们存入 Windows 凭证库：
+默认只询问 SerpApi Key，并把它存入 Windows 凭证库：
 
 ```powershell
 .\.venv\Scripts\python.exe -m proteus setup
 .\.venv\Scripts\python.exe -m proteus setup --status
 ```
 
-不要把 Key 写入 Git、JSON 或命令参数。CI 可以用环境变量
-`SERPAPI_API_KEY`、`MARKETCHECK_API_KEY` 覆盖本机凭证库。MarketCheck 可从其
-[Get Started](https://docs.marketcheck.com/docs/get-started/api/introduction) 页面申请 Key；
-没有该 Key 时自动任务会明确失败为未配置，不会用搜索结果冒充车辆代理量。
+不要把 Key 写入 Git、JSON 或命令参数。CI 可以用环境变量 `SERPAPI_API_KEY` 覆盖本机
+凭证库。NY DMV Socrata 和 NHTSA vPIC 不需要注册或 Key；MarketCheck 可从其
+[Get Started](https://docs.marketcheck.com/docs/get-started/api/introduction) 页面申请并作为
+可选增强。没有 MarketCheck 时自动任务仍可运行。
 
 只有需要测试旧的 1688 供货兼容链路时，才配置 HioBuy Key 和国内收件信息：
 
@@ -100,7 +101,7 @@ py -3.12 -m venv .venv
 ## 启动后端接口
 
 ```powershell
-.\.venv\Scripts\python.exe -m proteus api --host 127.0.0.1 --port 8765
+.\.venv\Scripts\python.exe -m proteus api --port 8765
 ```
 
 浏览器接口文档位于 `http://127.0.0.1:8765/api/docs`。当前没有前端页面，但以下接口
@@ -137,6 +138,8 @@ $job = Invoke-RestMethod `
   -Uri "http://127.0.0.1:8765/api/v1/mvp/runs" `
   -ContentType "application/json" `
   -Body $request
+
+# min_us_active_vins is kept for frontend compatibility; V0.2.3 compares a NY model-registration estimate.
 
 Invoke-RestMethod `
   -Uri "http://127.0.0.1:8765/api/v1/mvp/runs/$($job.run_id)"

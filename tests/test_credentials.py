@@ -73,7 +73,7 @@ def test_configuration_status_never_returns_secret_values() -> None:
     serialized = json.dumps(status, ensure_ascii=False)
 
     assert status["ready"] is True
-    assert status["account_count"] == 2
+    assert status["account_count"] == 1
     assert status["profile"] == "automatic-mvp"
     assert status["profiles"]["supply_verified"]["ready"] is True
     assert status["credentials"][SERPAPI_API_KEY]["configured"] is True
@@ -91,15 +91,15 @@ def test_serpapi_alone_is_enough_for_base_configuration() -> None:
         backend=MemoryBackend({SERPAPI_API_KEY: "serp-secret"}),
     )
 
-    assert status["ready"] is False
+    assert status["ready"] is True
     assert status["profiles"]["market_screening_base"]["ready"] is True
-    assert status["profiles"]["automatic_mvp"]["ready"] is False
-    assert status["profiles"]["automatic_mvp"]["blockers"] == [MARKETCHECK_API_KEY]
+    assert status["profiles"]["automatic_mvp"]["ready"] is True
+    assert status["profiles"]["automatic_mvp"]["blockers"] == []
     assert status["profiles"]["strict_market_screening"]["ready"] is False
     assert status["profiles"]["supply_verified"]["ready"] is False
 
 
-def test_serpapi_and_marketcheck_are_enough_for_automatic_mvp() -> None:
+def test_marketcheck_is_optional_for_automatic_mvp() -> None:
     status = configuration_status(
         environment={},
         backend=MemoryBackend(
@@ -112,4 +112,5 @@ def test_serpapi_and_marketcheck_are_enough_for_automatic_mvp() -> None:
 
     assert status["ready"] is True
     assert status["profiles"]["automatic_mvp"]["ready"] is True
-    assert status["required_credentials"] == [SERPAPI_API_KEY, MARKETCHECK_API_KEY]
+    assert status["required_credentials"] == [SERPAPI_API_KEY]
+    assert MARKETCHECK_API_KEY in status["optional_credentials"]

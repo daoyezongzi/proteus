@@ -69,6 +69,16 @@ from proteus.providers.serpapi_ebay_discovery import (
     SERPAPI_EBAY_DISCOVERY_PROVIDER,
     collect_ebay_sold_candidates,
 )
+from proteus.providers.ny_registration import (
+    NHTSA_BATCH_ENDPOINT,
+    NY_DATASET_ENDPOINT,
+    NY_REGISTRATION_PROVIDER,
+    NhtsaRequest,
+    NhtsaResponse,
+    NyRequest,
+    NyResponse,
+    collect_ny_registered_vehicle_proxy,
+)
 
 __all__ = [
     "AnnualSalesLookupRequest",
@@ -124,4 +134,12 @@ __all__ = [
     "collect_amazon_competition",
     "SERPAPI_EBAY_DISCOVERY_PROVIDER",
     "collect_ebay_sold_candidates",
+    "NHTSA_BATCH_ENDPOINT",
+    "NY_DATASET_ENDPOINT",
+    "NY_REGISTRATION_PROVIDER",
+    "NhtsaRequest",
+    "NhtsaResponse",
+    "NyRequest",
+    "NyResponse",
+    "collect_ny_registered_vehicle_proxy",
 ]

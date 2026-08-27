@@ -4,16 +4,20 @@
 
 - [x] Add a threshold-driven automatic path that discovers candidates and runs
   eBay recent sold, Amazon US exact competition, eBay Product compatibility and
-  MarketCheck US used-active-inventory VIN proxy checks without Agent calls.
+  an anonymous NY DMV/NHTSA vehicle-model proxy without Agent calls.
 - [x] Implement bounded SerpApi asynchronous submit/poll and reuse it for eBay
   category search, exact sold search and eBay Product compatibility.
 - [x] Replace the obsolete eBay `_sacat` request parameter with documented
   `category_id` and retain strict response-parameter binding.
 - [x] Add server-side `POST /api/v1/mvp/runs`, status retrieval and policy APIs;
   all candidates remain `human_review_required=true`.
-- [x] Add MarketCheck credential storage/readiness and keep HioBuy optional.
-- [ ] Configure `MARKETCHECK_API_KEY`, run a one-part live compatibility/proxy
-  canary, then freeze a 20-candidate accuracy/cost benchmark.
+- [x] Keep MarketCheck credential storage/readiness as an optional enhancement
+  and keep HioBuy optional.
+- [x] Run a one-part live NY DMV/NHTSA vehicle canary; 2015 Toyota Camry returned
+  62,334 NY year/make registrations, 9 sampled VINs, 8 usable decodes and an
+  estimated 23,375 model registrations.
+- [ ] Freeze a 20-candidate accuracy/cost benchmark and validate category-specific
+  thresholds; the NY metric remains a state proxy, not nationwide VIO.
 - [ ] Re-run the SerpApi eBay canary after its sold/complete engine recovers or
   SerpApi support confirms the failure. On 2026-08-27 both an exact part query
   and the popular `brake pads` control returned the provider error
@@ -21,7 +25,7 @@
   not reach a terminal result within the bounded wait.
 - [ ] Manually label benchmark results and approve category-specific
   `min_us_active_vins`; the current default request example is illustrative.
-- [ ] Replace the recent-sold and active-used-inventory proxies with authorized
+- [ ] Replace the recent-sold and NY registration proxies with authorized
   365-day/VIO sources before promoting any result to strict
   `MARKET_OPPORTUNITY_CANDIDATE`.
 
@@ -42,7 +46,7 @@
   contracts. Missing, malformed or unbound evidence fails closed to
   `REVIEW_REQUIRED`.
 - [x] Keep the strict evaluator independent of HioBuy. V0.2.3 automatic MVP setup
-  adds MarketCheck while HioBuy/receiver stays behind explicit `--with-hiobuy`.
+  uses anonymous NY DMV/NHTSA by default; MarketCheck and HioBuy/receiver stay optional.
 - [ ] Obtain one authorized eBay Product Research export sample, freeze its
   columns/timezone/window semantics, and implement the deterministic 365-day
   importer. An HTML scraper or inferred sold count is not acceptable evidence.
