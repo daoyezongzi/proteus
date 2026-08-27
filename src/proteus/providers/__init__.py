@@ -1,6 +1,7 @@
 """Replaceable acquisition providers for Proteus."""
 
 from proteus.providers.base import (
+    AnnualSalesLookupRequest,
     CandidateDiscoveryRequest,
     Capability,
     CheckStatus,
@@ -8,6 +9,7 @@ from proteus.providers.base import (
     ProviderReadiness,
     ReadinessCheck,
     SupplyLookupRequest,
+    VehicleParcLookupRequest,
 )
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
@@ -69,6 +71,7 @@ from proteus.providers.serpapi_ebay_discovery import (
 )
 
 __all__ = [
+    "AnnualSalesLookupRequest",
     "Capability",
     "CandidateDiscoveryRequest",
     "CheckStatus",
@@ -76,6 +79,7 @@ __all__ = [
     "ProviderReadiness",
     "ReadinessCheck",
     "SupplyLookupRequest",
+    "VehicleParcLookupRequest",
     "ProviderRegistry",
     "HIOBUY_1688_ID",
     "NEXSCOPE_1688_LISTING_ID",

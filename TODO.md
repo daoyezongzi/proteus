@@ -1,6 +1,43 @@
 # Proteus Current Work
 
-## V0.2.1 two-account managed profile — engineering complete
+## V0.2.2 strict market screening — contract complete
+
+- [x] Freeze the market-opportunity gates as eBay US trailing-365-day sales
+  `> 20`, Amazon US exact competitors `<= 5`, and resolved compatible US
+  vehicle parc `>=` an explicit per-run threshold.
+- [x] Select the lowest-configuration service mix that still covers the three
+  gates: SerpApi for discovery/Amazon, eBay Product Research normalized evidence
+  for annual sales, and TecAlliance TecDoc VIO for fitment-aware US parc.
+  Experian VIO remains the vehicle-parc fallback.
+- [x] Add provider-neutral `EBAY_ANNUAL_SALES` and `US_VEHICLE_PARC`
+  capabilities and typed request contracts so vendors can be replaced without
+  changing screening policy or frontend payloads.
+- [x] Add deterministic strict evaluation and frontend-safe
+  `GET /api/v1/screening/policy` and `POST /api/v1/screening/evaluate`
+  contracts. Missing, malformed or unbound evidence fails closed to
+  `REVIEW_REQUIRED`.
+- [x] Reduce first-time setup to SerpApi only. Keep HioBuy/receiver setup behind
+  explicit `--with-hiobuy` for the old downstream supply-validation path.
+- [ ] Obtain one authorized eBay Product Research export sample, freeze its
+  columns/timezone/window semantics, and implement the deterministic 365-day
+  importer. An HTML scraper or inferred sold count is not acceptable evidence.
+- [ ] Complete TecAlliance commercial onboarding, record the customer-specific
+  API/auth contract outside Git, implement the adapter, and pass a one-part
+  fitment/VIO canary. Do not invent an endpoint or credential name from public
+  marketing material.
+- [ ] Define and approve `min_us_vehicle_parc` from the target category and
+  economics. Until then every strict run must supply it explicitly.
+- [ ] Add an acquisition job that gathers the three normalized evidence records
+  before calling the evaluator. The current endpoint evaluates supplied
+  evidence; it does not yet automate Product Research or VIO acquisition.
+- [ ] Repair and benchmark the current SerpApi eBay paths. The latest live
+  probe returned `HTTP_ERROR` for discovery and `TIMEOUT` for an exact query;
+  Amazon passed with the configured SerpApi account.
+- [ ] Run a frozen 20-part benchmark and produce at least one real
+  `MARKET_OPPORTUNITY_CANDIDATE` whose three evidence records are current,
+  market-bound and independently auditable.
+
+## V0.2.1 two-account managed profile — compatibility engineering complete
 
 - [x] Make eBay Motors sold listings the automatic candidate source without
   treating title extraction as final demand evidence; every candidate is
@@ -8,9 +45,10 @@
 - [x] Add SerpApi Amazon competition and eBay category-discovery adapters with
   fixed US context, `no_cache=true`, explicit pagination uncertainty and
   fail-closed auth/parser behavior.
-- [x] Reduce the default MVP to two accounts: SerpApi for discovery/Amazon/eBay
-  and HioBuy for 1688 order preview. Keep Nexscope and Amazon B2B inputs as
-  replaceable compatibility paths.
+- [x] Preserve the historical two-account path: SerpApi for
+  discovery/Amazon/eBay and HioBuy for 1688 order preview. It is now an explicit
+  compatibility/supply-validation profile, not the strict market-screening
+  default.
 - [x] Add `proteus setup` with Windows/OS keyring storage for both keys and the
   receiver; environment variables remain explicit CI overrides.
 - [x] Add a loopback FastAPI surface for health, redacted configuration,
@@ -86,9 +124,9 @@
   current item contract exposes a usable `quantitySold`; do not treat it as the
   sold-history gate unless that field is documented and bound. eBay currently
   marks Marketplace Insights as restricted and closed to new users.
-- [ ] Retain HioBuy as the first 1688 structured candidate because its standard
-  API covers search/detail/order preview, but confirm account purpose compatibility
-  and procurement expectations before production use.
+- [ ] Retain HioBuy only as an optional downstream supply-validation adapter.
+  Confirm account purpose compatibility and procurement expectations before
+  production use; lack of a HioBuy account must not block strict market screening.
 - [ ] Evaluate [Crawlee for Python](https://crawlee.dev/python/) as the reusable
   request queue, retry, throttling, resume and Playwright orchestration layer.
   Use it only for ordinarily accessible pages; adopting the library must not
@@ -131,21 +169,21 @@
 
 ### D. Provider and product acceptance
 
-- [ ] Obtain approved production credentials and written purpose compatibility
-  for every selected Amazon, eBay, search, managed and HioBuy/1688 path.
+- [ ] Obtain approved access and written purpose compatibility for SerpApi,
+  eBay Product Research evidence use, and TecAlliance VIO. HioBuy/1688 access is
+  required only when optional supply verification is enabled.
 - [ ] Run one-item canaries, then the frozen 20-item provider benchmark for
   coverage, exact-match precision, freshness, critical fields, failure
   classification and external cost. The 2026-08-25 direct eBay browser canary
   returned HTTP 403. The managed canary runner now exists, but its first run was
   blocked before live calls because every production credential was absent.
-- [ ] Approve the two-account managed profile only after source/freshness/
-  coverage semantics pass the benchmark. `execution.mode=AUTOMATED_MANAGED`
-  records automated execution; it must not be confused with the existing
-  official-tier `automation_qualified` flag.
-- [ ] Produce at least one current, real, economically acceptable three-gate
-  `OPPORTUNITY_CANDIDATE` with successful 1688 order preview through the
-  two-account profile. Official-tier `automation_qualified=true` remains a
-  later enhancement, not a blocker for managed MVP evidence.
+- [ ] Approve the strict profile only after annual-sales, exact-competition and
+  fitment-resolved VIO source/freshness/coverage semantics pass the benchmark.
+  The historical `execution.mode=AUTOMATED_MANAGED` and official-tier
+  `automation_qualified` flags remain compatibility concepts.
+- [ ] Produce at least one current, real strict
+  `MARKET_OPPORTUNITY_CANDIDATE`. Then run optional supply and economics checks
+  before calling it a product recommendation.
 
 ## Search/crawl evidence boundary — frozen
 

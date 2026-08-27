@@ -9,11 +9,11 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import os
 from threading import Lock
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from proteus import __version__
 from proteus.credentials import (
@@ -23,6 +23,7 @@ from proteus.credentials import (
     resolve_receiver,
     resolve_secret,
 )
+from proteus.normalization import normalize_part_number
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
     SERPAPI_AMAZON_ID,
@@ -31,6 +32,7 @@ from proteus.providers.adapters import (
     build_provider_registry,
 )
 from proteus.providers.base import Capability
+from proteus.screening import evaluate_strict_market_screening, screening_policy
 
 
 def _utc_now() -> str:
@@ -54,6 +56,137 @@ class ApiRunRequest(BaseModel):
     max_moq: int = Field(ge=1, le=100000)
     ebay_category_id: str = Field(default="6028", pattern=r"^[0-9]+$")
     discovery_pages: int = Field(default=1, ge=1, le=10)
+
+
+class EvidenceSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_id: str = Field(min_length=1, max_length=100)
+    source_reference: str = Field(min_length=1, max_length=2000)
+    retrieved_at: datetime
+
+
+class EbayAnnualSalesEvidence(EvidenceSource):
+    marketplace_id: Literal["EBAY_US"] = "EBAY_US"
+    window_days: Literal[365] = 365
+    units_sold: int = Field(ge=0)
+
+
+class AmazonCompetitionEvidence(EvidenceSource):
+    marketplace_id: Literal["AMAZON_US"] = "AMAZON_US"
+    exact_competitor_count: int = Field(ge=0)
+
+
+class VehicleParcEvidence(EvidenceSource):
+    country_code: Literal["US"] = "US"
+    fitment_resolved: bool
+    compatible_vehicle_count: int = Field(ge=0)
+
+
+class StrictScreeningRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    part_number: str = Field(min_length=3, max_length=100)
+    min_us_vehicle_parc: int = Field(ge=1)
+    ebay_annual_sales: EbayAnnualSalesEvidence | None = None
+    amazon_competition: AmazonCompetitionEvidence | None = None
+    vehicle_parc: VehicleParcEvidence | None = None
+
+    @field_validator("part_number")
+    @classmethod
+    def validate_part_number(cls, value: str) -> str:
+        normalize_part_number(value)
+        return value
+
+
+class ScreeningCriterion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator: Literal["GT", "LTE", "GTE"]
+    threshold: int | None
+    window_days: int | None = None
+    marketplace_id: str | None = None
+    threshold_required_per_run: bool = False
+    country_code: str | None = None
+
+
+class ScreeningCriteriaResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ebay_annual_units_sold: ScreeningCriterion
+    amazon_us_exact_competitors: ScreeningCriterion
+    us_compatible_vehicle_parc: ScreeningCriterion
+
+
+class ScreeningProviderChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    primary: str | None
+    configuration: str | None = None
+    implementation_status: str
+    fallback: str | None = None
+    optional_compatibility: str | None = None
+
+
+class ScreeningProvidersResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    marketplace_discovery_and_amazon: ScreeningProviderChoice
+    ebay_annual_sales: ScreeningProviderChoice
+    vehicle_parc: ScreeningProviderChoice
+    supply_verification: ScreeningProviderChoice
+
+
+class ScreeningPolicyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile: Literal["strict-market-screening"]
+    decision: Literal["MARKET_OPPORTUNITY_CANDIDATE"]
+    criteria: ScreeningCriteriaResponse
+    providers: ScreeningProvidersResponse
+    qualification_boundary: str
+
+
+class ScreeningStageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["PASSED", "REJECTED", "REVIEW_REQUIRED"]
+    value: int | None
+    reason: str
+    operator: Literal["GT", "LTE", "GTE"] | None = None
+    threshold: int | None = None
+    window_days: int | None = None
+    provider_id: str | None = None
+    source_reference: str | None = None
+    retrieved_at: datetime | None = None
+
+
+class ScreeningStagesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ebay_annual_sales: ScreeningStageResponse
+    amazon_competition: ScreeningStageResponse
+    vehicle_parc: ScreeningStageResponse
+
+
+class ScreenedPartNumber(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    raw: str
+    canonical: str
+
+
+class StrictScreeningResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["0.2.2"]
+    profile: Literal["strict-market-screening"]
+    part_number: ScreenedPartNumber
+    decision: Literal[
+        "MARKET_OPPORTUNITY_CANDIDATE", "REJECTED", "REVIEW_REQUIRED"
+    ]
+    stages: ScreeningStagesResponse
+    supply_verification: Literal["NOT_EVALUATED"]
 
 
 class InMemoryRunManager:
@@ -131,7 +264,8 @@ class DefaultFrontendService:
             (Capability.ALIBABA_1688_SUPPLY, HIOBUY_1688_ID),
         )
         return {
-            "profile": "two-account-managed",
+            "profile": "provider-readiness",
+            "screening_strategy": screening_policy()["providers"],
             "providers": [
                 registry.select(capability, (provider_id,), require_ready=False)
                 .preflight()
@@ -171,7 +305,8 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         return {
             "status": "ok",
             "version": __version__,
-            "profile": "two-account-managed",
+            "profile": "strict-market-screening",
+            "compatibility_profiles": ["two-account-managed"],
         }
 
     @app.get("/api/v1/config/status")
@@ -181,6 +316,27 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
     @app.get("/api/v1/providers")
     def providers() -> dict:
         return active_service.provider_status()
+
+    @app.get(
+        "/api/v1/screening/policy",
+        response_model=ScreeningPolicyResponse,
+        response_model_exclude_none=True,
+    )
+    def strict_screening_policy() -> dict:
+        return screening_policy()
+
+    @app.post(
+        "/api/v1/screening/evaluate",
+        response_model=StrictScreeningResponse,
+        response_model_exclude_none=True,
+    )
+    def evaluate_screening(request: StrictScreeningRequest) -> dict:
+        payload = request.model_dump(mode="json")
+        return evaluate_strict_market_screening(
+            payload.pop("part_number"),
+            payload,
+            min_us_vehicle_parc=payload.pop("min_us_vehicle_parc"),
+        )
 
     @app.post("/api/v1/runs", status_code=status.HTTP_202_ACCEPTED)
     def submit_run(request: ApiRunRequest) -> dict:
@@ -221,5 +377,8 @@ __all__ = [
     "DefaultFrontendService",
     "FrontendService",
     "InMemoryRunManager",
+    "ScreeningPolicyResponse",
+    "StrictScreeningRequest",
+    "StrictScreeningResponse",
     "create_app",
 ]

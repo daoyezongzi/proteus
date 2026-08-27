@@ -1,49 +1,49 @@
-# Proteus V0.2.1
+# Proteus V0.2.2
 
-Proteus 是证据优先的汽车零件商机发现器。默认 MVP 只需要两个上游账号，并自动执行：
+Proteus 是证据优先的汽车零件商机筛选器。当前主目标不是“抓到需求”，而是对一个
+明确零件号执行三项严格市场判定：
 
 ```text
-SerpApi eBay 已售类目发现候选
-→ SerpApi Amazon 精确搜索验证低竞争
-→ SerpApi eBay 精确查询验证已观察销量
-→ HioBuy 1688 精确商品、SKU、MOQ 和只读订单预检
-→ OPPORTUNITY_CANDIDATE / REJECTED / REVIEW_REQUIRED
+eBay 美国站近 365 天销量 > 20
+AND Amazon 美国站精确竞争对手 <= 5
+AND 适配车型在美国的保有量 >= 本次运行显式阈值
+→ MARKET_OPPORTUNITY_CANDIDATE
 ```
 
-eBay 只是候选入口；候选仍必须同时通过 Amazon 竞争、eBay 成交、1688 可采购三门，
-因此不会退化成单纯需求抓取。正常路径不调用 Agent/LLM，不自动登录，不解 CAPTCHA，
-也不切换代理、VPN 或创建/支付订单。
+任何证据缺失、市场不匹配、时间窗口不完整或来源不可追溯，都返回
+`REVIEW_REQUIRED`，不会把“没查到”当成零销量或低竞争。通过这三门只表示存在市场
+商机，尚不证明货源、到岸成本、利润或可下单。
 
-完整执行边界见 [V0_2_EXECUTION_PLAN.md](V0_2_EXECUTION_PLAN.md)。
+完整边界见 [V0_2_EXECUTION_PLAN.md](V0_2_EXECUTION_PLAN.md)，剩余产品工作见
+[TODO.md](TODO.md)。
 
-## 当前已经实现
+## 服务组合
 
-- 两账号默认 profile：一枚 SerpApi Key 覆盖候选发现、Amazon 和 eBay，一枚
-  HioBuy Key 覆盖 1688；
-- eBay Motors `Auto Parts & Accessories` 已售类目候选发现，默认 category `6028`；
-- 保守零件号抽取：只接受新品、明确正整数 sold count 和 part-shaped title token；
-- SerpApi Amazon adapter：固定 `amazon.com`、US 邮编、禁用缓存；存在下一页、字段
-  缺失或市场错位时不能证明低竞争；
-- SerpApi eBay exact-sold adapter 和 HioBuy
-  `search → detail → order preview` adapter；
-- Amazon → eBay → 1688 串行短路，上游未通过时不访问下游；
-- provider-neutral contract、显式 registry、可注入 transport 和逐阶段 provider 选择；
-- `proteus setup`：把两个 Key 和国内收件地址一次性存入 Windows 凭证库；
-- loopback HTTP API：配置状态、provider 状态、异步提交与运行结果查询；
-- Amazon B2B CSV、Nexscope 和 V0.1 离线输入继续兼容。
+| 能力 | 默认服务 | 选择原因 | 当前接入状态 |
+| --- | --- | --- | --- |
+| 候选发现、Amazon US 精确搜索 | [SerpApi](https://serpapi.com/amazon-search-api) | 一个 Key，现有 adapter 可复用，配置最少 | Amazon adapter 可用；eBay 发现链路仍需修复/基准测试 |
+| eBay 近 365 天销量 | [eBay Product Research](https://www.ebay.com/help/selling/selling-tools/product-research?id=4853)（Terapeak）导出/规范化证据 | eBay 官方 Seller Hub 数据覆盖三年，能满足完整 365 天窗口 | 严格证据 API 已预留；导入器和真实样本待接入 |
+| 美国适配车辆保有量 | [TecAlliance TecDoc VIO](https://www.tecalliance.net/products?highlight=vio-data&solution=data-insights) | 同时覆盖车辆/适配语义与 VIO，避免再拼一个车型映射服务 | provider-neutral contract 已预留；商业开通和真实 adapter 待完成 |
+| VIO 备选 | [Experian Automotive VIO](https://www.experian.com/automotive/vehicles-in-operation-vio-data) | 美国 VIO 数据的替代来源 | 仅列为替换方案 |
+| 1688 供货核验 | HioBuy（可选兼容） | 只在后续采购可行性阶段需要 | 不再阻塞市场筛选，也不再是默认配置项 |
 
-当前没有前端页面，但后端接口已经可以由 React/Vue/桌面壳直接调用。
+这样把默认配置压到一枚 SerpApi Key；另外两项严格证据只在真正执行严格筛选时需要。
+TecAlliance 的客户级 endpoint 和认证方式以商业合同为准，仓库不会猜测或硬编码未公开
+接口。
 
-## 尚未完成的真实产品验收
+## 当前可以做什么
 
-- 本机尚未配置 SerpApi/HioBuy 生产凭证和真实国内 receiver；
-- 尚未运行真实 20-item benchmark，因此不能宣称当前已经找到真实商机；
-- HioBuy 只适用于确实会把合格 SKU 导向采购的用途，账号用途审批仍需人工完成；
-- eBay title token 是候选信号，不直接成为商机证据；每个 token 都会重新经过 exact
-  eBay demand gate；
-- `automation_qualified` 仍保留“官方来源级验收”的旧严格含义。两账号 profile 的
-  `execution.mode=AUTOMATED_MANAGED` 表示执行已自动化，但 managed evidence 不会冒充
-  official evidence，因此 report 仍可能为 `automation_qualified=false`。
+- 保存并检查 SerpApi 配置；
+- 复用现有 SerpApi Amazon/eBay managed adapters 和 provider registry；
+- 通过稳定、供应商无关的 schema 接收 eBay 年销量、Amazon 竞争和美国 VIO 证据；
+- 确定性执行三项规则并输出每一门的 `PASSED`、`REJECTED` 或
+  `REVIEW_REQUIRED`；
+- 通过 loopback HTTP API 向未来 React/Vue/桌面前端提供策略、配置、provider 状态和
+  严格筛选结果；
+- 保留旧的 SerpApi + HioBuy 自动供货验证链路，作为兼容接口而非当前主验收目标。
+
+当前还不能声称“输入任意零件号即可全自动得到真实选品结果”：eBay Product Research
+导入器、TecAlliance 生产 adapter、真实凭证以及 VIO 充足阈值尚未完成产品验收。
 
 ## 安装
 
@@ -55,171 +55,105 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m proteus --help
 ```
 
-只有使用旧的 `--live-ebay` 浏览器兼容路径时才需要本机 Chrome/Edge。Amazon
-SP-API 兼容研究依赖可单独安装：
+## 配置
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[amazon]"
-```
-
-## 第一次配置
-
-先分别申请 [SerpApi](https://serpapi.com/users/sign_up) 和
-[HioBuy Developer](https://developers.hiobuy.com) 账号。HioBuy 审核通过后还需要
-渠道授权和一个真实的 1688 国内收货地址。
-
-不要把 Key 发到聊天、命令参数、JSON 或 Git。运行一次交互式配置：
+默认只询问 SerpApi Key，并把它存入 Windows 凭证库：
 
 ```powershell
 .\.venv\Scripts\python.exe -m proteus setup
-```
-
-Key 和 receiver 会以服务名 `proteus-opportunity-finder` 写入操作系统凭证库。查看
-脱敏状态不会显示 Key、手机号或地址：
-
-```powershell
 .\.venv\Scripts\python.exe -m proteus setup --status
 ```
 
-环境变量仍可临时覆盖凭证库，便于 CI；不建议把带 Key 的 PowerShell 命令留在历史中：
+不要把 Key 写入 Git、JSON 或命令参数。CI 可以用环境变量
+`SERPAPI_API_KEY` 覆盖本机凭证库。
+
+只有需要测试旧的 1688 供货兼容链路时，才配置 HioBuy Key 和国内收件信息：
 
 ```powershell
-$env:SERPAPI_API_KEY = "..."
-$env:HIOBUY_API_KEY = "..."
+.\.venv\Scripts\python.exe -m proteus setup --with-hiobuy
 ```
 
-## 先跑 provider canary
+这不会创建订单、支付、联系供应商、自动登录、处理 CAPTCHA、切换 VPN 或使用代理池。
+
+## 启动后端接口
 
 ```powershell
-New-Item -ItemType Directory -Path .\.private -Force | Out-Null
-
-.\.venv\Scripts\python.exe -m proteus providers check `
-  --part-number "53630-53010" `
-  --max-moq 10 `
-  --output .\.private\provider_canary.json
+.\.venv\Scripts\python.exe -m proteus api --host 127.0.0.1 --port 8765
 ```
 
-默认检查四个能力，但只读取两个账号：
-
-- `serpapi-ebay-discovery`；
-- `serpapi-amazon`；
-- `serpapi-ebay`；
-- `hiobuy-1688`。
-
-缺 Key 或 receiver 时不会发 live 请求，结果为 `BLOCKED`；`--offline` 只检查本地
-readiness。命令存在 blocked/failed 项时返回退出码 `3`，同时仍写出脱敏 JSON。
-
-2026-08-25 本机无凭证实测：`passed=0 / blocked=4 / live_attempted=false`；这确认
-当前阻断是账号凭证和 HioBuy receiver，不是日本 IP/VPN。
-
-## 自动选品
-
-配置完成后只需：
-
-```powershell
-.\.venv\Scripts\python.exe -m proteus `
-  --discover-ebay-sold `
-  --max-candidates 20 `
-  --max-moq 10 `
-  --output .\.private\managed_run.json
-```
-
-可选参数：
-
-- `--ebay-category-id 6028`：候选发现类目；
-- `--discovery-pages 1`：最多扫描的 sold 结果页，允许 `1..10`；
-- `--max-candidates 20`：进入三门漏斗的最大去重候选数；
-- `--hiobuy-receiver <json>`：显式本地 receiver 文件，优先于凭证库。
-
-自动入口写出一个 run envelope：
-
-- `profile`：固定为 `two-account-managed`；
-- `execution`：自动化模式、账号数和实际 provider IDs；
-- `discovery`：类目、页数、候选数和脱敏 diagnostics；
-- `reports`：逐候选 V0.2 opportunity reports；
-- `summary`：商机、拒绝和待复核计数。
-
-## 前端预留 API
-
-安装 `api` 依赖后启动：
-
-```powershell
-.\.venv\Scripts\python.exe -m proteus api --port 8765
-```
-
-服务只绑定 `127.0.0.1`，默认没有跨域开放，也没有接收或回显上游 Key 的 HTTP
-接口。OpenAPI 文档位于 `http://127.0.0.1:8765/api/docs`。
+浏览器接口文档位于 `http://127.0.0.1:8765/api/docs`。当前没有前端页面，但以下接口
+已可直接接前端：
 
 | 方法 | 路径 | 用途 |
-|---|---|---|
-| `GET` | `/api/v1/health` | 版本与存活状态 |
-| `GET` | `/api/v1/config/status` | 两账号和 receiver 的脱敏配置状态 |
-| `GET` | `/api/v1/providers` | 四个能力的 provider readiness |
-| `POST` | `/api/v1/runs` | 异步提交自动选品任务 |
-| `GET` | `/api/v1/runs/{run_id}` | 查询任务状态和完成结果 |
+| --- | --- | --- |
+| `GET` | `/api/v1/health` | 版本和当前 profile |
+| `GET` | `/api/v1/config/status` | 脱敏配置与各 profile readiness |
+| `GET` | `/api/v1/providers` | provider 预检与严格筛选服务策略 |
+| `GET` | `/api/v1/screening/policy` | 三项阈值、市场和服务选择 |
+| `POST` | `/api/v1/screening/evaluate` | 对规范化证据执行严格筛选 |
+| `POST` | `/api/v1/runs` | 旧两账号自动供货链路：异步提交 |
+| `GET` | `/api/v1/runs/{run_id}` | 旧链路：查询状态和结果 |
 
-提交示例：
+严格筛选请求示例：
 
 ```powershell
+$body = @{
+  part_number = "53630-53010"
+  min_us_vehicle_parc = 100000
+  ebay_annual_sales = @{
+    provider_id = "ebay-product-research-import"
+    source_reference = "seller-hub-export:row-18"
+    retrieved_at = "2026-08-27T08:00:00Z"
+    marketplace_id = "EBAY_US"
+    window_days = 365
+    units_sold = 27
+  }
+  amazon_competition = @{
+    provider_id = "serpapi-amazon"
+    source_reference = "serpapi-search:example"
+    retrieved_at = "2026-08-27T08:02:00Z"
+    marketplace_id = "AMAZON_US"
+    exact_competitor_count = 4
+  }
+  vehicle_parc = @{
+    provider_id = "tecalliance-vio"
+    source_reference = "vio-query:example"
+    retrieved_at = "2026-08-27T08:05:00Z"
+    country_code = "US"
+    fitment_resolved = $true
+    compatible_vehicle_count = 180000
+  }
+} | ConvertTo-Json -Depth 6
+
 Invoke-RestMethod `
   -Method Post `
-  -Uri http://127.0.0.1:8765/api/v1/runs `
-  -ContentType application/json `
-  -Body '{"max_candidates":20,"max_moq":10,"ebay_category_id":"6028","discovery_pages":1}'
+  -Uri "http://127.0.0.1:8765/api/v1/screening/evaluate" `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
-当前任务记录在单进程内存中，服务重启后不会保留。未来接数据库/队列时只需替换
-`FrontendService`/`InMemoryRunManager`，HTTP 路径和业务 provider contract 不需要改。
+`min_us_vehicle_parc` 必须由业务方显式给出。仓库不擅自把“保有量充足”定义成一个
+看似精确但未经验证的默认数值。
 
-## 无账号的合成验证
+## Provider 替换边界
 
-```powershell
-.\.venv\Scripts\python.exe -m proteus `
-  --candidate-pool .\examples\synthetic_candidates.json `
-  --manual-evidence .\examples\synthetic_manual_evidence.json `
-  --ebay-evidence .\examples\synthetic_ebay_evidence.json `
-  --max-moq 10 `
-  --output .\synthetic_reports.json
-```
+业务规则只依赖 `Capability` 和规范化请求/证据，不直接依赖 SerpApi、TecAlliance 或
+HioBuy。新 adapter 应实现 `preflight / acquire / estimate_cost`，然后在 registry 中按
+能力注册。前端只调用 Proteus API，不能持有第三方凭证或直接调用第三方服务。
 
-这只证明程序和三门规则可运行，不证明真实商机。旧入口输出有序 report 数组；新的
-`--discover-ebay-sold` 自动入口输出包含 `reports` 的 run envelope。
+当前新能力包括：
 
-## 兼容入口和接口替换
+- `EBAY_ANNUAL_SALES` + `AnnualSalesLookupRequest`；
+- `US_VEHICLE_PARC` + `VehicleParcLookupRequest`。
 
-Amazon B2B CSV、Nexscope 和逐阶段 provider 参数仍可使用。例如：
-
-```powershell
-.\.venv\Scripts\python.exe -m proteus `
-  --amazon-b2b-report .\b2b_not_yet_on_amazon.csv `
-  --managed-providers `
-  --amazon-provider serpapi-amazon `
-  --ebay-provider serpapi-ebay `
-  --supply-provider hiobuy-1688 `
-  --max-moq 10 `
-  --output .\reports_v0_2.json
-```
-
-Provider 可替换接口位于 `proteus.providers.base`、`ProviderRegistry` 和薄 adapter。
-业务漏斗只依赖 `FunnelProviders`；将 Amazon 换成 Keepa/DataForSEO 或将任务存储换成
-数据库，不需要修改三门 gate。
-
-## 判定边界
-
-- Amazon 只统计 deterministic exact/normalized-exact；存在下一页或解析缺口时为
-  `REVIEW_REQUIRED`，不能把不完整页当作低竞争；
-- eBay 只接受 exact/normalized-exact、新品、显式正整数 sold count；
-- 1688 listing、展示价、库存或 MOQ 不能单独证明可下单；
-- 只有绑定同一 offer、SKU、数量的成功 order preview 才能通过供应门；
-- provider failure、凭证失败、市场错位、字段缺失和歧义都 fail closed；
-- HioBuy 代码只允许商品搜索、详情和订单预检，没有 create/pay 调用路径。
+因此后续可把 Product Research 导入替换为获准的年度销量 API，把 TecAlliance 替换为
+Experian，而无需修改前端请求或三门决策规则。
 
 ## 验证
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m compileall -q src tests
 .\.venv\Scripts\python.exe -m pip check
+git diff --check
 ```
-
-真实产品验收仍需：两个获准生产账号、真实 receiver、20-item benchmark，以及至少
-一条三门全过的当前 `OPPORTUNITY_CANDIDATE`。

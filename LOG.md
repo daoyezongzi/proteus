@@ -1,5 +1,33 @@
 # Proteus Development Log
 
+## 2026-08-27 — Strict market screening contract and simplified service profile
+
+- Replaced the product-level definition of opportunity with three explicit
+  market gates: eBay US trailing-365-day units sold `> 20`, Amazon US exact
+  competitors `<= 5`, and fitment-resolved compatible US vehicle parc at or
+  above an explicit per-run threshold. A pass is now
+  `MARKET_OPPORTUNITY_CANDIDATE`; supply and economics remain downstream.
+- Selected SerpApi for discovery/Amazon, eBay Product Research normalized
+  evidence for annual sales, and TecAlliance TecDoc VIO for fitment-aware US
+  parc, with Experian VIO as fallback. HioBuy is now an optional compatibility
+  adapter rather than a default market-screening dependency.
+- Added provider-neutral annual-sales and vehicle-parc capabilities/requests,
+  deterministic strict evaluation and fail-closed source/market/window
+  validation. No customer-specific TecAlliance endpoint or auth scheme was
+  guessed from public material.
+- Added frontend-safe policy/evaluation endpoints and exposed the strategy in
+  redacted provider/config status. First-time setup now requires only SerpApi;
+  `--with-hiobuy` explicitly enables the historical supply profile.
+- The current configured SerpApi live probe passed Amazon. The eBay discovery
+  call returned `HTTP_ERROR`, while the exact eBay call timed out; neither was
+  converted to zero demand or a rejection. Product Research import,
+  TecAlliance live acquisition, the VIO threshold and the 20-part benchmark
+  remain open product-acceptance items.
+- Passed 263 tests, forced bytecode compilation, `pip check` and
+  `git diff --check`. The real redacted setup status returned
+  `serpapi=configured, optional_hiobuy=not_ready`, confirming that the base
+  profile works with one configured account and does not require HioBuy.
+
 ## 2026-08-25 — Two-account automatic discovery profile and frontend API
 
 - Replaced the default managed MVP dependency set with two upstream accounts:

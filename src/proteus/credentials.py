@@ -166,15 +166,42 @@ def configuration_status(
             )
         except InputDataError:
             receiver_configured = False
-    ready = all(item["configured"] for item in credentials.values()) and receiver_configured
+    serpapi_ready = credentials[SERPAPI_API_KEY]["configured"]
+    supply_ready = (
+        serpapi_ready
+        and credentials[HIOBUY_API_KEY]["configured"]
+        and receiver_configured
+    )
     return {
-        "profile": "two-account-managed",
-        "ready": ready,
-        "account_count": 2,
+        "profile": "market-screening-base",
+        "ready": serpapi_ready,
+        "account_count": 1,
+        "required_credentials": [SERPAPI_API_KEY],
+        "optional_credentials": [HIOBUY_API_KEY],
         "credentials": credentials,
         "receiver": {
             "configured": receiver_configured,
             "source": receiver_source,
+        },
+        "profiles": {
+            "market_screening_base": {
+                "ready": serpapi_ready,
+                "blockers": [] if serpapi_ready else [SERPAPI_API_KEY],
+            },
+            "strict_market_screening": {
+                "ready": False,
+                "blockers": [
+                    "EBAY_PRODUCT_RESEARCH_365D_EVIDENCE",
+                    "TECALLIANCE_VIO_ACCESS",
+                    "MIN_US_VEHICLE_PARC",
+                ],
+            },
+            "supply_verified": {
+                "ready": supply_ready,
+                "blockers": []
+                if supply_ready
+                else ["HIOBUY_API_KEY_AND_DOMESTIC_RECEIVER"],
+            },
         },
     }
 
@@ -209,12 +236,17 @@ def _prompt_receiver(backend: SecretBackend) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="proteus setup",
-        description="Store the two managed-provider credentials in the OS keyring.",
+        description="Store the required SerpApi credential in the OS keyring.",
     )
     parser.add_argument(
         "--status",
         action="store_true",
         help="show redacted configuration presence without prompting",
+    )
+    parser.add_argument(
+        "--with-hiobuy",
+        action="store_true",
+        help="also configure the optional HioBuy supply-verification profile",
     )
     return parser
 
@@ -225,21 +257,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if not args.status:
             _prompt_secret(SERPAPI_API_KEY, backend)
-            _prompt_secret(HIOBUY_API_KEY, backend)
-            _prompt_receiver(backend)
+            if args.with_hiobuy:
+                _prompt_secret(HIOBUY_API_KEY, backend)
+                _prompt_receiver(backend)
         status = configuration_status(backend=backend)
     except (CredentialStoreError, InputDataError, ValueError) as exc:
         print(f"proteus setup: error: {exc}", file=os.sys.stderr)
         return 2
 
-    configured = sum(
-        item["configured"] for item in status["credentials"].values()
-    )
     print(
-        "Proteus managed profile: "
-        f"credentials={configured}/2, "
-        f"receiver={'configured' if status['receiver']['configured'] else 'missing'}, "
-        f"ready={str(status['ready']).lower()}."
+        "Proteus market-screening base: "
+        f"serpapi={'configured' if status['ready'] else 'missing'}, "
+        "optional_hiobuy="
+        f"{'configured' if status['profiles']['supply_verified']['ready'] else 'not_ready'}."
     )
     return 0 if status["ready"] else 3
 

@@ -13,7 +13,9 @@ from proteus.normalization import normalize_part_number
 class Capability(str, Enum):
     AMAZON_CANDIDATE_SOURCE = "AMAZON_CANDIDATE_SOURCE"
     EBAY_CANDIDATE_SOURCE = "EBAY_CANDIDATE_SOURCE"
+    EBAY_ANNUAL_SALES = "EBAY_ANNUAL_SALES"
     AMAZON_COMPETITION = "AMAZON_COMPETITION"
+    US_VEHICLE_PARC = "US_VEHICLE_PARC"
     EBAY_DEMAND = "EBAY_DEMAND"
     ALIBABA_1688_SUPPLY = "ALIBABA_1688_SUPPLY"
     SEARCH_DISCOVERY = "SEARCH_DISCOVERY"
@@ -73,6 +75,35 @@ class CandidateDiscoveryRequest:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+
+
+@dataclass(frozen=True, slots=True)
+class AnnualSalesLookupRequest:
+    """Strict trailing-year marketplace-sales lookup for one part number."""
+
+    raw_part_number: str
+    window_days: int = 365
+    marketplace_id: str = "EBAY_US"
+
+    def __post_init__(self) -> None:
+        normalize_part_number(self.raw_part_number)
+        if self.window_days != 365:
+            raise ValueError("window_days must be 365")
+        if self.marketplace_id != "EBAY_US":
+            raise ValueError("marketplace_id must be EBAY_US")
+
+
+@dataclass(frozen=True, slots=True)
+class VehicleParcLookupRequest:
+    """Compatible vehicles-in-operation lookup for one part number."""
+
+    raw_part_number: str
+    country_code: str = "US"
+
+    def __post_init__(self) -> None:
+        normalize_part_number(self.raw_part_number)
+        if self.country_code != "US":
+            raise ValueError("country_code must be US")
 
 
 @dataclass(frozen=True, slots=True)

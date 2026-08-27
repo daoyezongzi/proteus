@@ -8,6 +8,29 @@
 
 ---
 
+## 2026-08-27 当前修订（覆盖 V0 主筛选定义）
+
+原企划将 1688 可采购性列为第三项主 gate。当前版本根据产品目标将“市场商机”和
+“供货可行性”拆开：
+
+```text
+eBay 美国站近 365 天销量 > 20
+AND Amazon 美国站精确竞争对手 <= 5
+AND 适配车型在美国的保有量达到显式业务阈值
+→ MARKET_OPPORTUNITY_CANDIDATE
+```
+
+1688、到岸成本、利润和下单能力保留为市场商机通过后的下游验证，不再替代美国车辆
+保有量。当前主服务组合为 SerpApi（发现/Amazon）、eBay Product Research（365 天
+销量规范化证据）和 TecAlliance TecDoc VIO（适配车型/美国保有量），Experian VIO
+作为后备。HioBuy 仅为可选兼容 adapter。
+
+该修订并未把目标收缩成需求抓取：三项证据必须同时通过，证据缺失、市场/时间窗口
+不匹配或来源不可追溯统一返回 `REVIEW_REQUIRED`。详细执行边界、当前实现和未完成
+验收以 [V0_2_EXECUTION_PLAN.md](V0_2_EXECUTION_PLAN.md) 为准。
+
+---
+
 ## 0. 项目定义
 
 Proteus 是一个面向北美汽配市场的**低成本跨平台机会发现系统**。

@@ -6,11 +6,13 @@ from typing import Any, Mapping
 import pytest
 
 from proteus.providers.base import (
+    AnnualSalesLookupRequest,
     Capability,
     CheckStatus,
     PartLookupRequest,
     ProviderReadiness,
     ReadinessCheck,
+    VehicleParcLookupRequest,
 )
 from proteus.providers.registry import ProviderRegistry
 
@@ -89,3 +91,17 @@ def test_registry_rejects_duplicate_ids_and_capability_mismatch() -> None:
         registry.register(FakeProvider("same", Capability.EBAY_DEMAND))
     with pytest.raises(LookupError, match="does not implement"):
         registry.select(Capability.ALIBABA_1688_SUPPLY, ("same",))
+
+
+def test_strict_screening_provider_requests_freeze_market_and_window() -> None:
+    annual = AnnualSalesLookupRequest("53630-53010")
+    parc = VehicleParcLookupRequest("53630-53010")
+
+    assert annual.marketplace_id == "EBAY_US"
+    assert annual.window_days == 365
+    assert parc.country_code == "US"
+
+    with pytest.raises(ValueError, match="window_days must be 365"):
+        AnnualSalesLookupRequest("53630-53010", window_days=90)
+    with pytest.raises(ValueError, match="country_code must be US"):
+        VehicleParcLookupRequest("53630-53010", country_code="CA")
