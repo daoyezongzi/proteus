@@ -18,6 +18,7 @@ from proteus.io import InputDataError, read_json
 
 SERVICE_NAME = "proteus-opportunity-finder"
 SERPAPI_API_KEY = "SERPAPI_API_KEY"
+MARKETCHECK_API_KEY = "MARKETCHECK_API_KEY"
 HIOBUY_API_KEY = "HIOBUY_API_KEY"
 HIOBUY_RECEIVER = "HIOBUY_RECEIVER_JSON"
 REQUIRED_RECEIVER_FIELDS = (
@@ -83,7 +84,7 @@ def resolve_secret(
 ) -> str | None:
     """Resolve a secret with explicit environment override over OS keyring."""
 
-    if name not in {SERPAPI_API_KEY, HIOBUY_API_KEY}:
+    if name not in {SERPAPI_API_KEY, MARKETCHECK_API_KEY, HIOBUY_API_KEY}:
         raise ValueError(f"unsupported credential alias {name!r}")
     from_environment = _environment_value(name, environment)
     if from_environment is not None:
@@ -145,7 +146,7 @@ def configuration_status(
 
     active_backend = _backend(backend)
     credentials = {}
-    for name in (SERPAPI_API_KEY, HIOBUY_API_KEY):
+    for name in (SERPAPI_API_KEY, MARKETCHECK_API_KEY, HIOBUY_API_KEY):
         source = _source_for(
             name,
             environment=environment,
@@ -167,16 +168,18 @@ def configuration_status(
         except InputDataError:
             receiver_configured = False
     serpapi_ready = credentials[SERPAPI_API_KEY]["configured"]
+    marketcheck_ready = credentials[MARKETCHECK_API_KEY]["configured"]
+    automatic_mvp_ready = serpapi_ready and marketcheck_ready
     supply_ready = (
         serpapi_ready
         and credentials[HIOBUY_API_KEY]["configured"]
         and receiver_configured
     )
     return {
-        "profile": "market-screening-base",
-        "ready": serpapi_ready,
-        "account_count": 1,
-        "required_credentials": [SERPAPI_API_KEY],
+        "profile": "automatic-mvp",
+        "ready": automatic_mvp_ready,
+        "account_count": 2,
+        "required_credentials": [SERPAPI_API_KEY, MARKETCHECK_API_KEY],
         "optional_credentials": [HIOBUY_API_KEY],
         "credentials": credentials,
         "receiver": {
@@ -187,6 +190,15 @@ def configuration_status(
             "market_screening_base": {
                 "ready": serpapi_ready,
                 "blockers": [] if serpapi_ready else [SERPAPI_API_KEY],
+            },
+            "automatic_mvp": {
+                "ready": automatic_mvp_ready,
+                "blockers": [
+                    name
+                    for name in (SERPAPI_API_KEY, MARKETCHECK_API_KEY)
+                    if not credentials[name]["configured"]
+                ],
+                "human_review_required": True,
             },
             "strict_market_screening": {
                 "ready": False,
@@ -236,7 +248,7 @@ def _prompt_receiver(backend: SecretBackend) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="proteus setup",
-        description="Store the required SerpApi credential in the OS keyring.",
+        description="Store the SerpApi and MarketCheck credentials in the OS keyring.",
     )
     parser.add_argument(
         "--status",
@@ -257,6 +269,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if not args.status:
             _prompt_secret(SERPAPI_API_KEY, backend)
+            _prompt_secret(MARKETCHECK_API_KEY, backend)
             if args.with_hiobuy:
                 _prompt_secret(HIOBUY_API_KEY, backend)
                 _prompt_receiver(backend)
@@ -266,8 +279,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     print(
-        "Proteus market-screening base: "
-        f"serpapi={'configured' if status['ready'] else 'missing'}, "
+        "Proteus automatic MVP: "
+        f"serpapi={'configured' if status['credentials'][SERPAPI_API_KEY]['configured'] else 'missing'}, "
+        f"marketcheck={'configured' if status['credentials'][MARKETCHECK_API_KEY]['configured'] else 'missing'}, "
         "optional_hiobuy="
         f"{'configured' if status['profiles']['supply_verified']['ready'] else 'not_ready'}."
     )
@@ -279,6 +293,7 @@ __all__ = [
     "HIOBUY_API_KEY",
     "HIOBUY_RECEIVER",
     "KeyringSecretBackend",
+    "MARKETCHECK_API_KEY",
     "SERPAPI_API_KEY",
     "SERVICE_NAME",
     "SecretBackend",

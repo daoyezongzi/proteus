@@ -1,6 +1,6 @@
-# Proteus V0.2.2 — Strict Market Screening Execution Plan
+# Proteus V0.2.3 — Automatic MVP + Strict Market Screening Execution Plan
 
-> 状态：`STRICT_CONTRACT_IMPLEMENTED / LIVE_ACQUISITION_OPEN`
+> 状态：`AUTOMATIC_MVP_IMPLEMENTED / LIVE_ACCEPTANCE_OPEN / STRICT_ACQUISITION_OPEN`
 > 更新：2026-08-27
 > 上位企划：[proteus.md](proteus.md)
 > V0.1 基线：[V0_1_SCOPE_CONTRACT.md](V0_1_SCOPE_CONTRACT.md)
@@ -9,6 +9,32 @@
 
 本节覆盖本文后面关于 V0.2.1 默认链路的旧描述；后续章节保留为兼容实现和决策历史，
 不再代表当前主产品验收。
+
+### 0A. 自动 MVP（当前可运行产品面）
+
+用户已接受“机器先粗筛、后续人工复核”的阶段性边界，因此 V0.2.3 新增独立 profile：
+
+```text
+SerpApi eBay sold-category 自动发现
+→ SerpApi eBay exact sold 可见结果数 > 阈值
+→ SerpApi Amazon US 完整精确竞争数 <= 阈值
+→ SerpApi eBay Product compatibility
+→ MarketCheck US used active inventory distinct-VIN proxy >= 阈值
+→ MVP_OPPORTUNITY_CANDIDATE + human_review_required=true
+```
+
+该链路是自动商机候选缩圈，不是需求抓取器，也不冒充严格证据：
+
+- eBay 指标是 provider 当前可见的精确已售结果下界，不是 Product Research 365 天销量；
+- MarketCheck 指标是美国二手经销商在售库存的去重 VIN 代理量，不是官方 VIO；
+- Amazon 只有完整精确计数高于阈值时才能确定性拒绝；
+- eBay 可见销量不足或 vehicle proxy 不足均为 `REVIEW_REQUIRED`，不能据此否定全年销量
+  或真实保有量；
+- 所有通过项仍强制人工检查零件同一性、适配覆盖、左右件/套装关系和数据新鲜度。
+
+自动 profile 默认只需要 `SERPAPI_API_KEY` 与 `MARKETCHECK_API_KEY`，通过
+`POST /api/v1/mvp/runs` 提交；五段 collector 可独立替换。严格 profile 和下文三项
+不可降级 gate 保持不变。
 
 当前目标是寻找“市场商机”，不是只抓需求，也不是把 1688 可采购性混入市场需求判定：
 
@@ -76,7 +102,7 @@ SerpApi 继续承担它能稳定证明的搜索任务；年度销量和美国保
 因此当前完成的是可替换 provider contract、严格 evaluator、简化配置和前端接口预留，
 不是“全自动选品已经验收”。
 
-## 0A. V0.2.1 历史兼容落点
+## 0B. V0.2.1 历史兼容落点
 
 2026-08-25 曾批准两账号 managed MVP，替代“Amazon Seller 账号必须先就绪”的
 默认前置条件。当时默认链路为：

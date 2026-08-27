@@ -5,6 +5,7 @@ import json
 from proteus.credentials import (
     HIOBUY_API_KEY,
     HIOBUY_RECEIVER,
+    MARKETCHECK_API_KEY,
     SERPAPI_API_KEY,
     configuration_status,
     resolve_receiver,
@@ -53,6 +54,7 @@ def test_configuration_status_never_returns_secret_values() -> None:
     backend = MemoryBackend(
         {
             SERPAPI_API_KEY: "serp-secret",
+            MARKETCHECK_API_KEY: "market-secret",
             HIOBUY_API_KEY: "hio-secret",
             HIOBUY_RECEIVER: json.dumps(
                 {
@@ -71,13 +73,15 @@ def test_configuration_status_never_returns_secret_values() -> None:
     serialized = json.dumps(status, ensure_ascii=False)
 
     assert status["ready"] is True
-    assert status["account_count"] == 1
-    assert status["profile"] == "market-screening-base"
+    assert status["account_count"] == 2
+    assert status["profile"] == "automatic-mvp"
     assert status["profiles"]["supply_verified"]["ready"] is True
     assert status["credentials"][SERPAPI_API_KEY]["configured"] is True
+    assert status["credentials"][MARKETCHECK_API_KEY]["configured"] is True
     assert status["credentials"][HIOBUY_API_KEY]["configured"] is True
     assert "serp-secret" not in serialized
     assert "hio-secret" not in serialized
+    assert "market-secret" not in serialized
     assert "13800000000" not in serialized
 
 
@@ -87,7 +91,25 @@ def test_serpapi_alone_is_enough_for_base_configuration() -> None:
         backend=MemoryBackend({SERPAPI_API_KEY: "serp-secret"}),
     )
 
-    assert status["ready"] is True
+    assert status["ready"] is False
     assert status["profiles"]["market_screening_base"]["ready"] is True
+    assert status["profiles"]["automatic_mvp"]["ready"] is False
+    assert status["profiles"]["automatic_mvp"]["blockers"] == [MARKETCHECK_API_KEY]
     assert status["profiles"]["strict_market_screening"]["ready"] is False
     assert status["profiles"]["supply_verified"]["ready"] is False
+
+
+def test_serpapi_and_marketcheck_are_enough_for_automatic_mvp() -> None:
+    status = configuration_status(
+        environment={},
+        backend=MemoryBackend(
+            {
+                SERPAPI_API_KEY: "serp-secret",
+                MARKETCHECK_API_KEY: "market-secret",
+            }
+        ),
+    )
+
+    assert status["ready"] is True
+    assert status["profiles"]["automatic_mvp"]["ready"] is True
+    assert status["required_credentials"] == [SERPAPI_API_KEY, MARKETCHECK_API_KEY]

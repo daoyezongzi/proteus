@@ -1,5 +1,34 @@
 # Proteus Development Log
 
+## 2026-08-27 — Automatic two-key MVP implemented; live eBay acceptance blocked upstream
+
+- Added an independent `automatic-mvp` path that performs deterministic eBay
+  sold-category discovery, exact eBay demand recheck, Amazon US exact
+  competition, eBay Product compatibility and MarketCheck US used-active-
+  inventory VIN proxy screening. Every pass remains
+  `human_review_required=true` and is distinct from the strict 365-day/VIO
+  profile.
+- Added bounded SerpApi asynchronous submit/poll with trusted-host validation,
+  transient poll-disconnect retry and no credential-bearing redirects. Updated
+  eBay discovery to the documented `category_id` parameter and removed the
+  now-rejected `_sop=13` value.
+- Added normalized eBay compatibility and MarketCheck YMMT adapters. MarketCheck
+  fixes `country=us`, `car_type=used`, `dedup=true` and `rows=0`; output is
+  explicitly an observable proxy, never official vehicles-in-operation data.
+- Added the frontend-ready policy and asynchronous job endpoints under
+  `/api/v1/mvp`, plus MarketCheck OS-keyring configuration. The automatic MVP
+  requires `SERPAPI_API_KEY` and `MARKETCHECK_API_KEY`; HioBuy remains optional.
+- Live SerpApi diagnostics were kept redacted. The configured account accepted
+  asynchronous searches, but both the exact `53630-53010` sold query and the
+  popular `brake pads` control ended with the provider error `eBay hasn't
+  returned any results for this query`; a `show_only=Complete` control exceeded
+  the bounded wait. MarketCheck is not configured locally, so no live vehicle
+  proxy call was attempted.
+- Passed 280 offline tests, bytecode compilation, `pip check` and whitespace
+  validation. Product acceptance remains open until the SerpApi eBay engine
+  recovers or is replaced, MarketCheck is configured, and a human-labelled
+  20-candidate benchmark meets coverage, cost and precision targets.
+
 ## 2026-08-27 — Strict market screening contract and simplified service profile
 
 - Replaced the product-level definition of opportunity with three explicit

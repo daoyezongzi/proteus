@@ -40,7 +40,7 @@ def sold_category_payload() -> dict[str, Any]:
         "search_parameters": {
             "engine": "ebay",
             "ebay_domain": "ebay.com",
-            "_sacat": "6028",
+            "category_id": "6028",
             "show_only": "Sold",
             "LH_ItemCondition": "1000",
             "_salic": "1",
@@ -102,8 +102,9 @@ def test_category_sold_search_discovers_traceable_part_candidates() -> None:
     assert API_KEY not in json.dumps(outcome)
 
     query = parse_qs(urlparse(transport.requests[0].url).query)
-    assert query["_sacat"] == ["6028"]
+    assert query["category_id"] == ["6028"]
     assert query["show_only"] == ["Sold"]
+    assert "_sop" not in query
     assert "_nkw" not in query
 
 

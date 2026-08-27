@@ -1,7 +1,21 @@
-# Proteus V0.2.2
+# Proteus V0.2.3
 
-Proteus 是证据优先的汽车零件商机筛选器。当前主目标不是“抓到需求”，而是对一个
-明确零件号执行三项严格市场判定：
+Proteus 是证据优先的汽车零件商机筛选器。V0.2.3 新增了可直接运行的自动 MVP：
+
+```text
+SerpApi eBay Motors 已售结果自动发现零件号
+→ eBay 精确已售结果数 > 可配置阈值（默认 20）
+→ Amazon 美国站精确竞争对手 <= 可配置阈值（默认 5）
+→ eBay Product 车型适配
+→ MarketCheck 美国二手在售去重 VIN 代理量 >= 本次阈值
+→ MVP_OPPORTUNITY_CANDIDATE（必须人工复核）
+```
+
+这条链路的目标是自动缩小人工选品范围，不需要 HioBuy，也不需要 Agent 逐项搜索。
+第三方采集器由明确的 collector 接口注入，后续可替换 SerpApi 或 MarketCheck 而不改
+阈值编排和前端任务接口。
+
+仓库同时保留更严格的市场判定：
 
 ```text
 eBay 美国站近 365 天销量 > 20
@@ -10,7 +24,7 @@ AND 适配车型在美国的保有量 >= 本次运行显式阈值
 → MARKET_OPPORTUNITY_CANDIDATE
 ```
 
-任何证据缺失、市场不匹配、时间窗口不完整或来源不可追溯，都返回
+严格链路中，任何证据缺失、市场不匹配、时间窗口不完整或来源不可追溯，都返回
 `REVIEW_REQUIRED`，不会把“没查到”当成零销量或低竞争。通过这三门只表示存在市场
 商机，尚不证明货源、到岸成本、利润或可下单。
 
@@ -21,19 +35,24 @@ AND 适配车型在美国的保有量 >= 本次运行显式阈值
 
 | 能力 | 默认服务 | 选择原因 | 当前接入状态 |
 | --- | --- | --- | --- |
-| 候选发现、Amazon US 精确搜索 | [SerpApi](https://serpapi.com/amazon-search-api) | 一个 Key，现有 adapter 可复用，配置最少 | Amazon adapter 可用；eBay 发现链路仍需修复/基准测试 |
+| 候选发现、eBay 已售粗筛、Amazon US 精确搜索、eBay 车型适配 | [SerpApi](https://serpapi.com/ebay-search-api) | 一枚 Key 覆盖四个自动步骤 | 已接入异步 eBay submit/poll、Amazon 和 eBay Product adapter；真实批量基准仍待完成 |
+| 美国车型规模自动代理量 | [MarketCheck](https://docs.marketcheck.com/docs/api/cars/inventory/inventory-search) | 一枚 Key，无登录自动化；支持 YMMT、美国、二手、VIN 去重 | 自动 MVP adapter 已接入；它是二手在售 VIN 代理量，不是官方 VIO |
 | eBay 近 365 天销量 | [eBay Product Research](https://www.ebay.com/help/selling/selling-tools/product-research?id=4853)（Terapeak）导出/规范化证据 | eBay 官方 Seller Hub 数据覆盖三年，能满足完整 365 天窗口 | 严格证据 API 已预留；导入器和真实样本待接入 |
 | 美国适配车辆保有量 | [TecAlliance TecDoc VIO](https://www.tecalliance.net/products?highlight=vio-data&solution=data-insights) | 同时覆盖车辆/适配语义与 VIO，避免再拼一个车型映射服务 | provider-neutral contract 已预留；商业开通和真实 adapter 待完成 |
 | VIO 备选 | [Experian Automotive VIO](https://www.experian.com/automotive/vehicles-in-operation-vio-data) | 美国 VIO 数据的替代来源 | 仅列为替换方案 |
 | 1688 供货核验 | HioBuy（可选兼容） | 只在后续采购可行性阶段需要 | 不再阻塞市场筛选，也不再是默认配置项 |
 
-这样把默认配置压到一枚 SerpApi Key；另外两项严格证据只在真正执行严格筛选时需要。
+自动 MVP 默认需要 SerpApi 和 MarketCheck 两枚 Key。严格 Product Research/VIO 证据只在
+真正执行严格筛选时需要。
 TecAlliance 的客户级 endpoint 和认证方式以商业合同为准，仓库不会猜测或硬编码未公开
 接口。
 
 ## 当前可以做什么
 
-- 保存并检查 SerpApi 配置；
+- 保存并脱敏检查 SerpApi、MarketCheck 配置；
+- 设置三项阈值后异步启动自动候选发现和粗筛；
+- 通过 eBay Product compatibility 自动取得车型适配，再用 MarketCheck 查询美国二手
+  在售去重 VIN 代理量；
 - 复用现有 SerpApi Amazon/eBay managed adapters 和 provider registry；
 - 通过稳定、供应商无关的 schema 接收 eBay 年销量、Amazon 竞争和美国 VIO 证据；
 - 确定性执行三项规则并输出每一门的 `PASSED`、`REJECTED` 或
@@ -42,8 +61,9 @@ TecAlliance 的客户级 endpoint 和认证方式以商业合同为准，仓库�
   严格筛选结果；
 - 保留旧的 SerpApi + HioBuy 自动供货验证链路，作为兼容接口而非当前主验收目标。
 
-当前还不能声称“输入任意零件号即可全自动得到真实选品结果”：eBay Product Research
-导入器、TecAlliance 生产 adapter、真实凭证以及 VIO 充足阈值尚未完成产品验收。
+自动 MVP 的通过结果只能声称“值得人工复核”，不能声称已经严格证明近 365 天销量或
+官方美国保有量。严格版本仍缺 eBay Product Research 导入器、TecAlliance 生产
+adapter、相应真实凭证和 20-item 产品验收。
 
 ## 安装
 
@@ -57,7 +77,7 @@ py -3.12 -m venv .venv
 
 ## 配置
 
-默认只询问 SerpApi Key，并把它存入 Windows 凭证库：
+默认询问 SerpApi Key 和 MarketCheck Key，并把它们存入 Windows 凭证库：
 
 ```powershell
 .\.venv\Scripts\python.exe -m proteus setup
@@ -65,7 +85,9 @@ py -3.12 -m venv .venv
 ```
 
 不要把 Key 写入 Git、JSON 或命令参数。CI 可以用环境变量
-`SERPAPI_API_KEY` 覆盖本机凭证库。
+`SERPAPI_API_KEY`、`MARKETCHECK_API_KEY` 覆盖本机凭证库。MarketCheck 可从其
+[Get Started](https://docs.marketcheck.com/docs/get-started/api/introduction) 页面申请 Key；
+没有该 Key 时自动任务会明确失败为未配置，不会用搜索结果冒充车辆代理量。
 
 只有需要测试旧的 1688 供货兼容链路时，才配置 HioBuy Key 和国内收件信息：
 
@@ -89,10 +111,40 @@ py -3.12 -m venv .venv
 | `GET` | `/api/v1/health` | 版本和当前 profile |
 | `GET` | `/api/v1/config/status` | 脱敏配置与各 profile readiness |
 | `GET` | `/api/v1/providers` | provider 预检与严格筛选服务策略 |
+| `GET` | `/api/v1/mvp/policy` | 自动 MVP 的三项阈值、provider 和代理量边界 |
+| `POST` | `/api/v1/mvp/runs` | 设置阈值并异步启动自动选品粗筛 |
+| `GET` | `/api/v1/mvp/runs/{run_id}` | 查询自动粗筛状态和候选报告 |
 | `GET` | `/api/v1/screening/policy` | 三项阈值、市场和服务选择 |
 | `POST` | `/api/v1/screening/evaluate` | 对规范化证据执行严格筛选 |
 | `POST` | `/api/v1/runs` | 旧两账号自动供货链路：异步提交 |
 | `GET` | `/api/v1/runs/{run_id}` | 旧链路：查询状态和结果 |
+
+自动 MVP 使用示例：
+
+```powershell
+$request = @{
+  max_candidates = 20
+  ebay_category_id = "6028"
+  discovery_pages = 1
+  min_ebay_trailing_year_units_exclusive = 20
+  max_amazon_us_exact_competitors = 5
+  min_us_active_vins = 5000
+  max_fitment_listings = 3
+} | ConvertTo-Json
+
+$job = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8765/api/v1/mvp/runs" `
+  -ContentType "application/json" `
+  -Body $request
+
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8765/api/v1/mvp/runs/$($job.run_id)"
+```
+
+任务状态依次为 `QUEUED`、`RUNNING`、`COMPLETED` 或 `FAILED`。完成后读取
+`result.reports`；只有 `MVP_OPPORTUNITY_CANDIDATE` 进入人工复核。进程重启会清空当前
+内存任务记录，前端不应直接持有或调用第三方 Key。
 
 严格筛选请求示例：
 
@@ -140,6 +192,10 @@ Invoke-RestMethod `
 业务规则只依赖 `Capability` 和规范化请求/证据，不直接依赖 SerpApi、TecAlliance 或
 HioBuy。新 adapter 应实现 `preflight / acquire / estimate_cost`，然后在 registry 中按
 能力注册。前端只调用 Proteus API，不能持有第三方凭证或直接调用第三方服务。
+
+自动 MVP 额外通过五个命名 collector 边界注入 discovery、eBay demand、Amazon、
+compatibility 和 vehicle proxy。阈值编排只读取规范化结果；替换接口时保持这些结果
+字段即可，不需要改 `/api/v1/mvp/runs` 请求。
 
 当前新能力包括：
 

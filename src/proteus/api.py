@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from proteus import __version__
 from proteus.credentials import (
     HIOBUY_API_KEY,
+    MARKETCHECK_API_KEY,
     SERPAPI_API_KEY,
     configuration_status,
     resolve_receiver,
@@ -33,6 +34,7 @@ from proteus.providers.adapters import (
 )
 from proteus.providers.base import Capability
 from proteus.screening import evaluate_strict_market_screening, screening_policy
+from proteus.automatic_mvp import automatic_mvp_policy
 
 
 def _utc_now() -> str:
@@ -48,6 +50,10 @@ class FrontendService(Protocol):
 
     def get_run(self, run_id: str) -> dict | None: ...
 
+    def submit_mvp_run(self, request: dict) -> dict: ...
+
+    def get_mvp_run(self, run_id: str) -> dict | None: ...
+
 
 class ApiRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -56,6 +62,18 @@ class ApiRunRequest(BaseModel):
     max_moq: int = Field(ge=1, le=100000)
     ebay_category_id: str = Field(default="6028", pattern=r"^[0-9]+$")
     discovery_pages: int = Field(default=1, ge=1, le=10)
+
+
+class AutomaticMvpRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_candidates: int = Field(default=20, ge=1, le=100)
+    ebay_category_id: str = Field(default="6028", pattern=r"^[0-9]+$")
+    discovery_pages: int = Field(default=1, ge=1, le=10)
+    min_ebay_trailing_year_units_exclusive: int = Field(default=20, ge=0, le=1000000)
+    max_amazon_us_exact_competitors: int = Field(default=5, ge=0, le=100000)
+    min_us_active_vins: int = Field(ge=1, le=100000000)
+    max_fitment_listings: int = Field(default=3, ge=1, le=10)
 
 
 class EvidenceSource(BaseModel):
@@ -243,12 +261,14 @@ class InMemoryRunManager:
 class DefaultFrontendService:
     def __init__(self) -> None:
         self._manager = InMemoryRunManager(self._run)
+        self._mvp_manager = InMemoryRunManager(self._run_mvp)
 
     def configuration_status(self) -> dict:
         return configuration_status()
 
     def provider_status(self) -> dict:
         serpapi_key = resolve_secret(SERPAPI_API_KEY)
+        marketcheck_key = resolve_secret(MARKETCHECK_API_KEY)
         hiobuy_key = resolve_secret(HIOBUY_API_KEY)
         receiver = resolve_receiver()
         registry = build_provider_registry(
@@ -271,6 +291,27 @@ class DefaultFrontendService:
                 .preflight()
                 .to_dict()
                 for capability, provider_id in selections
+            ]
+            + [
+                {
+                    "provider_id": "marketcheck-active-used-inventory",
+                    "capability": "US_ACTIVE_VEHICLE_PROXY",
+                    "ready": marketcheck_key is not None,
+                    "checks": [
+                        {
+                            "name": "CREDENTIALS_AVAILABLE",
+                            "status": "PASS" if marketcheck_key is not None else "FAIL",
+                            "message": "Credential alias MARKETCHECK_API_KEY is configured."
+                            if marketcheck_key is not None
+                            else "Credential alias MARKETCHECK_API_KEY is not configured.",
+                        },
+                        {
+                            "name": "OFFICIAL_VIO",
+                            "status": "FAIL",
+                            "message": "This provider is an active used-inventory proxy, not official VIO.",
+                        },
+                    ],
+                }
             ],
         }
 
@@ -290,6 +331,21 @@ class DefaultFrontendService:
     def get_run(self, run_id: str) -> dict | None:
         return self._manager.get(run_id)
 
+    def _run_mvp(self, request: dict) -> Mapping[str, Any]:
+        from proteus.automatic_mvp import run_automatic_mvp
+
+        return run_automatic_mvp(
+            serpapi_key=resolve_secret(SERPAPI_API_KEY),
+            marketcheck_key=resolve_secret(MARKETCHECK_API_KEY),
+            **request,
+        )
+
+    def submit_mvp_run(self, request: dict) -> dict:
+        return self._mvp_manager.submit(request)
+
+    def get_mvp_run(self, run_id: str) -> dict | None:
+        return self._mvp_manager.get(run_id)
+
 
 def create_app(*, service: FrontendService | None = None) -> FastAPI:
     active_service = service or DefaultFrontendService()
@@ -305,8 +361,8 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         return {
             "status": "ok",
             "version": __version__,
-            "profile": "strict-market-screening",
-            "compatibility_profiles": ["two-account-managed"],
+            "profile": "automatic-mvp",
+            "compatibility_profiles": ["strict-market-screening", "two-account-managed"],
         }
 
     @app.get("/api/v1/config/status")
@@ -337,6 +393,21 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
             payload,
             min_us_vehicle_parc=payload.pop("min_us_vehicle_parc"),
         )
+
+    @app.get("/api/v1/mvp/policy")
+    def mvp_policy() -> dict:
+        return automatic_mvp_policy()
+
+    @app.post("/api/v1/mvp/runs", status_code=status.HTTP_202_ACCEPTED)
+    def submit_mvp_run(request: AutomaticMvpRunRequest) -> dict:
+        return active_service.submit_mvp_run(request.model_dump())
+
+    @app.get("/api/v1/mvp/runs/{run_id}")
+    def get_mvp_run(run_id: str) -> dict:
+        value = active_service.get_mvp_run(run_id)
+        if value is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return value
 
     @app.post("/api/v1/runs", status_code=status.HTTP_202_ACCEPTED)
     def submit_run(request: ApiRunRequest) -> dict:
@@ -374,6 +445,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "ApiRunRequest",
+    "AutomaticMvpRunRequest",
     "DefaultFrontendService",
     "FrontendService",
     "InMemoryRunManager",

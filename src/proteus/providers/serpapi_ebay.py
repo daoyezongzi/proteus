@@ -287,7 +287,12 @@ def collect_ebay_sold(
 
     request = SerpApiRequest(_request_url(raw_part_number, api_key), float(timeout_seconds))
     try:
-        response = (transport or _urllib_transport)(request)
+        if transport is not None:
+            response = transport(request)
+        else:
+            from proteus.providers.serpapi_transport import perform_async_search
+
+            response = perform_async_search(request)
     except (TimeoutError, socket.timeout):
         return _failure(raw_part_number, "TIMEOUT", retrieved_at=timestamp, marker="transport timed out")
     except URLError as exc:

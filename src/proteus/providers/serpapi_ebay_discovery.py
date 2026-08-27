@@ -82,12 +82,11 @@ def _request_url(api_key: str, category_id: str, page: int) -> str:
     return f"{SEARCH_ENDPOINT}?{urlencode({
         'engine': 'ebay',
         'ebay_domain': 'ebay.com',
-        '_sacat': category_id,
+        'category_id': category_id,
         '_salic': '1',
         '_stpos': '10001',
         'LH_ItemCondition': '1000',
         'show_only': 'Sold',
-        '_sop': '13',
         '_ipg': '50',
         '_pgn': page,
         'no_cache': 'true',
@@ -136,7 +135,7 @@ def _parameters_match(
     expected = {
         "engine": "ebay",
         "ebay_domain": "ebay.com",
-        "_sacat": category_id,
+        "category_id": category_id,
         "show_only": "Sold",
         "LH_ItemCondition": "1000",
         "_salic": "1",
@@ -176,7 +175,12 @@ def collect_ebay_sold_candidates(
 
     request = SerpApiRequest(_request_url(api_key, category_id, page), float(timeout_seconds))
     try:
-        response = (transport or _urllib_transport)(request)
+        if transport is not None:
+            response = transport(request)
+        else:
+            from proteus.providers.serpapi_transport import perform_async_search
+
+            response = perform_async_search(request)
     except (TimeoutError, socket.timeout):
         return _failure(outcome, "TIMEOUT", "transport timed out")
     except URLError as exc:

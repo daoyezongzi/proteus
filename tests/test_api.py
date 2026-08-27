@@ -32,6 +32,27 @@ class FakeFrontendService:
             return {"run_id": run_id, "status": "COMPLETED", "reports": []}
         return None
 
+    def submit_mvp_run(self, request: dict) -> dict:
+        assert request == {
+            "max_candidates": 10,
+            "ebay_category_id": "6028",
+            "discovery_pages": 1,
+            "min_ebay_trailing_year_units_exclusive": 20,
+            "max_amazon_us_exact_competitors": 5,
+            "min_us_active_vins": 5000,
+            "max_fitment_listings": 3,
+        }
+        return {"run_id": "mvp-123", "status": "QUEUED"}
+
+    def get_mvp_run(self, run_id: str) -> dict | None:
+        if run_id == "mvp-123":
+            return {
+                "run_id": run_id,
+                "status": "COMPLETED",
+                "result": {"reports": []},
+            }
+        return None
+
 
 def test_frontend_api_exposes_health_config_providers_and_async_runs() -> None:
     client = TestClient(create_app(service=FakeFrontendService()))
@@ -68,6 +89,32 @@ def test_frontend_api_rejects_invalid_run_limits() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_frontend_api_exposes_threshold_driven_automatic_mvp_jobs() -> None:
+    client = TestClient(create_app(service=FakeFrontendService()))
+
+    policy = client.get("/api/v1/mvp/policy")
+    submitted = client.post(
+        "/api/v1/mvp/runs",
+        json={"max_candidates": 10, "min_us_active_vins": 5000},
+    )
+    run = client.get("/api/v1/mvp/runs/mvp-123")
+    missing = client.get("/api/v1/mvp/runs/missing")
+
+    assert policy.status_code == 200
+    assert policy.json()["profile"] == "automatic-mvp"
+    assert policy.json()["human_review_required"] is True
+    assert submitted.status_code == 202
+    assert submitted.json() == {"run_id": "mvp-123", "status": "QUEUED"}
+    assert run.json()["status"] == "COMPLETED"
+    assert missing.status_code == 404
+
+    openapi = client.get("/api/openapi.json").json()
+    request_schema = openapi["paths"]["/api/v1/mvp/runs"]["post"][
+        "requestBody"
+    ]["content"]["application/json"]["schema"]
+    assert request_schema["$ref"].endswith("/AutomaticMvpRunRequest")
 
 
 def test_frontend_can_evaluate_normalized_strict_screening_evidence() -> None:

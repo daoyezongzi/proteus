@@ -1,5 +1,30 @@
 # Proteus Current Work
 
+## V0.2.3 automatic MVP — implementation complete, live acceptance open
+
+- [x] Add a threshold-driven automatic path that discovers candidates and runs
+  eBay recent sold, Amazon US exact competition, eBay Product compatibility and
+  MarketCheck US used-active-inventory VIN proxy checks without Agent calls.
+- [x] Implement bounded SerpApi asynchronous submit/poll and reuse it for eBay
+  category search, exact sold search and eBay Product compatibility.
+- [x] Replace the obsolete eBay `_sacat` request parameter with documented
+  `category_id` and retain strict response-parameter binding.
+- [x] Add server-side `POST /api/v1/mvp/runs`, status retrieval and policy APIs;
+  all candidates remain `human_review_required=true`.
+- [x] Add MarketCheck credential storage/readiness and keep HioBuy optional.
+- [ ] Configure `MARKETCHECK_API_KEY`, run a one-part live compatibility/proxy
+  canary, then freeze a 20-candidate accuracy/cost benchmark.
+- [ ] Re-run the SerpApi eBay canary after its sold/complete engine recovers or
+  SerpApi support confirms the failure. On 2026-08-27 both an exact part query
+  and the popular `brake pads` control returned the provider error
+  `eBay hasn't returned any results for this query`; `show_only=Complete` did
+  not reach a terminal result within the bounded wait.
+- [ ] Manually label benchmark results and approve category-specific
+  `min_us_active_vins`; the current default request example is illustrative.
+- [ ] Replace the recent-sold and active-used-inventory proxies with authorized
+  365-day/VIO sources before promoting any result to strict
+  `MARKET_OPPORTUNITY_CANDIDATE`.
+
 ## V0.2.2 strict market screening — contract complete
 
 - [x] Freeze the market-opportunity gates as eBay US trailing-365-day sales
@@ -16,8 +41,8 @@
   `GET /api/v1/screening/policy` and `POST /api/v1/screening/evaluate`
   contracts. Missing, malformed or unbound evidence fails closed to
   `REVIEW_REQUIRED`.
-- [x] Reduce first-time setup to SerpApi only. Keep HioBuy/receiver setup behind
-  explicit `--with-hiobuy` for the old downstream supply-validation path.
+- [x] Keep the strict evaluator independent of HioBuy. V0.2.3 automatic MVP setup
+  adds MarketCheck while HioBuy/receiver stays behind explicit `--with-hiobuy`.
 - [ ] Obtain one authorized eBay Product Research export sample, freeze its
   columns/timezone/window semantics, and implement the deterministic 365-day
   importer. An HTML scraper or inferred sold count is not acceptable evidence.
@@ -30,9 +55,9 @@
 - [ ] Add an acquisition job that gathers the three normalized evidence records
   before calling the evaluator. The current endpoint evaluates supplied
   evidence; it does not yet automate Product Research or VIO acquisition.
-- [ ] Repair and benchmark the current SerpApi eBay paths. The latest live
-  probe returned `HTTP_ERROR` for discovery and `TIMEOUT` for an exact query;
-  Amazon passed with the configured SerpApi account.
+- [ ] Benchmark the repaired SerpApi eBay paths. Async submit/poll and current
+  `category_id` are implemented; the provider has still shown slow/unstable live
+  processing and needs the frozen 20-item acceptance run.
 - [ ] Run a frozen 20-part benchmark and produce at least one real
   `MARKET_OPPORTUNITY_CANDIDATE` whose three evidence records are current,
   market-bound and independently auditable.
