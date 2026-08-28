@@ -61,7 +61,8 @@
         "pages_requested": {"type": "integer", "minimum": 1},
         "pages_attempted": {"type": "integer", "minimum": 0},
         "pages_completed": {"type": "integer", "minimum": 0},
-        "candidate_cap": {"type": "null"}
+        "candidate_cap": {"type": "null"},
+        "selected_archetype": {"type": ["string", "null"]}
       },
       "additionalProperties": false
     },
@@ -69,9 +70,29 @@
       "type": "object",
       "required": ["limit", "used", "remaining"],
       "properties": {
-        "limit": {"type": "integer", "minimum": 2},
+        "limit": {"type": "integer", "minimum": 1},
         "used": {"type": "integer", "minimum": 0},
         "remaining": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "provider_budgets": {
+      "type": "object",
+      "properties": {
+        "serpapi": {"$ref": "#/$defs/budget"},
+        "1688": {"$ref": "#/$defs/budget"}
+      },
+      "additionalProperties": false
+    },
+    "supply_filter": {
+      "type": "object",
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "checked": {"type": "integer", "minimum": 0},
+        "supplier_found": {"type": "integer", "minimum": 0},
+        "no_supplier": {"type": "integer", "minimum": 0},
+        "review_required": {"type": "integer", "minimum": 0},
+        "not_run": {"type": "integer", "minimum": 0}
       },
       "additionalProperties": false
     },
@@ -105,6 +126,16 @@
     }
   },
   "$defs": {
+    "budget": {
+      "type": "object",
+      "required": ["limit", "used", "remaining"],
+      "properties": {
+        "limit": {"type": "integer", "minimum": 0},
+        "used": {"type": "integer", "minimum": 0},
+        "remaining": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
     "report": {
       "type": "object",
       "additionalProperties": false,

@@ -173,7 +173,23 @@ class StubService:
         }
 
     def provider_status(self) -> dict:
-        return {"profile": "provider-readiness", "providers": []}
+        return {
+            "profile": "provider-readiness",
+            "providers": [
+                {
+                    "provider_id": "local-1688-cli",
+                    "capability": "ALIBABA_1688_SUPPLY",
+                    "status": "READY",
+                    "checks": [
+                        {
+                            "name": "REPLAY_FIXTURE",
+                            "status": "PASS",
+                            "message": "The UI harness uses a deterministic read-only 1688 fixture.",
+                        }
+                    ],
+                }
+            ],
+        }
 
     def submit_mvp_run(self, request: dict) -> dict:
         self._n += 1
@@ -301,9 +317,30 @@ class StubService:
                 "diagnostics": [],
             }
 
+        def supplier_prefilter(raw_part_number: str, *, family: dict, **_kwargs):
+            return {
+                "provider": "DEV_1688_CLI_REPLAY",
+                "source_method": "LOCAL_CLI_REPLAY",
+                "acquisition_status": "SUCCESS",
+                "query": raw_part_number,
+                "offer_id": f"1688-{raw_part_number}",
+                "offer_url": f"https://detail.1688.com/offer/{raw_part_number}.html",
+                "title": f"{family.get('part_type', '汽车配件')} Chevrolet Silverado {raw_part_number}",
+                "supplier": {"id": "dev-supplier", "name": "Northway 1688 Replay Supplier"},
+                "supplier_found": True,
+                "matched_part_numbers": [raw_part_number],
+                "match_type": "IDENTIFIER_OR_FAMILY_MATCH",
+                "retrieved_at": "2026-08-28T09:00:30Z",
+                "diagnostics": [],
+            }
+
         result = run_northway_mvp(
             serpapi_key="dev-only",
-            collectors={"discovery": discover, "amazon_search": amazon_search},
+            collectors={
+                "discovery": discover,
+                "amazon_search": amazon_search,
+                "1688_supplier_prefilter": supplier_prefilter,
+            },
             **request,
         )
         self._runs[run_id] = {

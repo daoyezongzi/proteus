@@ -1,8 +1,45 @@
 from __future__ import annotations
 
+from time import monotonic, sleep
+
 from fastapi.testclient import TestClient
 
-from proteus.api import create_app
+from proteus.api import InMemoryRunManager, create_app
+
+
+def test_in_memory_run_manager_marks_failed_progress() -> None:
+    def failing_runner(request: dict, *, progress) -> dict:
+        progress(
+            {
+                "phase": "1688_supplier",
+                "current": 1,
+                "total": 2,
+                "last_query": "53630-53010",
+                "provider": "LOCAL_1688_CLI",
+                "budget_used": 1,
+            }
+        )
+        raise RuntimeError("provider unavailable")
+
+    manager = InMemoryRunManager(failing_runner, supports_progress=True)
+    submission = manager.submit({})
+    deadline = monotonic() + 1.0
+    record = manager.get(submission["run_id"])
+    while record and record["status"] not in {"FAILED", "COMPLETED"} and monotonic() < deadline:
+        sleep(0.01)
+        record = manager.get(submission["run_id"])
+
+    assert record is not None
+    assert record["status"] == "FAILED"
+    assert record["progress"] == {
+        "phase": "failed",
+        "current": 1,
+        "total": 2,
+        "last_query": "53630-53010",
+        "provider": "LOCAL_1688_CLI",
+        "budget_used": 1,
+        "updated_at": record["progress"]["updated_at"],
+    }
 
 
 class FakeFrontendService:
@@ -57,8 +94,10 @@ class FakeFrontendService:
 
     def submit_northway_run(self, request: dict) -> dict:
         assert request == {
+            "archetype": "fog_light_bezel",
             "discovery_pages": 1,
             "request_budget": 12,
+            "max_1688_checks": 20,
             "max_amazon_queries_per_family": 3,
             "min_family_price_usd": 20.0,
             "min_observed_ebay_demand": 1,
@@ -153,7 +192,7 @@ def test_frontend_api_exposes_northway_family_screening_and_json_export() -> Non
     policy = client.get("/api/v1/northway/policy")
     submitted = client.post(
         "/api/v1/northway/runs",
-        json={"request_budget": 12},
+        json={"archetype": "fog_light_bezel", "request_budget": 12},
     )
     run = client.get("/api/v1/northway/runs/northway-123")
     export = client.get("/api/v1/northway/runs/northway-123/export")
@@ -177,11 +216,12 @@ def test_frontend_api_exposes_northway_family_screening_and_json_export() -> Non
     openapi = client.get("/api/openapi.json").json()
     model = openapi["components"]["schemas"]["NorthwayMvpRunRequest"]
     assert "max_candidates" not in model["properties"]
-    assert "archetype" not in model["properties"]
+    assert "archetype" in model["properties"]
+    assert "max_1688_checks" in model["properties"]
     assert "max_competitive_products" not in model["properties"]
 
 
-def test_frontend_api_rejects_legacy_single_archetype_field() -> None:
+def test_frontend_api_rejects_unknown_single_archetype_field() -> None:
     client = TestClient(create_app(service=FakeFrontendService()))
 
     response = client.post(
@@ -192,12 +232,12 @@ def test_frontend_api_rejects_legacy_single_archetype_field() -> None:
     assert response.status_code == 422
 
 
-def test_frontend_api_requires_budget_for_every_archetype_page() -> None:
+def test_frontend_api_requires_budget_for_selected_archetype_pages() -> None:
     client = TestClient(create_app(service=FakeFrontendService()))
 
     response = client.post(
         "/api/v1/northway/runs",
-        json={"discovery_pages": 2, "request_budget": 12},
+        json={"archetype": "fog_light_bezel", "discovery_pages": 2, "request_budget": 1},
     )
 
     assert response.status_code == 422

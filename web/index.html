@@ -95,8 +95,8 @@
             </div>
             <div class="principle">
               <span class="principle__index">02</span>
-              <span class="principle__label">九类一起扫描</span>
-              <small>合并后的范围一次覆盖</small>
+              <span class="principle__label">单类精准扫描</span>
+              <small>把有限额度集中给一个小类</small>
             </div>
             <div class="principle">
               <span class="principle__index">03</span>
@@ -113,7 +113,7 @@
                 <p class="eyebrow">扫描配置</p>
                 <h2 id="scanTitle">把参数交给筛网</h2>
               </div>
-              <span class="section-tag">SERPAPI</span>
+              <span class="section-tag">SERPAPI + 1688</span>
             </div>
 
             <form id="runForm" class="scan-form">
@@ -125,8 +125,14 @@
 
               <label class="field">
                 <span>总请求预算</span>
-                <input id="request_budget" name="request_budget" type="number" min="9" max="500" value="80" required>
-                <small id="budgetHint">至少 9 次用于覆盖全部类型；用尽后保留缺口</small>
+                <input id="request_budget" name="request_budget" type="number" min="1" max="500" value="20" required>
+                <small id="budgetHint">至少 1 次用于当前小类发现；只计 SerpApi</small>
+              </label>
+
+              <label class="field">
+                <span>1688 供应商检查上限</span>
+                <input id="max_1688_checks" name="max_1688_checks" type="number" min="0" max="500" value="20" required>
+                <small>独立于 SerpApi；供应商不明不进入 Amazon</small>
               </label>
 
               <label class="field">
@@ -169,12 +175,12 @@
             <div class="section-head section-head--tight">
               <div>
                 <p class="eyebrow">扫描清单</p>
-                <h2 id="scopeTitle"><span id="archetypeCount">9</span> 类一起过筛</h2>
+                <h2 id="scopeTitle">选择 1 个小类</h2>
               </div>
-              <span class="scope-status"><span class="scope-status__dot" aria-hidden="true"></span>全部启用</span>
+              <span class="scope-status"><span class="scope-status__dot" aria-hidden="true"></span>单类运行</span>
             </div>
-            <p class="section-copy">不再选择单一零件类型。每次运行都会覆盖以下两个产品轮廓，并保留每类的关键词、页数与状态。</p>
-            <div class="scope-list" id="scopeList" aria-label="Northway 扫描类型">
+            <p class="section-copy">每次只选择一个叶子小类。先过范围、产品族和 eBay 需求，再用 1688 找到有供应商的家族，最后才消耗 Amazon 查询额度。</p>
+            <div class="scope-list" id="scopeList" aria-label="Northway 扫描类型" role="radiogroup">
               <div class="scope-loading">正在加载扫描清单…</div>
             </div>
             <div class="scope-footer">
@@ -201,7 +207,7 @@
               <span></span><span></span><span></span><i></i>
             </div>
             <h3>还没有扫描结果</h3>
-            <p>点击右上角「开始扫描」，系统会一次读取全部 <span id="emptyArchetypeCount">9</span> 类零件，并按产品家族整理证据。</p>
+            <p>选择一个零件小类后点击右上角「开始扫描」。系统会先筛掉无供应商的家族，再把额度留给值得核对的 Amazon 结果。</p>
           </div>
 
           <div id="resultContent" hidden>
@@ -213,7 +219,7 @@
               <div class="subsection-head">
                 <div>
                   <h3 id="coverageTitle">扫描覆盖</h3>
-                  <p>九类查询各自保留状态，零结果不再和 provider 失败混在一起。</p>
+                  <p>当前小类的发现状态单独保留；零结果不再和 provider 失败混在一起。</p>
                 </div>
                 <span class="subsection-meta" id="coverageMeta"></span>
               </div>
@@ -223,7 +229,7 @@
             <div class="queue-heading">
               <div>
                 <h3>候选产品族</h3>
-                <p>默认隐藏明确淘汰项；精简 JSON 保留关键证据，完整证据可单独下载。</p>
+                <p>默认只看已有 1688 供应商证据的家族；精简 JSON 保留关键证据，完整证据可单独下载。</p>
               </div>
               <nav class="result-filters" id="resultFilters" aria-label="候选状态分类"></nav>
             </div>

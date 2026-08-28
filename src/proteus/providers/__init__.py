@@ -13,6 +13,7 @@ from proteus.providers.base import (
 )
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
+    LOCAL_1688_CLI_ID,
     NEXSCOPE_1688_LISTING_ID,
     NEXSCOPE_AMAZON_ID,
     NEXSCOPE_EBAY_ID,
@@ -21,6 +22,7 @@ from proteus.providers.adapters import (
     SERPAPI_EBAY_DISCOVERY_ID,
     FunnelProviders,
     HioBuy1688Provider,
+    Local1688CliProvider,
     Nexscope1688ListingProvider,
     NexscopeAmazonProvider,
     NexscopeEbayProvider,
@@ -38,6 +40,15 @@ from proteus.providers.hiobuy import (
     HioBuyRequest,
     HioBuyResponse,
     collect_1688_supply,
+)
+
+from proteus.providers.local_1688_cli import (
+    LOCAL_1688_CLI_PROVIDER,
+    build_1688_query_pack,
+    collect_1688_supplier,
+    is_1688_cli_available,
+    is_valid_1688_offer_id,
+    is_real_1688_url,
 )
 
 from proteus.providers.nexscope import (
@@ -92,6 +103,7 @@ __all__ = [
     "VehicleParcLookupRequest",
     "ProviderRegistry",
     "HIOBUY_1688_ID",
+    "LOCAL_1688_CLI_ID",
     "NEXSCOPE_1688_LISTING_ID",
     "NEXSCOPE_AMAZON_ID",
     "NEXSCOPE_EBAY_ID",
@@ -100,6 +112,7 @@ __all__ = [
     "SERPAPI_EBAY_DISCOVERY_ID",
     "FunnelProviders",
     "HioBuy1688Provider",
+    "Local1688CliProvider",
     "Nexscope1688ListingProvider",
     "NexscopeAmazonProvider",
     "NexscopeEbayProvider",
@@ -125,6 +138,12 @@ __all__ = [
     "HioBuyRequest",
     "HioBuyResponse",
     "collect_1688_supply",
+    "LOCAL_1688_CLI_PROVIDER",
+    "build_1688_query_pack",
+    "collect_1688_supplier",
+    "is_1688_cli_available",
+    "is_valid_1688_offer_id",
+    "is_real_1688_url",
     "SERPAPI_SEARCH_ENDPOINT",
     "SERPAPI_EBAY_PROVIDER",
     "SerpApiRequest",

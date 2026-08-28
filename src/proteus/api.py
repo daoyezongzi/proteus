@@ -31,6 +31,7 @@ from proteus.normalization import normalize_part_number
 from proteus.northway_mvp import ARCHETYPES, compact_northway_result, northway_mvp_policy
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
+    LOCAL_1688_CLI_ID,
     SERPAPI_AMAZON_ID,
     SERPAPI_EBAY_DISCOVERY_ID,
     SERPAPI_EBAY_ID,
@@ -98,22 +99,31 @@ class AutomaticMvpRunRequest(BaseModel):
 
 
 class NorthwayMvpRunRequest(BaseModel):
-    """One bounded run across every Northway product archetype."""
+    """One bounded run for one selected Northway product archetype."""
 
     model_config = ConfigDict(extra="forbid")
 
+    archetype: str = Field(min_length=1)
     discovery_pages: int = Field(default=1, ge=1, le=10)
-    request_budget: int = Field(default=80, ge=len(ARCHETYPES), le=500)
+    request_budget: int = Field(default=20, ge=1, le=500)
+    max_1688_checks: int = Field(default=20, ge=0, le=500)
     max_amazon_queries_per_family: int = Field(default=3, ge=1, le=5)
     min_family_price_usd: float = Field(default=20.0, ge=0, le=1000000)
     min_observed_ebay_demand: int = Field(default=1, ge=0, le=1000000)
 
+    @field_validator("archetype")
+    @classmethod
+    def validate_archetype(cls, value: str) -> str:
+        if value not in ARCHETYPES:
+            raise ValueError("archetype must be one of the Northway leaf categories")
+        return value
+
     @model_validator(mode="after")
     def validate_discovery_budget(self) -> "NorthwayMvpRunRequest":
-        required = len(ARCHETYPES) * self.discovery_pages
+        required = self.discovery_pages
         if self.request_budget < required:
             raise ValueError(
-                "request_budget must cover every archetype discovery page "
+                "request_budget must cover the selected archetype discovery pages "
                 f"({required} requests required)"
             )
         return self
@@ -253,8 +263,14 @@ class StrictScreeningResponse(BaseModel):
 class InMemoryRunManager:
     """Single-process async run store; persistence can replace this contract later."""
 
-    def __init__(self, runner: Callable[[dict], Mapping[str, Any]]) -> None:
+    def __init__(
+        self,
+        runner: Callable[..., Mapping[str, Any]],
+        *,
+        supports_progress: bool = False,
+    ) -> None:
         self._runner = runner
+        self._supports_progress = supports_progress
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="proteus-run")
         self._lock = Lock()
         self._runs: dict[str, dict[str, Any]] = {}
@@ -269,6 +285,15 @@ class InMemoryRunManager:
             "completed_at": None,
             "result": None,
             "error": None,
+            "progress": {
+                "phase": "queued",
+                "current": 0,
+                "total": 0,
+                "last_query": None,
+                "provider": None,
+                "budget_used": 0,
+                "updated_at": _utc_now(),
+            },
         }
         with self._lock:
             self._runs[run_id] = record
@@ -279,21 +304,62 @@ class InMemoryRunManager:
         with self._lock:
             self._runs[run_id]["status"] = "RUNNING"
             self._runs[run_id]["started_at"] = _utc_now()
+
+        def update_progress(value: Mapping[str, Any]) -> None:
+            if not isinstance(value, Mapping):
+                return
+            payload = dict(value)
+            payload.setdefault("updated_at", _utc_now())
+            with self._lock:
+                if run_id in self._runs:
+                    self._runs[run_id]["progress"] = payload
+
         try:
-            result = dict(self._runner(request))
+            result = dict(
+                self._runner(request, progress=update_progress)
+                if self._supports_progress
+                else self._runner(request)
+            )
         except Exception as exc:
             with self._lock:
+                previous_progress = self._runs[run_id].get("progress", {})
+                if not isinstance(previous_progress, Mapping):
+                    previous_progress = {}
                 self._runs[run_id]["status"] = "FAILED"
                 self._runs[run_id]["completed_at"] = _utc_now()
                 self._runs[run_id]["error"] = {
                     "code": type(exc).__name__,
                     "message": "The managed run failed; check provider readiness and retry.",
                 }
+                self._runs[run_id]["progress"] = {
+                    "phase": "failed",
+                    "current": previous_progress.get("current", 0),
+                    "total": previous_progress.get("total", 0),
+                    "last_query": previous_progress.get("last_query"),
+                    "provider": previous_progress.get("provider"),
+                    "budget_used": previous_progress.get("budget_used", 0),
+                    "updated_at": _utc_now(),
+                }
             return
         with self._lock:
             self._runs[run_id]["status"] = "COMPLETED"
             self._runs[run_id]["completed_at"] = _utc_now()
             self._runs[run_id]["result"] = result
+            self._runs[run_id]["progress"] = {
+                "phase": "completed",
+                "current": len(result.get("reports", []))
+                if isinstance(result.get("reports"), list)
+                else 0,
+                "total": len(result.get("reports", []))
+                if isinstance(result.get("reports"), list)
+                else 0,
+                "last_query": None,
+                "provider": None,
+                "budget_used": result.get("request_budget", {}).get("used", 0)
+                if isinstance(result.get("request_budget"), Mapping)
+                else 0,
+                "updated_at": _utc_now(),
+            }
 
     def get(self, run_id: str) -> dict | None:
         with self._lock:
@@ -305,7 +371,10 @@ class DefaultFrontendService:
     def __init__(self) -> None:
         self._manager = InMemoryRunManager(self._run)
         self._mvp_manager = InMemoryRunManager(self._run_mvp)
-        self._northway_manager = InMemoryRunManager(self._run_northway)
+        self._northway_manager = InMemoryRunManager(
+            self._run_northway,
+            supports_progress=True,
+        )
 
     def configuration_status(self) -> dict:
         return configuration_status()
@@ -325,6 +394,7 @@ class DefaultFrontendService:
             (Capability.EBAY_CANDIDATE_SOURCE, SERPAPI_EBAY_DISCOVERY_ID),
             (Capability.AMAZON_COMPETITION, SERPAPI_AMAZON_ID),
             (Capability.EBAY_DEMAND, SERPAPI_EBAY_ID),
+            (Capability.ALIBABA_1688_SUPPLY, LOCAL_1688_CLI_ID),
             (Capability.ALIBABA_1688_SUPPLY, HIOBUY_1688_ID),
         )
         return {
@@ -407,11 +477,17 @@ class DefaultFrontendService:
     def get_mvp_run(self, run_id: str) -> dict | None:
         return self._mvp_manager.get(run_id)
 
-    def _run_northway(self, request: dict) -> Mapping[str, Any]:
+    def _run_northway(
+        self,
+        request: dict,
+        *,
+        progress: Callable[[Mapping[str, Any]], None] | None = None,
+    ) -> Mapping[str, Any]:
         from proteus.northway_mvp import run_northway_mvp
 
         return run_northway_mvp(
             serpapi_key=resolve_secret(SERPAPI_API_KEY),
+            progress_callback=progress,
             **request,
         )
 

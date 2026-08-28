@@ -1,5 +1,27 @@
 # Proteus Development Log
 
+## 2026-08-28 — Implemented quota-first single-category funnel and 1688 prefilter
+
+- Restored the public Northway request and UI to one required leaf `archetype`; the nine
+  types remain available as grouped choices, while the two broad profiles are display groups.
+- Moved the 1688 supplier check ahead of Amazon. A family must expose a valid offer ID, real
+  1688 URL, supplier identity and matching title before Amazon queries are attempted. Successful
+  no-supplier results are `REJECTED`; login, risk-control, timeout and parser failures remain
+  `REVIEW_REQUIRED`; ineligible families are `NOT_RUN`.
+- Added the read-only local `1688` CLI adapter using shallow `search --max` and at most one
+  `offer` detail read. It never invokes deeppro, inquiry, cart, checkout or order commands.
+  HioBuy remains a compatibility fallback when explicitly configured.
+- Split `request_budget` (SerpApi) from `max_1688_checks`, added provider budget summaries and
+  asynchronous phase progress to the run envelope. The compact export now includes both budgets,
+  supplier summary and only the bounded supplier evidence needed for review.
+- Updated the Claude/TradeEye-style operator surface with a single-category radio selection,
+  supplier-status filters, 1688 evidence cards and live phase/progress text. Local replay and
+  compact JSON export were exercised through the browser harness with no console errors.
+- Verification: 332 offline tests passed, Python compilation passed, JSON schema parsing passed,
+  JavaScript syntax check passed, `git diff --check` passed. The current machine does not have
+  the `1688` executable installed, so a real run will fail closed at supplier verification and
+  will not spend Amazon quota until the CLI is installed and logged in.
+
 ## 2026-08-28 — Approved quota-first category scan and 1688 supplier prefilter
 
 - Confirmed the current project has no reusable local candidate database, so a local-first

@@ -64,7 +64,7 @@ const stageLabels = {
   demand: "eBay 需求",
   amazon_family_competition: "Amazon 平替",
   family_price_floor: "平替最低价",
-  china_non_oem_supply: "国内供货",
+  china_non_oem_supply: "1688 供应商",
 };
 
 const stageOrder = [
@@ -77,8 +77,10 @@ const stageOrder = [
 ];
 
 const resultFilters = [
+  ["supplier", "有 1688 供应商", (report) => report.stages?.china_non_oem_supply?.status === "PASSED"],
+  ["supplier_review", "供应商待核", (report) => report.stages?.china_non_oem_supply?.status === "REVIEW_REQUIRED"],
   ["reviewable", "可复核", (report) => report.decision !== "REJECTED"],
-  ["priority", "优先候选", (report) => ["OPPORTUNITY_CANDIDATE", "MARKET_SHORTLIST_CANDIDATE"].includes(report.decision)],
+  ["priority", "优先候选", (report) => report.decision === "OPPORTUNITY_CANDIDATE"],
   ["review", "待判断", (report) => report.decision === "REVIEW_REQUIRED"],
   ["rejected", "已淘汰", (report) => report.decision === "REJECTED"],
 ];
@@ -110,6 +112,9 @@ const reasonLabels = {
   "The substitute-family price floor remains above the configured limit.": "平替产品族最低价高于设定阈值。",
   "The substitute-family price floor is at or below the configured limit.": "平替产品族最低价低于或等于设定阈值。",
   "China non-OEM supply verification is not configured.": "尚未配置国内非原厂供货核验。",
+  "A valid family-matching 1688 offer, real offer URL and supplier identity are available.": "已找到匹配产品族的 1688 商品、真实链接和供应商身份。",
+  "No valid family-matching 1688 offer with a supplier identity was found.": "没有找到同时匹配产品族且带供应商身份的 1688 商品。",
+  "1688 supplier evidence needs review because the provider or parser did not complete.": "1688 供应商证据未完整返回，需要人工复核。",
   "Amazon family search incomplete; low competition cannot be proven.": "Amazon 产品族搜索不完整，无法证明竞争数量；需人工复核。",
   "Listing title is missing.": "listing 标题缺失。",
 };
@@ -117,8 +122,8 @@ const reasonLabels = {
 let activeRunId = null;
 let policy = null;
 let lastResult = null;
-let activeFilter = "reviewable";
-let archetypeCount = Object.keys(labels).length;
+let activeFilter = "supplier";
+let selectedArchetype = null;
 
 async function json(path, options = {}) {
   const response = await fetch(`${API}${path}`, {
@@ -151,11 +156,11 @@ function setRunBusy(busy) {
 
 function syncBudgetMinimum() {
   const pages = Math.max(1, Number($("#discovery_pages").value) || 1);
-  const required = archetypeCount * pages;
+  const required = pages;
   const input = $("#request_budget");
   input.min = String(required);
   input.setCustomValidity(Number(input.value) < required ? `总请求预算至少需要 ${required}` : "");
-  $("#budgetHint").textContent = `至少 ${required} 次用于覆盖全部类型；用尽后保留缺口`;
+  $("#budgetHint").textContent = `至少 ${required} 次用于当前小类发现；只计 SerpApi`;
 }
 
 function archetypeEntries() {
@@ -174,9 +179,9 @@ function profileLabel(profile) {
 function renderScopeList() {
   const root = $("#scopeList");
   const entries = archetypeEntries();
-  archetypeCount = entries.length || Object.keys(labels).length;
-  $("#archetypeCount").textContent = archetypeCount;
-  $("#emptyArchetypeCount").textContent = archetypeCount;
+  if (!selectedArchetype || !entries.some(([key]) => key === selectedArchetype)) {
+    selectedArchetype = entries[0]?.[0] || Object.keys(labels)[0];
+  }
 
   const groups = new Map();
   entries.forEach(([key, value]) => {
@@ -198,14 +203,34 @@ function renderScopeList() {
     return `<section class="scope-group" data-profile="${esc(profile)}">
       <div class="scope-group__head"><span>${esc(profileLabel(profile))}</span><span class="scope-group__count">${items.length} 类</span></div>
       <div class="scope-items">
-        ${items.map((item) => `<div class="scope-item" data-profile="${esc(profile)}" title="${esc(item.keyword)}">
+        ${items.map((item) => `<label class="scope-item" data-profile="${esc(profile)}" data-selected="${item.key === selectedArchetype}" title="${esc(item.keyword)}">
+          <input class="scope-item__radio" type="radio" name="archetype" value="${esc(item.key)}" ${item.key === selectedArchetype ? "checked" : ""} aria-label="选择 ${esc(item.label)}">
           <span class="scope-item__dot" aria-hidden="true"></span>
           <span class="scope-item__label">${esc(item.label)}</span>
           <span class="scope-item__keyword" aria-hidden="true">OEM</span>
-        </div>`).join("")}
+        </label>`).join("")}
       </div>
     </section>`;
   }).join("");
+
+  root.querySelectorAll("input[name=archetype]").forEach((input) => {
+    input.addEventListener("change", () => {
+      selectedArchetype = input.value;
+      renderScopeSelection();
+      syncBudgetMinimum();
+    });
+  });
+  renderScopeSelection();
+}
+
+function renderScopeSelection() {
+  document.querySelectorAll(".scope-item").forEach((item) => {
+    const input = $("input[name=archetype]", item);
+    item.dataset.selected = String(Boolean(input?.checked));
+  });
+  const entry = archetypeEntries().find(([key]) => key === selectedArchetype);
+  const label = entry ? labels[entry[0]] || entry[1]?.part_type || entry[0] : "未选择";
+  $("#scopeTitle").textContent = `选择「${label}」`;
 }
 
 async function boot() {
@@ -213,18 +238,25 @@ async function boot() {
   renderScopeList();
   syncBudgetMinimum();
   try {
-    const [health, config, nextPolicy] = await Promise.all([
+    const [health, config, nextPolicy, providers] = await Promise.all([
       json("/health"),
       json("/config/status"),
       json("/northway/policy"),
+      json("/providers"),
     ]);
     policy = nextPolicy;
     renderScopeList();
     syncBudgetMinimum();
     const configured = config.credentials?.SERPAPI_API_KEY?.configured === true;
+    const local1688 = providers.providers?.find((item) => item.provider_id === "local-1688-cli");
+    const supplierStatus = local1688?.status === "READY"
+      ? "1688 CLI 已就绪"
+      : local1688?.status === "NOT_READY"
+        ? "1688 CLI 待登录"
+        : "1688 CLI 未配置";
     status.dataset.state = configured ? "ready" : "error";
     $(".system-status__label", status).textContent = configured
-      ? `v${health.version} · SerpApi 已就绪`
+      ? `v${health.version} · SerpApi 已就绪 · ${supplierStatus}`
       : `v${health.version} · 请先运行 proteus setup`;
     $("#runButton").disabled = !configured;
   } catch (error) {
@@ -238,8 +270,10 @@ async function boot() {
 function collectForm() {
   const number = (id) => Number($(`#${id}`).value);
   return {
+    archetype: selectedArchetype,
     discovery_pages: number("discovery_pages"),
     request_budget: number("request_budget"),
+    max_1688_checks: number("max_1688_checks"),
     max_amazon_queries_per_family: number("max_amazon_queries_per_family"),
     min_family_price_usd: number("min_family_price_usd"),
     min_observed_ebay_demand: number("min_observed_ebay_demand"),
@@ -249,6 +283,7 @@ function collectForm() {
 async function waitForRun(runId) {
   for (;;) {
     const run = await json(`/northway/runs/${encodeURIComponent(runId)}`);
+    renderRunProgress(run.progress);
     if (run.status === "COMPLETED") return run.result;
     if (run.status === "FAILED") throw new Error(run.error?.message || "扫描失败");
     await new Promise((resolve) => setTimeout(resolve, 1100));
@@ -335,7 +370,15 @@ function stageTone(status) {
 
 function stageReading(stage) {
   if (!stage || stage.status === "NOT_RUN") return "未运行";
-  let reading = stage.value === "IN_SCOPE" ? "范围内" : stage.value === "RESOLVED" ? "已解析" : value(stage.value, "无读数");
+  let reading = stage.value === true
+    ? "已找到"
+    : stage.value === false
+      ? "未找到"
+      : stage.value === "IN_SCOPE"
+        ? "范围内"
+        : stage.value === "RESOLVED"
+          ? "已解析"
+          : value(stage.value, "无读数");
   if (stage.operator && stage.threshold !== null && stage.threshold !== undefined) {
     const threshold = stage.threshold === "IN_SCOPE" ? "范围内" : stage.threshold === "RESOLVED" ? "已解析" : value(stage.threshold);
     reading += ` ${operatorSymbols[stage.operator] || stage.operator} ${threshold}`;
@@ -361,6 +404,28 @@ function stageReadingRows(stages) {
       <span class="reading-row__reason">${esc(localizeReason(stage.reason))}</span>
     </div>`;
   }).join("");
+}
+
+function supplierName(supply) {
+  const supplier = supply?.supplier;
+  if (typeof supplier === "string") return supplier;
+  if (supplier && typeof supplier === "object") {
+    return supplier.name || supplier.shop_name || supplier.id || "供应商已记录";
+  }
+  return "待核对";
+}
+
+function supplierEvidence(report) {
+  const supply = report.supply || {};
+  const stage = report.stages?.china_non_oem_supply || {};
+  const href = validExternalUrl(supply.offer_url, /^https:\/\/(?:www\.)?(?:detail\.)?1688\.com\//i);
+  if (stage.status === "PASSED") {
+    const link = href
+      ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">查看 1688 商品 ↗</a>`
+      : "链接待核对";
+    return `<div class="supplier-proof" data-tone="pass"><strong>${esc(supplierName(supply))}</strong><span>${esc(supply.offer_id || supply.product_id || "Offer ID 待回传")} · ${link}</span></div>`;
+  }
+  return `<div class="supplier-proof" data-tone="${esc(stageTone(stage.status))}"><strong>${esc(statusLabels[stage.status] || "待复核")}</strong><span>${esc(localizeReason(stage.reason))}</span></div>`;
 }
 
 function familyFacts(family) {
@@ -420,6 +485,7 @@ function candidateCard(report) {
   const competitionStage = stages.amazon_family_competition || {};
   const priceStage = stages.family_price_floor || {};
   const demandStage = stages.demand || {};
+  const supplyStage = stages.china_non_oem_supply || {};
   const offerValue = competition.family_offer_count_lower_bound;
   const offerStage = competition.offer_stage || {};
   const detailMeta = gaps.length ? `${gaps.length} 个证据缺口` : "证据链可查看";
@@ -469,6 +535,11 @@ function candidateCard(report) {
         <strong>${esc(value(demand.observed_sold_count_lower_bound))}</strong>
         <small>${esc(metricHint(demandStage))}</small>
       </div>
+      <div class="metric" data-tone="${esc(stageTone(supplyStage.status))}">
+        <span>1688 供应商</span>
+        <strong>${esc(supplierName(report.supply))}</strong>
+        <small>${esc(supplyStage.status === "PASSED" ? "可进入 Amazon 核对" : statusLabels[supplyStage.status] || "未核验")}</small>
+      </div>
       <div class="metric" data-tone="${esc(stageTone(offerStage.status))}">
         <span>报价下界</span>
         <strong>${esc(value(offerValue))}</strong>
@@ -496,16 +567,20 @@ function candidateCard(report) {
           ${relevantProducts(competition)}
         </section>
         <section class="detail-section">
-          <div class="detail-section__head"><span class="detail-section__index">04</span><h4>来源 listing</h4></div>
+          <div class="detail-section__head"><span class="detail-section__index">04</span><h4>1688 供应商证据</h4></div>
+          ${supplierEvidence(report)}
+        </section>
+        <section class="detail-section">
+          <div class="detail-section__head"><span class="detail-section__index">05</span><h4>来源 listing</h4></div>
           <ul class="source-list">${sourceListingRows(report)}</ul>
           <div class="source-links">${sourceLinks(report)}</div>
         </section>
         <section class="detail-section detail-section--wide">
-          <div class="detail-section__head"><span class="detail-section__index">05</span><h4>六层读数与判定理由</h4></div>
+          <div class="detail-section__head"><span class="detail-section__index">06</span><h4>筛选阶段读数与判定理由</h4></div>
           <div class="reading-list">${stageReadingRows(stages)}</div>
         </section>
         <section class="detail-section detail-section--wide">
-          <div class="detail-section__head"><span class="detail-section__index">06</span><h4>证据缺口</h4></div>
+          <div class="detail-section__head"><span class="detail-section__index">07</span><h4>证据缺口</h4></div>
           ${evidenceGaps(gaps)}
         </section>
       </div>
@@ -580,9 +655,38 @@ function renderCoverage(result) {
   }).join("");
 }
 
+function renderRunProgress(progress = {}) {
+  const phaseLabels = {
+    queued: "准备扫描",
+    discovery: "发现 eBay 候选",
+    family_resolution: "解析产品家族",
+    "1688_supplier": "检查 1688 供应商",
+    amazon: "核对 Amazon 平替",
+    family_screening: "整理筛选结果",
+    completed: "扫描完成",
+  };
+  const phase = progress.phase || "queued";
+  const current = Number(progress.current);
+  const total = Number(progress.total);
+  const safeCurrent = Number.isFinite(current) ? Math.max(0, current) : 0;
+  const safeTotal = Number.isFinite(total) ? Math.max(0, total) : 0;
+  const percent = safeTotal ? Math.min(100, Math.round((safeCurrent / safeTotal) * 100)) : phase === "completed" ? 100 : 8;
+  const phaseElement = $("#progressPhase");
+  const metaElement = $("#progressMeta");
+  const bar = $("#progressBar");
+  const queryElement = $("#progressQuery");
+  if (!phaseElement || !metaElement || !bar || !queryElement) return;
+  phaseElement.textContent = phaseLabels[phase] || phase;
+  metaElement.textContent = safeTotal ? `${safeCurrent}/${safeTotal}` : "进行中";
+  bar.style.width = `${percent}%`;
+  const provider = progress.provider ? ` · ${progress.provider}` : "";
+  const query = progress.last_query ? `最近：${progress.last_query}` : "等待阶段开始";
+  queryElement.textContent = `${query}${provider}`;
+}
+
 function renderResult(result) {
   lastResult = result;
-  activeFilter = "reviewable";
+  activeFilter = "supplier";
   $("#emptyState").hidden = true;
   $("#resultContent").hidden = false;
   $("#exportButton").hidden = false;
@@ -591,14 +695,18 @@ function renderResult(result) {
 
   const summary = result.summary || {};
   const budget = result.request_budget || {};
+  const providerBudgets = result.provider_budgets || {};
+  const supplierBudget = providerBudgets["1688"] || {};
+  const supplyFilter = result.supply_filter || {};
   const reports = Array.isArray(result.reports) ? result.reports : [];
-  const priority = (summary.opportunity_candidates || 0) + (summary.market_shortlist_candidates || 0);
+  const supplierCandidates = reports.filter((report) => report.stages?.china_non_oem_supply?.status === "PASSED").length;
   const cells = [
     [summary.candidate_count ?? reports.length, "全部候选", ""],
-    [priority, "优先复核", "pass"],
+    [supplierCandidates, "有供应商", "pass"],
     [summary.review_required || 0, "需要判断", "review"],
     [summary.rejected || 0, "明确淘汰", "reject"],
-    [`${value(budget.used, "0")}/${value(budget.limit, "—")}`, "请求预算", ""],
+    [`${value(budget.used, "0")}/${value(budget.limit, "—")}`, "SerpApi", ""],
+    [`${value(supplierBudget.used, "0")}/${value(supplierBudget.limit, "—")}`, "1688 检查", ""],
   ];
   $("#runSummary").innerHTML = cells.map(([number, label, tone]) => `<div class="summary-cell" data-tone="${esc(tone)}"><span>${esc(label)}</span><strong>${esc(value(number))}</strong></div>`).join("");
 
@@ -608,7 +716,10 @@ function renderResult(result) {
     messages.push(`发现阶段状态：${result.discovery?.status || "UNKNOWN"}。本次没有生成可复核候选；这不等于市场没有需求，可增加扫描页数后重试。`);
   }
   if (budget.remaining === 0) {
-    messages.push("本次请求预算已用尽。已经发现的候选仍被保留，未完成的 Amazon 查询已标记为证据缺口。");
+    messages.push("本次 SerpApi 预算已用尽。已经发现的候选仍被保留，未完成的 Amazon 查询已标记为证据缺口。");
+  }
+  if (supplyFilter.review_required || supplyFilter.not_run) {
+    messages.push(`1688 供应商检查：${value(supplyFilter.supplier_found, "0")} 个找到供应商，${value(supplyFilter.no_supplier, "0")} 个无供应商，${value(supplyFilter.review_required, "0")} 个待复核。`);
   }
   notice.hidden = !messages.length;
   notice.textContent = messages.join(" ");
@@ -616,10 +727,11 @@ function renderResult(result) {
   renderCoverage(result);
   renderCandidateList();
   const manifest = result.scan_manifest || {};
-  const typeCount = manifest.archetypes?.length ?? archetypeCount;
+  const typeCount = manifest.archetypes?.length ?? 1;
   const pagesCompleted = manifest.pages_completed ?? 0;
   const pagesAttempted = manifest.pages_attempted ?? pagesCompleted;
-  $("#resultSubtitle").textContent = `${typeCount} 类 · ${pagesCompleted}/${pagesAttempted || typeCount} 页完成 · ${reports.length} 个去重产品家族；默认不展示明确淘汰项。`;
+  const selectedLabel = labels[manifest.selected_archetype || manifest.archetypes?.[0]] || "当前小类";
+  $("#resultSubtitle").textContent = `${selectedLabel} · ${pagesCompleted}/${pagesAttempted || typeCount} 页完成 · ${reports.length} 个去重产品家族；默认只展示有 1688 供应商证据的家族。`;
 }
 
 function showLoading() {
@@ -628,7 +740,13 @@ function showLoading() {
   $("#fullExportButton").hidden = true;
   const empty = $("#emptyState");
   empty.hidden = false;
-  empty.innerHTML = $("#skeletonTemplate").innerHTML;
+  empty.innerHTML = `${$("#skeletonTemplate").innerHTML}
+    <div class="run-progress" role="status" aria-live="polite">
+      <div class="run-progress__head"><strong id="progressPhase">准备扫描</strong><span id="progressMeta">排队中</span></div>
+      <div class="run-progress__bar" aria-hidden="true"><span id="progressBar"></span></div>
+      <p id="progressQuery">正在准备当前小类、1688 供应商和 Amazon 阶段。</p>
+    </div>`;
+  renderRunProgress({ phase: "queued", current: 0, total: 0, last_query: null, provider: null, budget_used: 0 });
 }
 
 function showError(message) {
@@ -653,7 +771,7 @@ $("#runForm").addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   if (!form.reportValidity()) return;
   setRunBusy(true);
-  setFormStatus("正在扫描全部零件小类、解析产品家族并搜索 Amazon。请不要关闭本页。");
+  setFormStatus("正在扫描当前小类：先筛选 1688 供应商，再使用 Amazon 额度。请不要关闭本页。");
   showLoading();
 
   try {

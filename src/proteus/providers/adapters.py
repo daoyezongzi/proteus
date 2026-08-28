@@ -16,6 +16,11 @@ from proteus.providers.base import (
     SupplyLookupRequest,
 )
 from proteus.providers.hiobuy import collect_1688_supply
+from proteus.providers.local_1688_cli import (
+    DEFAULT_EXECUTABLE as DEFAULT_1688_CLI_EXECUTABLE,
+    collect_1688_supplier,
+    is_1688_cli_available,
+)
 from proteus.providers.nexscope import (
     collect_1688_search,
     collect_amazon_search,
@@ -34,6 +39,7 @@ SERPAPI_AMAZON_ID = "serpapi-amazon"
 SERPAPI_EBAY_ID = "serpapi-ebay"
 SERPAPI_EBAY_DISCOVERY_ID = "serpapi-ebay-discovery"
 HIOBUY_1688_ID = "hiobuy-1688"
+LOCAL_1688_CLI_ID = "local-1688-cli"
 
 PartCollector = Callable[..., Mapping[str, Any]]
 SupplyCollector = Callable[..., Mapping[str, Any]]
@@ -402,6 +408,52 @@ class HioBuy1688Provider:
         return self.cost_per_request_usd
 
 
+@dataclass(slots=True)
+class Local1688CliProvider:
+    """Read-only local 1688 supplier lookup with a persistent CLI profile."""
+
+    executable: str = DEFAULT_1688_CLI_EXECUTABLE
+    collector: SupplyCollector = collect_1688_supplier
+    provider_id: str = LOCAL_1688_CLI_ID
+    capability: Capability = Capability.ALIBABA_1688_SUPPLY
+
+    def preflight(self) -> ProviderReadiness:
+        executable_available = is_1688_cli_available(self.executable)
+        return ProviderReadiness(
+            self.provider_id,
+            self.capability,
+            (
+                ReadinessCheck(
+                    "EXECUTABLE_AVAILABLE",
+                    CheckStatus.PASS if executable_available else CheckStatus.FAIL,
+                    "The local 1688 executable is available."
+                    if executable_available
+                    else "Install 1688 CLI before using local supplier filtering.",
+                ),
+                ReadinessCheck(
+                    "READ_ONLY_SCOPE",
+                    CheckStatus.PASS,
+                    "The adapter only invokes shallow search and optional offer detail reads.",
+                ),
+                ReadinessCheck(
+                    "SESSION_AUTHENTICATED",
+                    CheckStatus.UNKNOWN,
+                    "The persistent 1688 profile still needs a live login/doctor check.",
+                ),
+            ),
+        )
+
+    def acquire(self, request: SupplyLookupRequest) -> Mapping[str, Any]:
+        return self.collector(
+            request.raw_part_number,
+            executable=self.executable,
+            max_offers=5,
+        )
+
+    def estimate_cost(self, request: SupplyLookupRequest) -> float | None:
+        return 0.0
+
+
 def build_provider_registry(
     *,
     nexscope_key: str | None,
@@ -409,6 +461,7 @@ def build_provider_registry(
     hiobuy_key: str | None,
     receiver: Mapping[str, str] | None,
     collectors: Mapping[str, Callable[..., Mapping[str, Any]]] | None = None,
+    cli_1688_executable: str = DEFAULT_1688_CLI_EXECUTABLE,
 ) -> ProviderRegistry:
     """Build one explicit registry; injected collectors keep tests and swaps local."""
 
@@ -458,6 +511,12 @@ def build_provider_registry(
             hiobuy_key,
             receiver,
             collector=functions.get(HIOBUY_1688_ID, collect_1688_supply),
+        )
+    )
+    registry.register(
+        Local1688CliProvider(
+            executable=cli_1688_executable,
+            collector=functions.get(LOCAL_1688_CLI_ID, collect_1688_supplier),
         )
     )
     return registry

@@ -53,6 +53,24 @@ def amazon_result(query: str, products: list[dict], *, complete: bool = True) ->
     }
 
 
+def supplier_result(raw_part_number: str, *, family: dict | None = None, **_kwargs) -> dict:
+    return {
+        "provider": "TEST_1688",
+        "source_method": "TEST_FIXTURE",
+        "acquisition_status": "SUCCESS",
+        "query": raw_part_number,
+        "offer_id": "628196518518",
+        "offer_url": "https://detail.1688.com/offer/628196518518.html",
+        "title": (family or {}).get("part_type", "automotive part"),
+        "supplier": {"id": "supplier-1", "name": "Test Supplier"},
+        "supplier_found": True,
+        "matched_part_numbers": [raw_part_number],
+        "match_type": "IDENTIFIER_OR_FAMILY_MATCH",
+        "retrieved_at": "2026-08-28T00:00:00Z",
+        "diagnostics": [],
+    }
+
+
 def test_policy_is_narrow_and_has_no_candidate_cap() -> None:
     policy = northway_mvp_policy()
 
@@ -62,7 +80,8 @@ def test_policy_is_narrow_and_has_no_candidate_cap() -> None:
         "vehicle_specific_cable",
     }
     assert policy["run_bounds"]["candidate_cap"] is None
-    assert policy["run_bounds"]["request_budget"]["minimum"] == len(ARCHETYPES)
+    assert policy["run_bounds"]["request_budget"]["minimum"] == 1
+    assert policy["run_bounds"]["max_1688_checks"]["default"] == 20
     assert "fog_light_bezel" in policy["archetypes"]
     assert "max_competitive_products" not in policy["default_thresholds"]
     assert policy["competition_rule"]["automatic_upper_bound"] is None
@@ -412,13 +431,18 @@ def test_runner_processes_every_discovered_listing_and_records_budget_exhaustion
         discovery_pages=1,
         request_budget=2,
         max_amazon_queries_per_family=3,
-        collectors={"discovery": discover, "amazon_search": search},
+        collectors={
+            "discovery": discover,
+            "amazon_search": search,
+            "1688_supplier_prefilter": supplier_result,
+        },
     )
 
     assert result["scan_manifest"]["candidate_cap"] is None
     assert result["discovery"]["listing_groups"] == 2
     assert len(result["reports"]) == 2
     assert result["request_budget"]["used"] == 2
+    assert result["provider_budgets"]["1688"]["used"] == 2
     assert any("REQUEST_BUDGET_EXHAUSTED" in report["evidence_gaps"] for report in result["reports"])
     assert len(result["ranking"]) == 2
 
@@ -471,3 +495,52 @@ def test_runner_scans_every_archetype_and_assigns_matching_family_type() -> None
     assert len(result["discovery"]["per_archetype"]) == len(ARCHETYPES)
     assert len(result["reports"]) == 1
     assert result["reports"][0]["archetype"] == "fog_light_bezel"
+
+
+def test_supplier_prefilter_rejects_without_spending_amazon_budget() -> None:
+    listing = candidate(
+        "25778388",
+        "Right Fog Light Bezel for 2007-2013 Chevrolet Silverado 25778388",
+    )
+    amazon_calls: list[str] = []
+
+    def discover(**_kwargs):
+        return {
+            "status": "SUCCESS",
+            "retrieved_at": "2026-08-28T00:00:00Z",
+            "stats": {"candidates_emitted": 1},
+            "candidates": [listing],
+            "diagnostics": [],
+        }
+
+    def no_supplier(raw_part_number: str, *, family: dict, **_kwargs):
+        return {
+            "provider": "TEST_1688",
+            "acquisition_status": "SUCCESS",
+            "query": raw_part_number,
+            "supplier_found": False,
+            "diagnostics": [{"code": "1688_NO_SUPPLIER_FOUND", "message": "fixture"}],
+        }
+
+    def search(query: str, **_kwargs):
+        amazon_calls.append(query)
+        return amazon_result(query, [])
+
+    result = run_northway_mvp(
+        serpapi_key="configured",
+        archetype="fog_light_bezel",
+        request_budget=20,
+        max_1688_checks=1,
+        collectors={
+            "discovery": discover,
+            "amazon_search": search,
+            "1688_supplier_prefilter": no_supplier,
+        },
+    )
+
+    report = result["reports"][0]
+    assert amazon_calls == []
+    assert report["stages"]["china_non_oem_supply"]["status"] == "REJECTED"
+    assert report["stages"]["amazon_family_competition"]["status"] == "NOT_RUN"
+    assert report["decision"] == "REJECTED"
+    assert result["request_budget"]["used"] == 1

@@ -67,7 +67,7 @@ AND 适配车型在美国的保有量 >= 本次运行显式阈值
 | eBay 近 365 天销量 | [eBay Product Research](https://www.ebay.com/help/selling/selling-tools/product-research?id=4853)（Terapeak）导出/规范化证据 | eBay 官方 Seller Hub 数据覆盖三年，能满足完整 365 天窗口 | 严格证据 API 已预留；导入器和真实样本待接入 |
 | 美国适配车辆保有量 | [TecAlliance TecDoc VIO](https://www.tecalliance.net/products?highlight=vio-data&solution=data-insights) | 同时覆盖车辆/适配语义与 VIO，避免再拼一个车型映射服务 | provider-neutral contract 已预留；商业开通和真实 adapter 待完成 |
 | VIO 备选 | [Experian Automotive VIO](https://www.experian.com/automotive/vehicles-in-operation-vio-data) | 美国 VIO 数据的替代来源 | 仅列为替换方案 |
-| 1688 供应商预筛 | 本地 `1688-cli`（首选）+ HioBuy（兼容） | 在 Amazon 前确认供应商存在，减少昂贵市场核验 | 只读适配待接入；不做询价、结算或下单 |
+| 1688 供应商预筛 | 本地 `1688-cli`（首选）+ HioBuy（兼容） | 在 Amazon 前确认供应商存在，减少昂贵市场核验 | 只读适配已接入；不做询价、结算或下单 |
 
 自动 MVP 默认只需要 SerpApi 一枚 Key。严格 Product Research/VIO 证据只在真正执行
 严格筛选时需要。MarketCheck 可选，不再阻塞自动 MVP；NY DMV/NHTSA 实验 adapter 也不
@@ -137,6 +137,17 @@ py -3.12 -m venv .venv
 ```
 
 这不会创建订单、支付、联系供应商、自动登录、处理 CAPTCHA、切换 VPN 或使用代理池。
+
+如果使用首选的本地 1688 CLI，需要单独安装并登录一次（Node 20+）：
+
+```powershell
+npm i -g 1688-cli
+1688 doctor --no-launch
+1688 login
+```
+
+Proteus 只调用 `search --max`，必要时读取一个 `offer` 详情；本项目不会调用询价、购物车、
+结算或下单命令。
 
 ## 启动前端
 

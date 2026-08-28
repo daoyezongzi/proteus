@@ -12,6 +12,12 @@ from typing import Any
 
 from proteus.normalization import normalize_part_number
 from proteus.providers.hiobuy import collect_1688_supply
+from proteus.providers.local_1688_cli import (
+    collect_1688_supplier,
+    is_1688_cli_available,
+    is_real_1688_url,
+    is_valid_1688_offer_id,
+)
 from proteus.providers.serpapi_amazon import collect_amazon_search
 from proteus.providers.serpapi_ebay_discovery import collect_ebay_sold_candidates
 
@@ -19,6 +25,7 @@ from proteus.providers.serpapi_ebay_discovery import collect_ebay_sold_candidate
 DISCOVERY_COLLECTOR = "discovery"
 AMAZON_SEARCH_COLLECTOR = "amazon_search"
 SUPPLY_COLLECTOR = "china_supply"
+SUPPLIER_PREFILTER_COLLECTOR = "1688_supplier_prefilter"
 
 
 ARCHETYPES: dict[str, dict[str, Any]] = {
@@ -313,14 +320,20 @@ def northway_mvp_policy() -> dict[str, Any]:
         "run_bounds": {
             "candidate_cap": None,
             "discovery_pages": {"minimum": 1, "maximum": 10, "default": 1},
-            "request_budget": {"minimum": len(ARCHETYPES), "maximum": 500, "default": 80},
+            "request_budget": {"minimum": 1, "maximum": 500, "default": 20},
+            "max_1688_checks": {"minimum": 0, "maximum": 500, "default": 20},
+        },
+        "archetype_selection": {
+            "required": True,
+            "selection_mode": "one_leaf_category",
+            "description": "Each run selects exactly one Northway leaf archetype.",
         },
         "qualification_boundary": (
-            "One run scans every Northway archetype and ranks bounded-scan review candidates. "
-            "A market shortlist has resolved "
-            "family identity, observed demand and complete Amazon family evidence; observed "
-            "competition count is a ranking and manual-review signal, not an automatic upper "
-            "bound. It is not a purchase instruction. Missing China supply evidence stays visible."
+            "Each run scans one selected Northway archetype. After local scope, family and "
+            "demand filters, a shallow read-only 1688 supplier prefilter runs before Amazon. "
+            "Only a family with a valid 1688 offer ID, real 1688 URL, supplier identity and "
+            "matching title proceeds to Amazon. Observed competition is a ranking and manual-"
+            "review signal, not an automatic upper bound. It is not a purchase instruction."
         ),
     }
 
@@ -1063,9 +1076,12 @@ def _compact_supply(value: Any) -> dict[str, Any] | None:
             "acquisition_status",
             "source_method",
             "query",
+            "title",
+            "offer_id",
             "matched_part_numbers",
             "match_type",
             "offer_url",
+            "supplier_found",
             "purchasable",
             "price_cny",
             "moq",
@@ -1172,6 +1188,7 @@ def compact_northway_result(result: Mapping[str, Any]) -> dict[str, Any]:
             "category_profiles",
             "min_family_price_usd",
             "min_observed_ebay_demand",
+            "max_1688_checks",
             "max_amazon_queries_per_family",
             "competition_upper_bound",
         ),
@@ -1187,6 +1204,7 @@ def compact_northway_result(result: Mapping[str, Any]) -> dict[str, Any]:
             "pages_requested",
             "pages_attempted",
             "pages_completed",
+            "selected_archetype",
         ),
     )
     discovery = result.get("discovery")
@@ -1219,6 +1237,12 @@ def compact_northway_result(result: Mapping[str, Any]) -> dict[str, Any]:
         for item in (discovery.get("per_archetype", []) if isinstance(discovery, Mapping) else [])
         if isinstance(item, Mapping)
     ]
+    provider_budgets = result.get("provider_budgets")
+    compact_provider_budgets = {
+        provider: _compact_fields(value, ("limit", "used", "remaining"))
+        for provider, value in provider_budgets.items()
+        if isinstance(value, Mapping)
+    } if isinstance(provider_budgets, Mapping) else {}
     return {
         "schema_version": result.get("schema_version", "0.2.4"),
         "export_format": "compact_v1",
@@ -1228,6 +1252,11 @@ def compact_northway_result(result: Mapping[str, Any]) -> dict[str, Any]:
         "policy": policy,
         "scan_manifest": manifest,
         "request_budget": _compact_fields(result.get("request_budget"), ("limit", "used", "remaining")),
+        "provider_budgets": compact_provider_budgets,
+        "supply_filter": _compact_fields(
+            result.get("supply_filter"),
+            ("provider", "checked", "supplier_found", "no_supplier", "review_required", "not_run"),
+        ),
         "discovery": compact_discovery,
         "summary": _compact_fields(
             result.get("summary"),
@@ -1288,16 +1317,46 @@ def _supply_stage(outcome: Mapping[str, Any] | None, configured: bool) -> dict[s
         return _stage(
             "REVIEW_REQUIRED", None, None, None, "China supply verification was not completed."
         )
-    if outcome.get("acquisition_status") == "SUCCESS" and outcome.get("purchasable") is True:
+
+    supplier = outcome.get("supplier")
+    supplier_present = bool(
+        (isinstance(supplier, Mapping) and any(value for value in supplier.values()))
+        or (isinstance(supplier, str) and supplier.strip())
+    )
+    preview = outcome.get("order_preview")
+    offer_id = outcome.get("offer_id") or outcome.get("product_id")
+    if not offer_id and isinstance(preview, Mapping):
+        offer_id = preview.get("offer_id")
+    offer_url = outcome.get("offer_url") or outcome.get("url")
+    valid_evidence = bool(
+        supplier_present
+        and is_valid_1688_offer_id(offer_id)
+        and is_real_1688_url(offer_url)
+    )
+    if outcome.get("acquisition_status") == "SUCCESS" and (
+        outcome.get("supplier_found") is True or valid_evidence
+    ) and valid_evidence:
         return _stage(
-            "PASSED", True, "EQ", True, "A bound 1688 offer and read-only order preview are available."
+            "PASSED",
+            True,
+            "EQ",
+            True,
+            "A valid family-matching 1688 offer, real offer URL and supplier identity are available.",
+        )
+    if outcome.get("acquisition_status") in {"SUCCESS", "ZERO_RESULTS"}:
+        return _stage(
+            "REJECTED",
+            False,
+            "EQ",
+            True,
+            "No valid family-matching 1688 offer with a supplier identity was found.",
         )
     return _stage(
         "REVIEW_REQUIRED",
-        outcome.get("purchasable"),
+        outcome.get("supplier_found"),
         "EQ",
         True,
-        "The exact family identifier did not produce complete non-OEM supply evidence.",
+        "1688 supplier evidence needs review because the provider or parser did not complete.",
     )
 
 
@@ -1311,7 +1370,7 @@ def _report_decision(stages: Mapping[str, Mapping[str, Any]]) -> str:
     if market_passed and price_not_failed and supply_passed:
         return "OPPORTUNITY_CANDIDATE"
     if market_passed and price_not_failed:
-        return "MARKET_SHORTLIST_CANDIDATE"
+        return "REVIEW_REQUIRED"
     return "REVIEW_REQUIRED"
 
 
@@ -1348,7 +1407,8 @@ def run_northway_mvp(
     archetypes: Sequence[str] | None = None,
     discovery_pages: int = 1,
     ebay_category_id: str = "6028",
-    request_budget: int = 80,
+    request_budget: int = 20,
+    max_1688_checks: int = 20,
     max_amazon_queries_per_family: int = 3,
     max_competitive_products: int | None = None,
     min_family_price_usd: float = 20.0,
@@ -1357,18 +1417,21 @@ def run_northway_mvp(
     receiver: Mapping[str, Any] | None = None,
     max_supply_moq: int = 10,
     collectors: Mapping[str, Callable[..., Mapping[str, Any]]] | None = None,
+    progress_callback: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     selected_archetypes = _selected_archetypes(archetype, archetypes)
     if not isinstance(discovery_pages, int) or isinstance(discovery_pages, bool) or not 1 <= discovery_pages <= 10:
         raise ValueError("discovery_pages must be between 1 and 10")
-    if not isinstance(request_budget, int) or isinstance(request_budget, bool) or not 2 <= request_budget <= 500:
-        raise ValueError("request_budget must be between 2 and 500")
+    if not isinstance(request_budget, int) or isinstance(request_budget, bool) or not 1 <= request_budget <= 500:
+        raise ValueError("request_budget must be between 1 and 500")
     discovery_request_count = len(selected_archetypes) * discovery_pages
     if request_budget < discovery_request_count:
         raise ValueError(
             "request_budget must cover every selected archetype discovery page "
             f"({discovery_request_count} requests required)"
         )
+    if not isinstance(max_1688_checks, int) or isinstance(max_1688_checks, bool) or not 0 <= max_1688_checks <= 500:
+        raise ValueError("max_1688_checks must be between 0 and 500")
     if not 1 <= max_amazon_queries_per_family <= 5:
         raise ValueError("max_amazon_queries_per_family must be between 1 and 5")
     if min_family_price_usd < 0 or min_observed_ebay_demand < 0:
@@ -1380,6 +1443,7 @@ def run_northway_mvp(
         DISCOVERY_COLLECTOR: collect_ebay_sold_candidates,
         AMAZON_SEARCH_COLLECTOR: collect_amazon_search,
         SUPPLY_COLLECTOR: collect_1688_supply,
+        SUPPLIER_PREFILTER_COLLECTOR: collect_1688_supplier,
     }
     if collectors:
         active.update(collectors)
@@ -1387,6 +1451,39 @@ def run_northway_mvp(
         raise ValueError("discovery and amazon_search collectors must be callable")
     secret = serpapi_key if isinstance(serpapi_key, str) else ""
     budget_used = 0
+    supply_checks_used = 0
+
+    def emit_progress(
+        *,
+        phase: str,
+        current: int,
+        total: int,
+        last_query: str | None = None,
+        provider: str | None = None,
+    ) -> None:
+        if progress_callback is None:
+            return
+        payload = {
+            "phase": phase,
+            "current": max(0, current),
+            "total": max(0, total),
+            "last_query": last_query,
+            "provider": provider,
+            "budget_used": budget_used,
+            "updated_at": _utc_now(),
+        }
+        try:
+            progress_callback(payload)
+        except Exception:
+            # Progress is an operator aid and must never make a provider run fail.
+            return
+
+    emit_progress(
+        phase="discovery",
+        current=0,
+        total=discovery_request_count,
+        provider="serpapi-ebay-discovery",
+    )
     discovery_diagnostics: list[dict[str, Any]] = []
     discovery_stats = Counter()
     raw_candidates: list[Mapping[str, Any]] = []
@@ -1405,6 +1502,13 @@ def run_northway_mvp(
             type_pages_attempted += 1
             pages_attempted += 1
             budget_used += 1
+            emit_progress(
+                phase="discovery",
+                current=pages_attempted,
+                total=discovery_request_count,
+                last_query=profile["discovery_keyword"],
+                provider="serpapi-ebay-discovery",
+            )
             outcome = active[DISCOVERY_COLLECTOR](
                 api_key=secret,
                 category_id=ebay_category_id,
@@ -1413,6 +1517,13 @@ def run_northway_mvp(
                 page=page,
             )
             status = str(outcome.get("status") or "PARSER_FAILED")
+            emit_progress(
+                phase="discovery",
+                current=pages_attempted,
+                total=discovery_request_count,
+                last_query=profile["discovery_keyword"],
+                provider="serpapi-ebay-discovery",
+            )
             for item in outcome.get("diagnostics", []):
                 if isinstance(item, Mapping):
                     discovery_diagnostics.append(
@@ -1520,7 +1631,56 @@ def run_northway_mvp(
             existing["candidates"].extend(group["candidates"])
 
     reports: list[dict[str, Any]] = []
-    supply_configured = bool(hiobuy_key and receiver)
+    emit_progress(
+        phase="family_resolution",
+        current=len(deduped),
+        total=len(deduped),
+        provider=None,
+    )
+
+    explicit_prefilter = bool(collectors and SUPPLIER_PREFILTER_COLLECTOR in collectors)
+    explicit_legacy_supply = bool(collectors and SUPPLY_COLLECTOR in collectors)
+    local_cli_available = is_1688_cli_available()
+    if explicit_prefilter:
+        supplier_mode = "injected_prefilter"
+    elif explicit_legacy_supply:
+        supplier_mode = "injected_legacy_supply"
+    elif local_cli_available:
+        supplier_mode = "local_1688_cli"
+    elif hiobuy_key and receiver:
+        supplier_mode = "hiobuy_compatibility"
+    else:
+        supplier_mode = "local_1688_cli"
+
+    def call_supplier(
+        primary: str,
+        family: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        if supplier_mode == "injected_prefilter":
+            return active[SUPPLIER_PREFILTER_COLLECTOR](
+                primary,
+                family=family,
+                max_offers=5,
+            )
+        if supplier_mode in {"injected_legacy_supply", "hiobuy_compatibility"}:
+            return active[SUPPLY_COLLECTOR](
+                primary,
+                api_key=hiobuy_key or "",
+                receiver=receiver,
+                max_acceptable_moq=max_supply_moq,
+            )
+        return active[SUPPLIER_PREFILTER_COLLECTOR](
+            primary,
+            family=family,
+            max_offers=5,
+        )
+
+    supplier_provider_label = {
+        "injected_prefilter": "1688_supplier_prefilter",
+        "injected_legacy_supply": "china_supply",
+        "hiobuy_compatibility": "HIOBUY_PUBLIC_REST",
+        "local_1688_cli": "LOCAL_1688_CLI",
+    }[supplier_mode]
     for group in deduped:
         resolution = group["resolution"]
         family = resolution.get("family")
@@ -1563,11 +1723,15 @@ def run_northway_mvp(
             "observations": [],
             "query_evidence": [],
         }
+        supply_outcome: Mapping[str, Any] | None = None
         if stages["scope"]["status"] == "REJECTED":
             stages["amazon_family_competition"] = _stage(
                 "NOT_RUN", None, None, None, "Out-of-scope product was not searched on Amazon."
             )
             stages["family_price_floor"] = _stage("NOT_RUN", None, None, None, "Not evaluated.")
+            stages["china_non_oem_supply"] = _stage(
+                "NOT_RUN", None, None, None, "Out-of-scope product was not checked on 1688."
+            )
             failure_reasons.append("OUT_OF_SCOPE")
         elif not isinstance(family, Mapping):
             stages["amazon_family_competition"] = _stage(
@@ -1576,80 +1740,120 @@ def run_northway_mvp(
             stages["family_price_floor"] = _stage(
                 "REVIEW_REQUIRED", None, "GT", float(min_family_price_usd), "Family identity is unresolved."
             )
+            stages["china_non_oem_supply"] = _stage(
+                "NOT_RUN", None, None, None, "Family identity is unresolved; 1688 was not checked."
+            )
             evidence_gaps.append("PRODUCT_FAMILY_UNRESOLVED")
+        elif stages["identity"]["status"] != "PASSED" or stages["demand"]["status"] != "PASSED":
+            stages["amazon_family_competition"] = _stage(
+                "NOT_RUN", None, None, None, "Local family or demand filter did not pass; Amazon was not searched."
+            )
+            stages["family_price_floor"] = _stage("NOT_RUN", None, None, None, "Not evaluated.")
+            stages["china_non_oem_supply"] = _stage(
+                "NOT_RUN", None, None, None, "Local family or demand filter did not pass; 1688 was not checked."
+            )
+            if stages["demand"]["status"] != "PASSED":
+                evidence_gaps.append("EBAY_DEMAND_FILTER_NOT_PASSED")
         else:
-            query_pack = build_amazon_query_pack(
-                family, max_queries=max_amazon_queries_per_family
-            )
-            query_results: list[Mapping[str, Any]] = []
-            for query in query_pack:
-                if budget_used >= request_budget:
-                    query_results.append(
-                        {
-                            "query": query["query"],
-                            "acquisition_status": "REQUEST_BUDGET_EXHAUSTED",
-                            "result_page_complete": False,
-                            "products": [],
-                            "diagnostics": [
-                                {
-                                    "code": "REQUEST_BUDGET_EXHAUSTED",
-                                    "message": "Run request budget was exhausted before this query.",
-                                }
-                            ],
-                        }
-                    )
-                    evidence_gaps.append("REQUEST_BUDGET_EXHAUSTED")
-                    continue
-                budget_used += 1
-                outcome = active[AMAZON_SEARCH_COLLECTOR](
-                    query["query"], api_key=secret
+            primary = _clean_text(family.get("identifiers", [{}])[0].get("raw"))
+            if not primary:
+                stages["china_non_oem_supply"] = _stage(
+                    "REVIEW_REQUIRED", None, None, None, "No primary family identifier is available for 1688."
                 )
-                query_results.append(outcome)
-                provider_attempts.append(
-                    {
-                        "provider": outcome.get("provider", "amazon_search"),
-                        "query": query["query"],
-                        "status": outcome.get("acquisition_status"),
-                    }
+                evidence_gaps.append("PRODUCT_FAMILY_IDENTIFIER_MISSING")
+            elif supply_checks_used >= max_1688_checks:
+                stages["china_non_oem_supply"] = _stage(
+                    "REVIEW_REQUIRED",
+                    None,
+                    None,
+                    None,
+                    "The separate 1688 supplier-check budget was exhausted before this family.",
                 )
-            competition = aggregate_amazon_family_results(
-                family,
-                query_results,
-                max_competitive_products=max_competitive_products,
-                min_family_price_usd=float(min_family_price_usd),
-            )
-            stages["amazon_family_competition"] = competition["competition_stage"]
-            stages["family_price_floor"] = competition["price_stage"]
-            if not competition["competition_complete"]:
-                evidence_gaps.append("AMAZON_FAMILY_SEARCH_INCOMPLETE")
-
-        supply_outcome: Mapping[str, Any] | None = None
-        market_rejected = any(
-            stage.get("status") == "REJECTED"
-            for name, stage in stages.items()
-            if name != "scope"
-        )
-        if supply_configured and isinstance(family, Mapping) and not market_rejected:
-            if budget_used >= request_budget:
-                evidence_gaps.append("REQUEST_BUDGET_EXHAUSTED")
+                evidence_gaps.append("1688_CHECK_BUDGET_EXHAUSTED")
             else:
-                primary = family["identifiers"][0]["raw"]
-                budget_used += 1
-                supply_outcome = active[SUPPLY_COLLECTOR](
-                    primary,
-                    api_key=hiobuy_key or "",
-                    receiver=receiver,
-                    max_acceptable_moq=max_supply_moq,
+                supply_checks_used += 1
+                emit_progress(
+                    phase="1688_supplier",
+                    current=supply_checks_used,
+                    total=min(len(deduped), max_1688_checks),
+                    last_query=primary,
+                    provider=supplier_provider_label,
                 )
+                supply_outcome = call_supplier(primary, family)
                 provider_attempts.append(
                     {
-                        "provider": supply_outcome.get("provider", "china_supply"),
-                        "query": primary,
+                        "provider": supply_outcome.get("provider", supplier_provider_label),
+                        "query": supply_outcome.get("query", primary),
                         "status": supply_outcome.get("acquisition_status"),
                     }
                 )
-        supply_stage = _supply_stage(supply_outcome, supply_configured)
-        stages["china_non_oem_supply"] = supply_stage
+                stages["china_non_oem_supply"] = _supply_stage(supply_outcome, True)
+                emit_progress(
+                    phase="1688_supplier",
+                    current=supply_checks_used,
+                    total=min(len(deduped), max_1688_checks),
+                    last_query=supply_outcome.get("query", primary),
+                    provider=supply_outcome.get("provider", supplier_provider_label),
+                )
+
+            if stages["china_non_oem_supply"]["status"] == "PASSED":
+                query_pack = build_amazon_query_pack(
+                    family, max_queries=max_amazon_queries_per_family
+                )
+                query_results: list[Mapping[str, Any]] = []
+                for query_index, query in enumerate(query_pack, start=1):
+                    emit_progress(
+                        phase="amazon",
+                        current=query_index,
+                        total=len(query_pack),
+                        last_query=query["query"],
+                        provider="serpapi-amazon",
+                    )
+                    if budget_used >= request_budget:
+                        query_results.append(
+                            {
+                                "query": query["query"],
+                                "acquisition_status": "REQUEST_BUDGET_EXHAUSTED",
+                                "result_page_complete": False,
+                                "products": [],
+                                "diagnostics": [
+                                    {
+                                        "code": "REQUEST_BUDGET_EXHAUSTED",
+                                        "message": "Run request budget was exhausted before this query.",
+                                    }
+                                ],
+                            }
+                        )
+                        evidence_gaps.append("REQUEST_BUDGET_EXHAUSTED")
+                        continue
+                    budget_used += 1
+                    outcome = active[AMAZON_SEARCH_COLLECTOR](
+                        query["query"], api_key=secret
+                    )
+                    query_results.append(outcome)
+                    provider_attempts.append(
+                        {
+                            "provider": outcome.get("provider", "amazon_search"),
+                            "query": query["query"],
+                            "status": outcome.get("acquisition_status"),
+                        }
+                    )
+                competition = aggregate_amazon_family_results(
+                    family,
+                    query_results,
+                    max_competitive_products=max_competitive_products,
+                    min_family_price_usd=float(min_family_price_usd),
+                )
+                stages["amazon_family_competition"] = competition["competition_stage"]
+                stages["family_price_floor"] = competition["price_stage"]
+                if not competition["competition_complete"]:
+                    evidence_gaps.append("AMAZON_FAMILY_SEARCH_INCOMPLETE")
+            else:
+                stages["amazon_family_competition"] = _stage(
+                    "NOT_RUN", None, None, None, "1688 supplier prefilter did not pass; Amazon was not searched."
+                )
+                stages["family_price_floor"] = _stage("NOT_RUN", None, None, None, "Not evaluated.")
+        supply_stage = stages["china_non_oem_supply"]
         if supply_stage["status"] != "PASSED":
             evidence_gaps.append("CHINA_NON_OEM_SUPPLY_UNVERIFIED")
         for name, stage in stages.items():
@@ -1683,15 +1887,39 @@ def run_northway_mvp(
                 "provider_attempts": provider_attempts,
             }
         )
+        emit_progress(
+            phase="family_screening",
+            current=len(reports),
+            total=len(deduped),
+            provider=supplier_provider_label,
+        )
 
     reports.sort(key=_rank_key)
     for rank, report in enumerate(reports, start=1):
         report["rank"] = rank
     counts = Counter(report["decision"] for report in reports)
+    supply_statuses = Counter(
+        report.get("stages", {}).get("china_non_oem_supply", {}).get("status")
+        for report in reports
+    )
+    supply_filter = {
+        "provider": supplier_provider_label,
+        "checked": supply_checks_used,
+        "supplier_found": supply_statuses["PASSED"],
+        "no_supplier": supply_statuses["REJECTED"],
+        "review_required": supply_statuses["REVIEW_REQUIRED"],
+        "not_run": supply_statuses["NOT_RUN"],
+    }
     generated_at = _utc_now()
     run_id = hashlib.sha256(
         f"{','.join(selected_archetypes)}:{generated_at}:{len(reports)}".encode("utf-8")
     ).hexdigest()[:16]
+    emit_progress(
+        phase="completed",
+        current=len(reports),
+        total=len(deduped),
+        provider=None,
+    )
     return {
         "schema_version": "0.2.4",
         "profile": "northway-product-family-mvp",
@@ -1705,6 +1933,7 @@ def run_northway_mvp(
             "max_competitive_products": max_competitive_products,
             "min_family_price_usd": float(min_family_price_usd),
             "min_observed_ebay_demand": min_observed_ebay_demand,
+            "max_1688_checks": max_1688_checks,
             "max_amazon_queries_per_family": max_amazon_queries_per_family,
             "competition_upper_bound": None,
         },
@@ -1724,11 +1953,26 @@ def run_northway_mvp(
             "pages_attempted": pages_attempted,
             "pages_completed": pages_completed,
             "candidate_cap": None,
+            "selected_archetype": selected_archetypes[0]
+            if len(selected_archetypes) == 1
+            else None,
         },
         "request_budget": {
             "limit": request_budget,
             "used": budget_used,
             "remaining": max(0, request_budget - budget_used),
+        },
+        "provider_budgets": {
+            "serpapi": {
+                "limit": request_budget,
+                "used": budget_used,
+                "remaining": max(0, request_budget - budget_used),
+            },
+            "1688": {
+                "limit": max_1688_checks,
+                "used": supply_checks_used,
+                "remaining": max(0, max_1688_checks - supply_checks_used),
+            },
         },
         "discovery": {
             "status": discovery_status,
@@ -1749,6 +1993,7 @@ def run_northway_mvp(
             "review_required": counts["REVIEW_REQUIRED"],
             "rejected": counts["REJECTED"],
         },
+        "supply_filter": supply_filter,
         "ranking": [report["candidate_id"] for report in reports],
         "reports": reports,
     }
@@ -1759,6 +2004,7 @@ __all__ = [
     "ARCHETYPES",
     "DISCOVERY_COLLECTOR",
     "SUPPLY_COLLECTOR",
+    "SUPPLIER_PREFILTER_COLLECTOR",
     "aggregate_amazon_family_results",
     "build_amazon_query_pack",
     "classify_scope",

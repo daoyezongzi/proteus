@@ -1,22 +1,24 @@
 # Proteus Current Work
 
-## 2026-08-28 配额优先分类扫描与 1688 供应商过滤（已批准，正在实施）
+## 2026-08-28 配额优先分类扫描与 1688 供应商过滤（已批准，已实现）
 
-- [ ] 恢复 Northway 公开入口的单 `archetype` 选择；两个 profile 只作为前端分组，
+- [x] 恢复 Northway 公开入口的单 `archetype` 选择；两个 profile 只作为前端分组，
   单次运行只消耗一个叶子类型的发现预算。
-- [ ] 将 Northway 漏斗改为 eBay 发现 → 本地范围/家族/需求 → 1688 轻量供应商预筛
+- [x] 将 Northway 漏斗改为 eBay 发现 → 本地范围/家族/需求 → 1688 轻量供应商预筛
   → Amazon；完整查询确认没有供应商时跳过 Amazon。
-- [ ] 接入本地 `1688-cli` 只读 provider：持久化登录态、轻量 search、必要时单个 offer
+- [x] 接入本地 `1688-cli` 只读 provider：持久化登录态、轻量 search、必要时单个 offer
   详情；不做 deeppro、询价、购物车、结算或下单。
-- [ ] 将 `max_1688_checks` 与 SerpApi `request_budget` 分开统计，并在结果中记录
+- [x] 将 `max_1688_checks` 与 SerpApi `request_budget` 分开统计，并在结果中记录
   provider、阶段、当前产品族、完成数、供应商通过数、预算和更新时间。
-- [ ] 让“有匹配 offer + 真实链接 + 非空供应商 + 产品族匹配”成为供应商阶段通过条件；
+- [x] 让“有匹配 offer + 真实链接 + 非空供应商 + 产品族匹配”成为供应商阶段通过条件；
   无供应商、provider 失败和未查询必须分成 REJECTED / REVIEW_REQUIRED / NOT_RUN。
-- [ ] 前端恢复单分类选择，新增 1688 供应商阶段与“有供应商 / 待核验 / 无供应商”筛选，
+- [x] 前端恢复单分类选择，新增 1688 供应商阶段与“有供应商 / 待核验 / 无供应商”筛选，
   并显示可解释的分阶段进度。
 
-本节完成后，下面关于“移除单 archetype、九类统一扫描和供货仅人工复核”的条目只保留
-为已 supersede 的历史基线，不再代表本次默认产品行为。
+本节已落地。由于本机当前未发现 `1688` 可执行文件，真实运行会将供应商阶段保留为
+`REVIEW_REQUIRED` 并跳过 Amazon；安装并登录 1688 CLI 后才会执行真实供应商预筛。
+下面关于“移除单 archetype、九类统一扫描和供货仅人工复核”的条目只保留为已 supersede
+的历史基线，不再代表本次默认产品行为。
 
 ## V0.2.4 Northway product-family MVP — initial screening runnable
 
