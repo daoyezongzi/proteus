@@ -57,6 +57,13 @@
 - [x] Rebuild the operator frontend around the merged all-archetype contract:
   expose the nine-type scope, per-archetype scan coverage and product-family
   evidence chain while keeping the existing async run, filters and JSON export.
+- [ ] Rework Amazon family-query budget allocation so the default run does not
+  exhaust its budget on early archetypes and leave later merged types entirely
+  unsearched; reserve budget per resolved family or expose an explicit estimate.
+- [ ] Decide how paginated Amazon fitment queries should reach a bounded
+  complete state; current `has_next_page=true` correctly produces
+  `REVIEW_REQUIRED`, but it prevents any family from passing when descriptive
+  queries remain incomplete.
 - [x] Keep rejected candidates out of the default result view while preserving
   them under a dedicated status category and in the complete JSON export.
 - [x] Add deterministic priority sorting with scope, identity and family

@@ -20,6 +20,35 @@
   downloaded the complete JSON export. JavaScript syntax, HTTP homepage,
   `git diff --check` and all 325 offline tests passed.
 
+## 2026-08-28 — Live run diagnosis: Amazon evidence budget and pagination
+
+- Inspected the exported run `e2cf5192-fda9-4ee6-a42e-aa0906247fe6.json`.
+  The API run completed locally from 13:06:52 to 13:17:39; the apparent
+  endless scan was not a backend process crash. The JSON export is present
+  in the user's Downloads directory.
+- The run emitted 80 candidate reports, resolved 54 product families and used
+  the full `80/80` request budget. Among the 54 resolved families, Amazon
+  competition was `PASSED=0`, `REVIEW_REQUIRED=44` and `REJECTED=10`.
+  The 10 rejections had an observed lower bound of 4, 5, 7, 11, 12, 13, 14,
+  26, 36 or 39 interchangeable product clusters against a configured limit
+  of 3; they are decisive lower-bound rejections rather than empty results.
+- The 129 recorded Amazon query slots contained 20 `SUCCESS`, 48
+  `PARTIAL_SUCCESS`, 2 `PARSER_FAILED`, 1 `HTTP_ERROR` and 58
+  `REQUEST_BUDGET_EXHAUSTED`. Every partial query had `has_next_page=true`,
+  so all 54 resolved families had incomplete competition evidence and none
+  could prove low competition. The default budget covers the nine discovery
+  requests but not the 129 family queries; sequential allocation starved
+  later cable archetypes, which received no executed Amazon query.
+- The Amazon family classifier recorded 209 `INTERCHANGEABLE`, 468
+  `REVIEW_REQUIRED`, 144 `PACKAGE_MISMATCH`, 21 left/right counterpart and
+  811 irrelevant observations. The large review/irrelevant share reflects
+  conservative title evidence: part-type matches without an exact identifier
+  or complete make/model fitment are not counted as interchangeable. This is
+  separate from the primary run-level blocker, which is incomplete evidence.
+- Follow-up priority: make family-query budget allocation candidate-aware,
+  continue or explicitly bound paginated fitment queries, and surface budget
+  exhaustion separately from Amazon competition failure in the result UI.
+
 ## 2026-08-28 — All-archetype scan and status-filtered review surface
 
 - Removed the public single-part-type input. Every Northway V0.2.4 run now
