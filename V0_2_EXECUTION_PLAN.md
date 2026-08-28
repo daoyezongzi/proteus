@@ -5,6 +5,89 @@
 > 上位企划：[proteus.md](proteus.md)
 > V0.1 基线：[V0_1_SCOPE_CONTRACT.md](V0_1_SCOPE_CONTRACT.md)
 
+## 0. 2026-08-28 配额优先的分类扫描与 1688 供应商前置过滤（已批准）
+
+本节是本次改造的执行目标，优先级高于后文仍描述“九类一起扫描”的旧基线。
+核心约束是当前没有可复用的本地候选数据库，SerpApi 配额又很少，因此不能把全量
+九类发现当成一次运行的默认范围。每次公开运行只选择一个末级零件类型；两个
+`category_profile` 只用于界面分组和策略说明，不是实际扫描单位。
+
+### 0A. 单分类运行契约
+
+公开 Northway 请求必须显式携带一个 `archetype`。允许值是当前九个叶子类型：
+
+```text
+fog_light_bezel
+tow_hook_cover
+bumper_reflector
+headlight_washer_cover
+lower_air_deflector
+hood_latch_release_cable
+accelerator_cable
+door_handle_bowden_cable
+transmission_shift_control_cable
+```
+
+单分类运行的发现请求最低预算为 `discovery_pages`，不再强制预留九类发现请求。
+候选仍不设产出数量上限；页数、SerpApi 预算和 provider 自身限制仍然是边界。
+现有产品家族、左右件/套装、Amazon 竞争不设自动上限、精简/完整 JSON 契约继续保留。
+
+### 0B. 供应商前置过滤契约
+
+为节省 SerpApi，Northway 的默认漏斗改为：
+
+```text
+单分类 eBay 发现
+→ 本地范围 / 产品家族 / 需求过滤
+→ 1688 轻量供应商预筛
+→ 只有供应商预筛通过的家族才进入 Amazon
+→ Amazon 产品族竞争与价格核验
+→ 最终候选排序
+```
+
+1688 供应商预筛通过的最低证据是：有效 offer ID、真实 1688 商品链接、非空供应商
+名称，以及与当前产品族基本匹配的商品标题。供应商名称本身不等于库存、MOQ、利润
+或可采购结论；详情和采购可行性继续作为更强的后续证据层。
+
+供应商阶段必须区分：
+
+| 状态 | 语义 | 是否继续 Amazon |
+| --- | --- | --- |
+| `PASSED` / `SUPPLIER_FOUND` | 查询成功，存在匹配 offer 和明确供应商 | 是 |
+| `REJECTED` / `NO_SUPPLIER_FOUND` | 查询正常完成，但没有符合条件的供应商 | 否 |
+| `REVIEW_REQUIRED` | 未登录、风控、超时、解析失败或匹配不足 | 否，保留待复核 |
+
+`REVIEW_REQUIRED` 不能被解释成“没有供应商”。没有供应商的结果保留在完整 JSON 和
+独立结果筛选中，但不进入默认的最终候选队列。
+
+### 0C. 1688 采集和配额边界
+
+首选本地 `1688-cli` 只读适配器；现有 HioBuy 继续作为兼容 provider。两者都不能把
+浏览器凭证带入前端，也不能在本次改造中触发购物车、询价、结算或下单。
+
+- 首轮只做轻量关键词搜索，优先使用持久化登录态和 warm daemon；不启用 `--deeppro`。
+- 一个产品族找到合格供应商后立即停止该族的后续 1688 查询。
+- 搜索结果没有供应商时，最多补查一个排名靠前的 offer 详情。
+- 同一 1688 profile 保持串行和节流，不用并发进程撞击同一个账号。
+- `request_budget` 只统计 eBay/Amazon 的 SerpApi 请求；1688 使用独立的
+  `max_1688_checks` 和独立的运行计数。
+- 1688 供应商筛选完成一个产品族后即可把通过项排入 Amazon 队列，前端持续显示阶段、
+  当前产品族、完成数、供应商通过数和待复核数。
+
+1688 只补充中国供应侧证据，不能替代 eBay 需求或 Amazon 竞争证据；它不是当前没有
+本地数据库问题的完整解决方案，而是减少昂贵 Amazon 请求的前置条件。
+
+### 0D. 前端执行契约
+
+操作台恢复九个末级类型的单选入口，按两个 profile 分组显示。配置区明确显示所选
+类型、最低发现请求数、SerpApi 剩余预算和 1688 独立检查上限。结果页新增“1688
+供应商”阶段和“有供应商 / 待核验 / 无供应商”筛选；默认最终候选只显示供应商阶段
+通过的记录，其他状态仍可展开查看。
+
+运行状态不得只显示“扫描中”，至少要返回并展示 `phase`、`current`、`total`、
+`last_query`、`provider`、`budget_used` 和 `updated_at`。失败、零结果、未运行和
+待复核必须使用不同状态和文案。
+
 ## 0. 2026-08-28 权威执行边界
 
 本节覆盖后文以“精确 OEM 竞争数”为主要产品身份口径的旧描述。V0.2.3 自动 MVP、
@@ -119,13 +202,13 @@ OEM 原厂件价格不能掩盖廉价非原厂替代品；seller offers 不能�
 
 ### 0E. 采集、排序和导出语义
 
-- 一次公开初筛运行固定覆盖两个 profile 下的全部九个 archetype；用户不先选择零件类型，
-  每类分别保存实际关键词、页数、状态和统计，随后统一去重与排序；
+- 一次公开初筛运行只覆盖用户选择的一个 archetype；两个 profile 下的九个叶子类型
+  仍由策略接口下发并在前端分组展示；
 - 取消候选产出的 `max_candidates` 截断：处理本次显式扫描页范围内发现的全部去重候选；
 - 保留 `discovery_pages`、provider rate limit、预算和可恢复游标，不能把“不限候选”
   解释成无界扫描整个类目；
-- `PARTIAL_SUCCESS`、缺字段或 provider 暂时失败时继续采集其他独立证据；只有明确范围
-  淘汰、身份冲突或已有确定性业务 gate 失败时才跳过昂贵后续步骤；
+- `PARTIAL_SUCCESS`、缺字段或 provider 暂时失败时保留待复核状态；只有明确范围淘汰、
+  身份冲突、完整 1688 查询确认无供应商，或已有确定性业务 gate 失败时才跳过昂贵后续步骤；
 - 页面先排没有明确失败的候选，再按通过项降序、缺失证据升序、平替产品数升序排序；
   产品范围、家族身份和家族竞争是排名硬前提，不能让关键证据缺失的 `4/5` 假机会置顶；
 - 页面默认不展示明确淘汰项，通过状态分类可以单独查看；这只是展示过滤，完整结果仍保留；
@@ -138,21 +221,19 @@ OEM 原厂件价格不能掩盖廉价非原厂替代品；seller offers 不能�
 Phase 1  versioned Northway gold/negative fixtures and category profiles
 Phase 2  sellable product-family resolver and relation graph
 Phase 3  family query pack and Amazon substitute-product aggregation
-Phase 4  family-bound eBay demand and China non-OEM supply verification
-Phase 5  full-candidate JSON export, ranking and operator UI
-Phase 6  replay/live benchmark and threshold approval
+Phase 4  quota-first single-archetype orchestration and 1688 supplier prefilter
+Phase 5  full-candidate JSON export, progress state, ranking and operator UI
+Phase 6  replay/live benchmark, 1688 canary and threshold approval
 ```
 
 先用店铺参考集验证产品身份，不先扩大 provider、VIO 或年度销量集成。若左右件/套装、
 Replacement/Replaces 或通用负样本无法稳定区分，就停止进入 live 批量搜索并修复 identity
 层；provider 能运行、页面有候选或旧五道门通过都不能替代该验收。
 
-当前已实现独立 V0.2.4 初筛路径：范围分类、产品家族解析、Amazon query pack、平替
-聚合、价格/ASIN/offer 分离、排序和完整 JSON 导出均可运行；V0.2.3 旧路径继续保留为
-兼容接口。按照 2026-08-28 的 MVP 收敛决定，本版只要求 SerpApi，国内非原厂供货和
-利润显示为人工复核清单，不再为初筛引入第二套必需凭证。当前输出是待人工复核的市场
-shortlist，不是采购或上架结论。公开运行入口已经固定为九类统一扫描，并输出
-`per_archetype` 和 `discovery_queries` 供后续前端美化直接使用。
+当前代码已经具备独立 V0.2.4 初筛路径：范围分类、产品家族解析、Amazon query pack、
+平替聚合、价格/ASIN/offer 分离、排序和完整 JSON 导出均可运行；V0.2.3 旧路径继续
+保留为兼容接口。本次改造将公开入口收敛为单分类，并把 1688 供应商存在性作为 Amazon
+之前的配额优先过滤。最终输出仍是待人工复核的市场/供货候选，不是采购或上架结论。
 
 ## 0. 2026-08-27 V0.2.3 兼容执行历史
 

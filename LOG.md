@@ -1,5 +1,21 @@
 # Proteus Development Log
 
+## 2026-08-28 — Approved quota-first category scan and 1688 supplier prefilter
+
+- Confirmed the current project has no reusable local candidate database, so a local-first
+  filter cannot reduce first-time discovery calls. The public Northway run will therefore
+  select one of the nine leaf archetypes per run; the two broad profiles remain UI groups.
+- Approved the quota-first funnel: eBay discovery → local scope/family/demand filtering →
+  shallow 1688 supplier prefilter → Amazon only for supplier-qualified families.
+- Defined supplier qualification as a matching 1688 offer with a real offer ID and URL plus
+  a non-empty supplier name. Supplier presence is not inventory, MOQ, margin or purchase proof.
+- Separated SerpApi `request_budget` from `max_1688_checks`. Same-profile 1688 work stays
+  serialized and shallow; no deeppro, inquiry, cart, checkout or order action is in scope.
+- Approved frontend changes: single-category selection, explicit supplier-stage filters,
+  separate provider budgets and phase/current progress rather than an indefinite “scanning” label.
+- Documentation checkpoint is recorded before implementation; the existing all-archetype
+  behavior remains the code baseline until the next implementation commit.
+
 ## 2026-08-28 — Remove competition cap and add compact evidence export
 
 - Removed the public `max_competitive_products` request/UI field. Complete Amazon

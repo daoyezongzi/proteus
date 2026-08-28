@@ -1,30 +1,39 @@
 # Proteus V0.2.4
 
-Proteus 是按可售产品家族筛选低竞争汽车零件的本地操作台。当前 V0.2.4 MVP 以
-northwayautoparts 的车型专用小饰件和机械拉索为产品形态参考，只需要 SerpApi：
+> 当前执行版本：**单分类配额优先扫描 + 1688 供应商前置过滤**。旧的九类统一扫描
+> 仍保留在历史实现说明中，不是本次默认入口。
+
+Proteus 是按可售产品家族筛选低竞争汽车零件的本地操作台。当前 Northway MVP 以
+northwayautoparts 的车型专用小饰件和机械拉索为产品形态参考。由于当前没有本地候选
+数据库，公开入口每次只选择一个零件类型；1688 供应商检查作为 Amazon 前置过滤，
+以节省 SerpApi 配额：
 
 ```text
-一次扫描全部 9 个车型专用小零件 archetype
-→ 在每类显式 eBay 页范围内发现全部候选
+选择一个车型专用小零件 archetype
+→ 在该类型的显式 eBay 页范围内发现全部候选
 → 先拒绝 Universal-fit、化学品和错误产品形态
 → 解析车型、年份、左右侧、套装数量和零件号为 sellable_product_family
+→ 先用 1688 轻量查询确认匹配商品存在供应商
+→ 只把有供应商的产品族送入 Amazon 核验
 → 生成 OEM + 车型描述 Amazon query pack
 → 分开统计平替产品种类、ASIN、seller offers 和平替最低价
 → 按通过项、证据缺口和家族竞争排序
-→ MARKET_SHORTLIST_CANDIDATE + 完整 JSON 人工复核
+→ 供应商和市场证据都满足的候选 + 完整 JSON 人工复核
 ```
 
-本版是初筛器，不是自动采购决策器。国内非原厂供货、利润和最终适配作为候选卡上的
-人工检查项，不要求第二套凭证，也不会把缺少供货凭证误判成无货。V0.2.3 精确 OEM
-链路继续保留为兼容 API，但不再是默认页面或当前产品验收标准。
+本版是初筛器，不是自动采购决策器。1688 的通过条件是“存在匹配 offer 和明确供应商”，
+不等于库存、MOQ、利润或可下单；供应商阶段失败、风控和未查询会分别保留为可解释状态。
+V0.2.3 精确 OEM 链路和 HioBuy 1688 兼容路径继续保留，但不再是默认页面。
 
 ## V0.2.4 当前可以做什么
 
-- 一次运行自动扫描全部九个 Northway 风格小类，无需先选择零件类型；
+- 一次运行选择一个 Northway 风格末级零件类型；两个产品 profile 仅用于分组；
 - 不使用 `max_candidates` 截断，处理已扫描页面中发现的全部候选；
 - 将左右件、单件/套装、车型和年份解析为不同产品家族；
+- 在 Amazon 前先用本地 `1688-cli` 或兼容 HioBuy 做供应商存在性预筛；
 - 使用多个 Amazon 查询统计平替产品种类、ASIN、报价和最低价；
-- 默认展示可复核候选，按“优先候选 / 待判断 / 已淘汰”分类切换；
+- 默认展示同时通过供应商和市场阶段的候选，并按“有供应商 / 待核验 / 无供应商”切换；
+- 展示 eBay、1688、Amazon 各阶段的当前进度和独立预算；
 - 下载包含规则读数、来源、查询、证据缺口、失败原因和排序的完整 JSON。
 
 当前真实一页雾灯框探针检查了 60 条结果，生成 14 个候选；在总请求预算为 5、每家族
@@ -58,7 +67,7 @@ AND 适配车型在美国的保有量 >= 本次运行显式阈值
 | eBay 近 365 天销量 | [eBay Product Research](https://www.ebay.com/help/selling/selling-tools/product-research?id=4853)（Terapeak）导出/规范化证据 | eBay 官方 Seller Hub 数据覆盖三年，能满足完整 365 天窗口 | 严格证据 API 已预留；导入器和真实样本待接入 |
 | 美国适配车辆保有量 | [TecAlliance TecDoc VIO](https://www.tecalliance.net/products?highlight=vio-data&solution=data-insights) | 同时覆盖车辆/适配语义与 VIO，避免再拼一个车型映射服务 | provider-neutral contract 已预留；商业开通和真实 adapter 待完成 |
 | VIO 备选 | [Experian Automotive VIO](https://www.experian.com/automotive/vehicles-in-operation-vio-data) | 美国 VIO 数据的替代来源 | 仅列为替换方案 |
-| 1688 供货核验 | HioBuy（可选兼容） | 只在后续采购可行性阶段需要 | 不再阻塞市场筛选，也不再是默认配置项 |
+| 1688 供应商预筛 | 本地 `1688-cli`（首选）+ HioBuy（兼容） | 在 Amazon 前确认供应商存在，减少昂贵市场核验 | 只读适配待接入；不做询价、结算或下单 |
 
 自动 MVP 默认只需要 SerpApi 一枚 Key。严格 Product Research/VIO 证据只在真正执行
 严格筛选时需要。MarketCheck 可选，不再阻塞自动 MVP；NY DMV/NHTSA 实验 adapter 也不
@@ -99,12 +108,13 @@ py -3.12 -m venv .venv
 2. 双击 `start-web.bat`；也可运行
    `.\.venv\Scripts\python.exe -m proteus api --port 8765`。
 3. 打开 `http://127.0.0.1:8765/`，保留默认参数，点击“开始选品扫描”。
-4. 一次运行会自动扫描全部九类零件。右侧默认隐藏明确淘汰项，可通过状态分类切换查看。
-5. 下载完整 JSON 做最终复核；JSON 始终包含全部候选、规则读数、来源、缺口、失败原因和排名。
+4. 选择一个末级零件类型；系统先做本地范围/家族过滤，再进行 1688 供应商预筛和 Amazon 核验。
+5. 右侧默认显示有供应商且市场证据完整的候选，其他状态可通过筛选查看。
+6. 下载精简或完整 JSON 做最终复核；JSON 始终包含全部候选、规则读数、来源、缺口、失败原因和排名。
 
-`eBay 扫描页数`按每个零件类型计算。例如 1 页会产生至少 9 次发现请求，2 页至少
-18 次。因此总请求预算不得低于 `9 × 扫描页数`；默认预算 80 会把剩余请求用于 Amazon
-产品家族搜索。扫描范围内的候选不设数量上限，但页面数和总请求预算仍控制成本。
+`eBay 扫描页数`只按当前选择的零件类型计算。因此总 SerpApi 请求预算最低为
+`1 × 扫描页数`；1688 检查使用独立的 `max_1688_checks`，不会占用 SerpApi 预算。
+扫描范围内的候选不设数量上限，但页面数、两个 provider 的边界和运行预算仍控制成本。
 
 ## 配置
 
@@ -120,7 +130,7 @@ py -3.12 -m venv .venv
 [Get Started](https://docs.marketcheck.com/docs/get-started/api/introduction) 页面申请并作为
 可选增强。没有 MarketCheck 时自动任务仍可运行。
 
-只有需要测试旧的 1688 供货兼容链路时，才配置 HioBuy Key 和国内收件信息：
+如果使用旧的 HioBuy 供货兼容链路，才配置 HioBuy Key 和国内收件信息：
 
 ```powershell
 .\.venv\Scripts\python.exe -m proteus setup --with-hiobuy
@@ -140,7 +150,7 @@ py -3.12 -m venv .venv
 `http://127.0.0.1:8765/api/docs`。前端只调用本机接口，任何第三方 provider 凭证都
 不会进入浏览器。当前操作台是中文优先的 Northway 初筛界面。
 
-页面的九类范围、价格/需求阈值和运行边界由 `/api/v1/northway/policy` 下发。
+页面的九类范围、价格/需求阈值、1688 供应商条件和运行边界由 `/api/v1/northway/policy` 下发。
 Amazon 平替种类不再设置自动上限；数量只用于排序和人工复核。
 以下接口构成这套界面的全部数据来源：
 
@@ -150,7 +160,7 @@ Amazon 平替种类不再设置自动上限；数量只用于排序和人工复�
 | `GET` | `/api/v1/config/status` | 脱敏配置与各 profile readiness |
 | `GET` | `/api/v1/providers` | provider 预检与严格筛选服务策略 |
 | `GET` | `/api/v1/northway/policy` | Northway 小类、默认阈值和运行边界 |
-| `POST` | `/api/v1/northway/runs` | 异步启动产品家族初筛 |
+| `POST` | `/api/v1/northway/runs` | 异步启动单分类产品家族初筛 |
 | `GET` | `/api/v1/northway/runs/{run_id}` | 查询任务状态、候选和排序 |
 | `GET` | `/api/v1/northway/runs/{run_id}/export/compact` | 下载精简 JSON（默认） |
 | `GET` | `/api/v1/northway/runs/{run_id}/export` | 下载完整证据 JSON |
@@ -164,9 +174,11 @@ Northway MVP 使用示例：
 
 ```powershell
 $request = @{
+  archetype = "fog_light_bezel"
   discovery_pages = 1
-  request_budget = 80
+  request_budget = 20
   max_amazon_queries_per_family = 3
+  max_1688_checks = 20
   min_family_price_usd = 20
   min_observed_ebay_demand = 1
 } | ConvertTo-Json
@@ -181,12 +193,13 @@ Invoke-RestMethod `
   -Uri "http://127.0.0.1:8765/api/v1/northway/runs/$($job.run_id)"
 ```
 
-任务状态依次为 `QUEUED`、`RUNNING`、`COMPLETED` 或 `FAILED`。完成后读取
-`result.reports`；`MARKET_SHORTLIST_CANDIDATE` 表示值得优先人工复核，不表示可以直接
-采购或上架。`result.discovery.per_archetype` 保存九类各自的采集状态，
-`result.scan_manifest.discovery_queries` 保存实际查询；这些字段也是后续前端改造的稳定
-接口。精简导出保留决策、产品家族、关键读数、分页/预算状态、相关 ASIN 和有限关系样本；
-需要完整 provider 证据时使用 `/export`。进程重启会清空当前内存任务记录，前端不持有或调用第三方 Key。
+任务状态依次为 `QUEUED`、`RUNNING`、`COMPLETED` 或 `FAILED`。运行中还会返回
+`phase`、`current`、`total`、`last_query`、`provider`、`budget_used` 和 `updated_at`。
+完成后读取 `result.reports`；只有供应商阶段通过且市场证据完整的记录才进入默认最终候选，
+不表示可以直接采购或上架。`result.discovery` 保存所选类型状态，`result.scan_manifest`
+保存实际查询；1688 供应商证据和独立计数也会保留。精简导出保留决策、产品家族、关键读数、
+分页/预算状态、供应商摘要、相关 ASIN 和有限关系样本；需要完整 provider 证据时使用
+`/export`。进程重启会清空当前内存任务记录，前端不持有或调用第三方 Key。
 
 真实运行中的 eBay/Amazon provider 请求会计入 SerpApi 配额；`request_budget` 是单次运行
 的硬上限，不能把新鲜 Amazon 数据变成零调用。若只需要检查页面或复用已有结果，可运行
