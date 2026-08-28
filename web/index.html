@@ -3,112 +3,238 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>Proteus · Northway 选品台</title>
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#faf9f5">
+  <title>Proteus — 选品工作台</title>
   <link rel="stylesheet" href="northway.css">
 </head>
 <body>
-  <a class="skip-link" href="#results">跳到候选结果</a>
+  <a class="skip-link" href="#mainContent">跳到主要内容</a>
 
-  <header class="masthead">
-    <div>
-      <p class="eyebrow">NORTHWAY PRODUCT-FAMILY MVP</p>
-      <h1>Proteus <span>选品台</span></h1>
-      <p class="masthead__copy">只扫描车型专用小零件；按整个平替产品家族判断竞争。</p>
-    </div>
-    <div class="system-status" id="systemStatus" role="status" aria-live="polite">
-      <span class="status-dot"></span>
-      <span>正在检查本地服务…</span>
-    </div>
-  </header>
-
-  <main class="workspace">
-    <aside class="control-panel" aria-labelledby="scanTitle">
-      <div class="panel-heading">
-        <p class="step">01 / 扫描范围</p>
-        <h2 id="scanTitle">一次筛完全部窄零件</h2>
-        <p>自动覆盖 <strong id="archetypeCount">9</strong> 个 Northway 风格小类。候选不设数量上限，以页数和请求预算控制成本。</p>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Proteus 导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span class="brand__titles">
+          <span class="brand__title">Proteus</span>
+          <span class="brand__subtitle">Northway 选品工作台</span>
+        </span>
       </div>
 
-      <form id="runForm" class="scan-form">
-        <label class="field">
-          <span>eBay 扫描页数</span>
-          <input id="discovery_pages" name="discovery_pages" type="number" min="1" max="10" value="1" required>
-          <small>每页最多约 50 条商品</small>
-        </label>
+      <div class="side-nav-group">
+        <p class="side-label">工作台</p>
+        <nav class="side-nav" aria-label="工作台视图">
+          <a class="side-nav__item side-nav__item--active" href="#scan" aria-current="page">
+            <span class="nav-icon nav-icon--scan" aria-hidden="true"></span>
+            <span>产品族初筛</span>
+          </a>
+          <a class="side-nav__item" href="#method">
+            <span class="nav-icon nav-icon--method" aria-hidden="true"></span>
+            <span>筛选方法</span>
+          </a>
+        </nav>
+      </div>
 
-        <label class="field">
-          <span>总请求预算</span>
-          <input id="request_budget" name="request_budget" type="number" min="9" max="500" value="80" required>
-          <small id="budgetHint">至少 9 次用于覆盖全部类型；用尽后保留缺口</small>
-        </label>
+      <div class="sidebar__context">
+        <p class="side-label">当前档位</p>
+        <div class="profile-card">
+          <span class="profile-card__mark" aria-hidden="true">N</span>
+          <span>
+            <strong>Northway V0.2.4</strong>
+            <small>产品家族初筛</small>
+          </span>
+        </div>
+      </div>
 
-        <label class="field">
-          <span>每个家族 Amazon 查询</span>
-          <input id="max_amazon_queries_per_family" name="max_amazon_queries_per_family" type="number" min="1" max="5" value="3" required>
-          <small>料号 + 车型描述查询</small>
-        </label>
-
-        <label class="field">
-          <span>最多平替产品种类</span>
-          <input id="max_competitive_products" name="max_competitive_products" type="number" min="0" max="100" value="3" required>
-          <small>ASIN 和 seller offers 分开统计</small>
-        </label>
-
-        <label class="field">
-          <span>平替最低价高于</span>
-          <div class="money-input"><span>$</span><input id="min_family_price_usd" name="min_family_price_usd" type="number" min="0" step="0.01" value="20" required></div>
-          <small>廉价平替会直接暴露</small>
-        </label>
-
-        <label class="field">
-          <span>最低可见 eBay 销量</span>
-          <input id="min_observed_ebay_demand" name="min_observed_ebay_demand" type="number" min="0" value="1" required>
-          <small>初筛下界，不冒充 365 天销量</small>
-        </label>
-
-        <button class="primary-action" id="runButton" type="submit">
-          <span>开始选品扫描</span>
-          <span aria-hidden="true">→</span>
-        </button>
-        <p class="form-status" id="formStatus" role="status" aria-live="polite"></p>
-      </form>
-
-      <div class="boundary">
-        <strong>本版只做初筛</strong>
-        <p>只需要 SerpApi。国内供货、利润和最终适配由候选卡中的人工清单继续核对。</p>
+      <div class="sidebar__foot">
+        <div class="system-status" id="systemStatus" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="system-status__label">正在检查本地服务…</span>
+        </div>
+        <p class="sidebar__note">证据先行 · 只在本地回环接口运行</p>
       </div>
     </aside>
 
-    <section class="result-panel" id="results" aria-labelledby="resultTitle">
-      <div class="result-heading">
-        <div>
-          <p class="step">02 / 候选排序</p>
-          <h2 id="resultTitle">值得先看的产品家族</h2>
-          <p id="resultSubtitle">通过项更多、证据缺口更少、平替更少的候选排在前面。</p>
+    <div class="main-shell">
+      <header class="app-bar">
+        <div class="app-bar__crumb" aria-label="当前位置">
+          <span>Proteus</span>
+          <span class="app-bar__slash" aria-hidden="true">/</span>
+          <strong>产品族初筛</strong>
         </div>
-        <button class="export-button" id="exportButton" type="button" hidden>下载完整 JSON</button>
-      </div>
+        <span class="app-bar__spacer"></span>
+        <div class="app-bar__meta">NORTHWAY <span>·</span> V0.2.4</div>
+        <button class="button button--quiet" id="exportButton" type="button" hidden>
+          <span>下载完整 JSON</span>
+          <span class="button__arrow" aria-hidden="true">↓</span>
+        </button>
+        <button class="button button--primary" id="runButton" type="submit" form="runForm" disabled>
+          <span class="button__label">开始扫描</span>
+          <span class="button__arrow" aria-hidden="true">↗</span>
+        </button>
+      </header>
 
-      <div class="empty-state" id="emptyState">
-        <span class="empty-state__mark">P</span>
-        <h3>还没有扫描结果</h3>
-        <p>点击左侧按钮后，会统一扫描全部 Northway 风格小类并按产品家族排序。</p>
-      </div>
+      <main class="page" id="mainContent">
+        <section class="hero" id="scan" aria-labelledby="pageTitle">
+          <div class="hero__copy">
+            <p class="eyebrow">01 / Northway product-family screen</p>
+            <h1 id="pageTitle">找到值得验证的<br><em>零件族</em></h1>
+            <p class="hero__lede">把 eBay 的车型专用小零件，按完整平替产品家族放进同一套筛网。先找出值得花时间核对的，再把证据缺口交给你。</p>
+          </div>
+          <div class="hero__principles" aria-label="筛选原则">
+            <div class="principle">
+              <span class="principle__index">01</span>
+              <span class="principle__label">家族级竞争</span>
+              <small>不把低 OEM 结果数当成结论</small>
+            </div>
+            <div class="principle">
+              <span class="principle__index">02</span>
+              <span class="principle__label">九类一起扫描</span>
+              <small>合并后的范围一次覆盖</small>
+            </div>
+            <div class="principle">
+              <span class="principle__index">03</span>
+              <span class="principle__label">缺口显式保留</span>
+              <small>初筛通过不等于采购指令</small>
+            </div>
+          </div>
+        </section>
 
-      <div id="resultContent" hidden>
-        <section class="run-summary" id="runSummary" aria-label="运行摘要"></section>
-        <div class="run-notice" id="runNotice" hidden></div>
-        <nav class="result-filters" id="resultFilters" aria-label="候选状态分类"></nav>
-        <p class="filter-empty" id="filterEmpty" hidden>当前分类没有候选。</p>
-        <ol class="candidate-list" id="candidateList"></ol>
-      </div>
-    </section>
-  </main>
+        <section class="setup-grid" aria-label="扫描设置">
+          <section class="surface setup-card" aria-labelledby="scanTitle">
+            <div class="section-head section-head--tight">
+              <div>
+                <p class="eyebrow">扫描配置</p>
+                <h2 id="scanTitle">把参数交给筛网</h2>
+              </div>
+              <span class="section-tag">SERPAPI</span>
+            </div>
+
+            <form id="runForm" class="scan-form">
+              <label class="field">
+                <span>eBay 扫描页数</span>
+                <input id="discovery_pages" name="discovery_pages" type="number" min="1" max="10" value="1" required>
+                <small>每类读取 1–10 页</small>
+              </label>
+
+              <label class="field">
+                <span>总请求预算</span>
+                <input id="request_budget" name="request_budget" type="number" min="9" max="500" value="80" required>
+                <small id="budgetHint">至少 9 次用于覆盖全部类型；用尽后保留缺口</small>
+              </label>
+
+              <label class="field">
+                <span>每个家族 Amazon 查询</span>
+                <input id="max_amazon_queries_per_family" name="max_amazon_queries_per_family" type="number" min="1" max="5" value="3" required>
+                <small>料号、车型和位置查询包</small>
+              </label>
+
+              <label class="field">
+                <span>最多平替产品种类</span>
+                <input id="max_competitive_products" name="max_competitive_products" type="number" min="0" max="100" value="3" required>
+                <small>按产品族聚合，不把报价当种类</small>
+              </label>
+
+              <label class="field">
+                <span>平替最低价高于</span>
+                <span class="input-with-prefix"><span aria-hidden="true">$</span><input id="min_family_price_usd" name="min_family_price_usd" type="number" min="0" step="0.01" value="20" required></span>
+                <small>低价平替会直接暴露</small>
+              </label>
+
+              <label class="field">
+                <span>最低可见 eBay 销量</span>
+                <input id="min_observed_ebay_demand" name="min_observed_ebay_demand" type="number" min="0" value="1" required>
+                <small>近期可见下界，不冒充 365 天销量</small>
+              </label>
+
+              <p class="form-status" id="formStatus" role="status" aria-live="polite"></p>
+            </form>
+
+            <div class="boundary-note" id="method">
+              <span class="boundary-note__icon" aria-hidden="true">i</span>
+              <div>
+                <strong>这里的“通过”是市场初筛</strong>
+                <p>SerpApi 只负责发现与 Amazon 竞争核对。国内非原厂供货、利润和最终适配，仍要在候选卡里人工确认。</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="surface scope-card" aria-labelledby="scopeTitle">
+            <div class="section-head section-head--tight">
+              <div>
+                <p class="eyebrow">扫描清单</p>
+                <h2 id="scopeTitle"><span id="archetypeCount">9</span> 类一起过筛</h2>
+              </div>
+              <span class="scope-status"><span class="scope-status__dot" aria-hidden="true"></span>全部启用</span>
+            </div>
+            <p class="section-copy">不再选择单一零件类型。每次运行都会覆盖以下两个产品轮廓，并保留每类的关键词、页数与状态。</p>
+            <div class="scope-list" id="scopeList" aria-label="Northway 扫描类型">
+              <div class="scope-loading">正在加载扫描清单…</div>
+            </div>
+            <div class="scope-footer">
+              <span><span class="legend-dot legend-dot--trim" aria-hidden="true"></span>车型专用小饰件</span>
+              <span><span class="legend-dot legend-dot--cable" aria-hidden="true"></span>车型专用拉索</span>
+            </div>
+          </section>
+        </section>
+
+        <section class="results-section" id="results" aria-labelledby="resultTitle">
+          <div class="result-heading">
+            <div>
+              <p class="eyebrow">02 / Review queue</p>
+              <h2 id="resultTitle">审查队列</h2>
+              <p id="resultSubtitle">扫描后，值得先看的产品家族会按证据完整度与竞争强度排序。</p>
+            </div>
+            <div class="result-heading__mark" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+
+          <div class="empty-state" id="emptyState">
+            <div class="empty-state__diagram" aria-hidden="true">
+              <span></span><span></span><span></span><i></i>
+            </div>
+            <h3>还没有扫描结果</h3>
+            <p>点击右上角「开始扫描」，系统会一次读取全部 <span id="emptyArchetypeCount">9</span> 类零件，并按产品家族整理证据。</p>
+          </div>
+
+          <div id="resultContent" hidden>
+            <section class="run-summary" id="runSummary" aria-label="运行摘要"></section>
+
+            <div class="run-notice" id="runNotice" role="status" aria-live="polite" hidden></div>
+
+            <section class="coverage-section" aria-labelledby="coverageTitle">
+              <div class="subsection-head">
+                <div>
+                  <h3 id="coverageTitle">扫描覆盖</h3>
+                  <p>九类查询各自保留状态，零结果不再和 provider 失败混在一起。</p>
+                </div>
+                <span class="subsection-meta" id="coverageMeta"></span>
+              </div>
+              <div class="coverage-list" id="coverageList"></div>
+            </section>
+
+            <div class="queue-heading">
+              <div>
+                <h3>候选产品族</h3>
+                <p>默认隐藏明确淘汰项；完整 JSON 仍包含所有报告。</p>
+              </div>
+              <nav class="result-filters" id="resultFilters" aria-label="候选状态分类"></nav>
+            </div>
+            <p class="filter-empty" id="filterEmpty" hidden>当前分类没有候选。</p>
+            <ol class="candidate-list" id="candidateList"></ol>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
 
   <template id="skeletonTemplate">
-    <div class="skeleton" aria-hidden="true">
-      <span></span><span></span><span></span>
+    <div class="loading-state" aria-hidden="true">
+      <div class="loading-state__line loading-state__line--short"></div>
+      <div class="loading-state__line"></div>
+      <div class="loading-state__metrics"><span></span><span></span><span></span><span></span></div>
+      <div class="loading-state__block"></div>
     </div>
   </template>
 

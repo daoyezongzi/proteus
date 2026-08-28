@@ -54,6 +54,9 @@
 - [x] Remove the public single-archetype selector. One initial-screening run now
   covers all nine Northway archetypes and records per-archetype query/status
   metadata for later frontend work.
+- [x] Rebuild the operator frontend around the merged all-archetype contract:
+  expose the nine-type scope, per-archetype scan coverage and product-family
+  evidence chain while keeping the existing async run, filters and JSON export.
 - [x] Keep rejected candidates out of the default result view while preserving
   them under a dedicated status category and in the complete JSON export.
 - [x] Add deterministic priority sorting with scope, identity and family

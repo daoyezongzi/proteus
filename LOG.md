@@ -1,5 +1,25 @@
 # Proteus Development Log
 
+## 2026-08-28 — Claude/TradeEye-style Northway operator workbench
+
+- Rebuilt the Northway frontend into a focused operator workbench: fixed
+  navigation rail, translucent utility bar, warm-white Anthropic-style palette,
+  serif hierarchy and restrained status colors. The page remains dependency-free
+  HTML/CSS/JS and keeps the existing loopback API contract.
+- Kept the merged all-archetype behavior explicit in the UI. The scan scope now
+  renders both Northway profiles and all nine enabled part types, while the
+  result surface adds per-archetype coverage so zero results remain distinct from
+  provider failures.
+- Reworked candidate reports around the sellable product family: core metrics,
+  six-stage status path, fitment/package identity, Amazon query pack, relevant
+  products, source listings, evidence gaps and the three-item manual review
+  checklist are readable without losing the full JSON export path.
+- Preserved the existing request fields, async polling, status filters and
+  rejected-result separation. Browser replay on the local stub completed one
+  scan, switched to the rejected category, expanded the evidence chain and
+  downloaded the complete JSON export. JavaScript syntax, HTTP homepage,
+  `git diff --check` and all 325 offline tests passed.
+
 ## 2026-08-28 — All-archetype scan and status-filtered review surface
 
 - Removed the public single-part-type input. Every Northway V0.2.4 run now
