@@ -28,7 +28,7 @@ from proteus.credentials import (
     resolve_secret,
 )
 from proteus.normalization import normalize_part_number
-from proteus.northway_mvp import ARCHETYPES, northway_mvp_policy
+from proteus.northway_mvp import ARCHETYPES, compact_northway_result, northway_mvp_policy
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
     SERPAPI_AMAZON_ID,
@@ -105,7 +105,6 @@ class NorthwayMvpRunRequest(BaseModel):
     discovery_pages: int = Field(default=1, ge=1, le=10)
     request_budget: int = Field(default=80, ge=len(ARCHETYPES), le=500)
     max_amazon_queries_per_family: int = Field(default=3, ge=1, le=5)
-    max_competitive_products: int = Field(default=3, ge=0, le=100)
     min_family_price_usd: float = Field(default=20.0, ge=0, le=1000000)
     min_observed_ebay_demand: int = Field(default=1, ge=0, le=1000000)
 
@@ -515,6 +514,20 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
             value["result"],
             headers={
                 "Content-Disposition": f'attachment; filename="proteus-{run_id}.json"'
+            },
+        )
+
+    @app.get("/api/v1/northway/runs/{run_id}/export/compact")
+    def export_compact_northway_run(run_id: str) -> JSONResponse:
+        value = active_service.get_northway_run(run_id)
+        if value is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if value.get("status") != "COMPLETED" or not isinstance(value.get("result"), Mapping):
+            raise HTTPException(status_code=409, detail="run is not complete")
+        return JSONResponse(
+            compact_northway_result(value["result"]),
+            headers={
+                "Content-Disposition": f'attachment; filename="proteus-{run_id}-compact.json"'
             },
         )
 

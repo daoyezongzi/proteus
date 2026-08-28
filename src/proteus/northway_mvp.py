@@ -302,10 +302,13 @@ def northway_mvp_policy() -> dict[str, Any]:
             for key, value in ARCHETYPES.items()
         },
         "default_thresholds": {
-            "max_competitive_products": 3,
             "min_family_price_usd": 20.0,
             "min_observed_ebay_demand": 1,
             "max_amazon_queries_per_family": 3,
+        },
+        "competition_rule": {
+            "automatic_upper_bound": None,
+            "count_usage": "ranking_and_manual_review",
         },
         "run_bounds": {
             "candidate_cap": None,
@@ -315,8 +318,9 @@ def northway_mvp_policy() -> dict[str, Any]:
         "qualification_boundary": (
             "One run scans every Northway archetype and ranks bounded-scan review candidates. "
             "A market shortlist has resolved "
-            "family identity, observed demand and low complete Amazon family competition; it "
-            "is not a purchase instruction. Missing China supply evidence stays visible."
+            "family identity, observed demand and complete Amazon family evidence; observed "
+            "competition count is a ranking and manual-review signal, not an automatic upper "
+            "bound. It is not a purchase instruction. Missing China supply evidence stays visible."
         ),
     }
 
@@ -763,8 +767,8 @@ def aggregate_amazon_family_results(
     family: Mapping[str, Any],
     query_results: Sequence[Mapping[str, Any]],
     *,
-    max_competitive_products: int,
     min_family_price_usd: float,
+    max_competitive_products: int | None = None,
 ) -> dict[str, Any]:
     products_by_asin: dict[str, dict[str, Any]] = {}
     matched_queries: dict[str, set[str]] = defaultdict(set)
@@ -829,29 +833,21 @@ def aggregate_amazon_family_results(
         and not isinstance(item.get("price_usd"), bool)
     ]
     cluster_count = len(clusters)
-    if cluster_count > max_competitive_products:
-        competition_stage = _stage(
-            "REJECTED",
-            cluster_count,
-            "LTE",
-            max_competitive_products,
-            "Observed substitute-product clusters exceed the configured limit.",
-        )
-    elif not complete:
+    if not complete:
         competition_stage = _stage(
             "REVIEW_REQUIRED",
             cluster_count,
-            "LTE",
-            max_competitive_products,
-            "Observed competition is only a lower bound because one or more family searches are incomplete.",
+            None,
+            None,
+            "Observed competition is only a lower bound because one or more family searches are incomplete; the count has no automatic upper limit.",
         )
     else:
         competition_stage = _stage(
             "PASSED",
             cluster_count,
-            "LTE",
-            max_competitive_products,
-            "Complete family search found competition within the configured limit.",
+            None,
+            None,
+            "Complete family search evidence is available; the observed substitute-product cluster count is retained for ranking and manual review without an automatic upper limit.",
         )
     price_floor = min(prices) if prices else None
     aftermarket_floor = min(aftermarket_prices) if aftermarket_prices else None
@@ -898,6 +894,365 @@ def aggregate_amazon_family_results(
         "price_stage": price_stage,
         "observations": observations,
         "query_evidence": query_evidence,
+    }
+
+
+def _compact_fields(value: Any, keys: Sequence[str]) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {key: value[key] for key in keys if key in value and value[key] is not None}
+
+
+def _compact_diagnostics(value: Any) -> dict[str, Any]:
+    diagnostics = value if isinstance(value, list) else []
+    codes = Counter(
+        _clean_text(item.get("code")) or "UNKNOWN"
+        for item in diagnostics
+        if isinstance(item, Mapping)
+    )
+    return {
+        "count": len(diagnostics),
+        "codes": dict(sorted(codes.items())),
+    }
+
+
+def _compact_stage(value: Any) -> dict[str, Any]:
+    return _compact_fields(value, ("status", "value", "operator", "threshold", "reason"))
+
+
+def _compact_source_listing(value: Any) -> dict[str, Any]:
+    return _compact_fields(
+        value,
+        (
+            "raw_part_number",
+            "canonical_part_number",
+            "identifier_type",
+            "source_listing_id",
+            "source_listing_url",
+            "source_listing_title",
+            "source_listing_position",
+            "source_sold_count",
+        ),
+    )
+
+
+def _compact_family(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    return _compact_fields(
+        value,
+        (
+            "family_key",
+            "part_type",
+            "fitments",
+            "positions",
+            "sides",
+            "critical_specs",
+            "package_quantity",
+            "package_type",
+            "identifiers",
+            "relations",
+            "confidence",
+        ),
+    )
+
+
+def _compact_observation(value: Any) -> dict[str, Any]:
+    compact = _compact_fields(
+        value,
+        (
+            "asin",
+            "title",
+            "url",
+            "price_usd",
+            "active_offer_count_lower_bound",
+            "active_offer_count_complete",
+            "is_original_equipment",
+            "relation",
+            "reason",
+            "matched_queries",
+        ),
+    )
+    asin = _clean_text(value.get("asin")) if isinstance(value, Mapping) else ""
+    if asin:
+        compact["url"] = f"https://www.amazon.com/dp/{asin}"
+    return compact
+
+
+def _compact_query_evidence(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    products = value.get("products")
+    compact = _compact_fields(
+        value,
+        (
+            "provider",
+            "source_method",
+            "marketplace_id",
+            "query",
+            "retrieved_at",
+            "acquisition_status",
+            "result_page_complete",
+            "has_next_page",
+            "reported_total_results",
+            "results_seen",
+        ),
+    )
+    compact["products_seen"] = len(products) if isinstance(products, list) else None
+    compact["diagnostics"] = _compact_diagnostics(value.get("diagnostics"))
+    return compact
+
+
+def _compact_competition(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    observations = [item for item in value.get("observations", []) if isinstance(item, Mapping)]
+    relation_counts = Counter(_clean_text(item.get("relation")) or "UNKNOWN" for item in observations)
+    relation_samples: dict[str, list[dict[str, Any]]] = {}
+    for relation in sorted(relation_counts):
+        if relation == "INTERCHANGEABLE":
+            continue
+        relation_samples[relation] = [
+            _compact_observation(item)
+            for item in observations
+            if (_clean_text(item.get("relation")) or "UNKNOWN") == relation
+        ][:3]
+    compact = _compact_fields(
+        value,
+        (
+            "competition_complete",
+            "competitive_product_cluster_count",
+            "competitive_asin_count",
+            "original_equipment_asin_count",
+            "aftermarket_asin_count",
+            "offer_count_by_asin",
+            "family_offer_count_lower_bound",
+            "family_price_floor_usd",
+            "aftermarket_family_price_floor_usd",
+        ),
+    )
+    compact.update(
+        {
+            "observation_count": len(observations),
+            "relation_counts": dict(sorted(relation_counts.items())),
+            "relevant_products": [
+                _compact_observation(item)
+                for item in observations
+                if item.get("relation") == "INTERCHANGEABLE"
+            ],
+            "relation_samples": relation_samples,
+            "competition_stage": _compact_stage(value.get("competition_stage")),
+            "price_stage": _compact_stage(value.get("price_stage")),
+            "query_evidence": [
+                _compact_query_evidence(item)
+                for item in value.get("query_evidence", [])
+                if isinstance(item, Mapping)
+            ],
+        }
+    )
+    return compact
+
+
+def _compact_supply(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    compact = _compact_fields(
+        value,
+        (
+            "provider",
+            "acquisition_status",
+            "source_method",
+            "query",
+            "matched_part_numbers",
+            "match_type",
+            "offer_url",
+            "purchasable",
+            "price_cny",
+            "moq",
+            "retrieved_at",
+        ),
+    )
+    supplier = value.get("supplier")
+    if isinstance(supplier, Mapping):
+        compact["supplier"] = _compact_fields(supplier, ("id", "name", "shop_name", "url"))
+    elif supplier is not None:
+        compact["supplier"] = supplier
+    preview = value.get("order_preview")
+    if isinstance(preview, Mapping):
+        compact["order_preview"] = _compact_fields(
+            preview,
+            ("offer_id", "sku_id", "quantity", "currency", "payment_cny", "shipping_cny", "retrieved_at"),
+        )
+    compact["diagnostics"] = _compact_diagnostics(value.get("diagnostics"))
+    return compact
+
+
+def _compact_report(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    resolution = value.get("resolution")
+    family = value.get("family")
+    if not isinstance(family, Mapping) and isinstance(resolution, Mapping):
+        family = resolution.get("family")
+    stages = value.get("stages")
+    compact_stages = (
+        {
+            key: _compact_stage(stage)
+            for key, stage in stages.items()
+            if isinstance(stage, Mapping)
+        }
+        if isinstance(stages, Mapping)
+        else {}
+    )
+    return {
+        **_compact_fields(
+            value,
+            (
+                "schema_version",
+                "profile",
+                "candidate_id",
+                "discovery_order",
+                "decision",
+                "rank",
+                "category_profile",
+                "archetype",
+            ),
+        ),
+        "source_listings": [
+            _compact_source_listing(item)
+            for item in value.get("source_listings", [])
+            if isinstance(item, Mapping)
+        ],
+        "resolution": _compact_fields(
+            resolution,
+            ("scope_status", "identity_status", "category_profile", "reasons"),
+        ),
+        "family": _compact_family(family),
+        "query_pack": [
+            _compact_fields(item, ("query_type", "query"))
+            for item in value.get("query_pack", [])
+            if isinstance(item, Mapping)
+        ],
+        "competition": _compact_competition(value.get("competition")),
+        "demand": _compact_fields(
+            value.get("demand"),
+            ("observed_sold_count_lower_bound", "source_listing_count", "complete_365_day_metric"),
+        ),
+        "supply": _compact_supply(value.get("supply")),
+        "stages": compact_stages,
+        "evidence_gaps": list(value.get("evidence_gaps", []))
+        if isinstance(value.get("evidence_gaps"), list)
+        else [],
+        "failure_reasons": list(value.get("failure_reasons", []))
+        if isinstance(value.get("failure_reasons"), list)
+        else [],
+        "provider_attempts": [
+            _compact_fields(item, ("provider", "query", "status"))
+            for item in value.get("provider_attempts", [])
+            if isinstance(item, Mapping)
+        ],
+    }
+
+
+def compact_northway_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the default operator export without duplicating raw provider evidence.
+
+    The complete result remains available from the full export endpoint. This view keeps
+    the identifiers, decisions, stage readings, pagination/budget state, relevant Amazon
+    products, and bounded samples of rejected relations while omitting raw diagnostics,
+    duplicate resolution evidence, and full per-query product arrays.
+    """
+
+    if not isinstance(result, Mapping):
+        raise ValueError("Northway result must be a mapping")
+    policy = _compact_fields(
+        result.get("policy"),
+        (
+            "archetypes",
+            "category_profiles",
+            "min_family_price_usd",
+            "min_observed_ebay_demand",
+            "max_amazon_queries_per_family",
+            "competition_upper_bound",
+        ),
+    )
+    policy["competition_upper_bound"] = None
+    manifest = _compact_fields(
+        result.get("scan_manifest"),
+        (
+            "marketplace",
+            "category_id",
+            "archetypes",
+            "discovery_queries",
+            "pages_requested",
+            "pages_attempted",
+            "pages_completed",
+        ),
+    )
+    discovery = result.get("discovery")
+    compact_discovery = _compact_fields(
+        discovery,
+        (
+            "status",
+            "listing_groups",
+            "resolved_family_count",
+            "deduplicated_candidate_count",
+            "stats",
+        ),
+    )
+    diagnostics = discovery.get("diagnostics") if isinstance(discovery, Mapping) else None
+    compact_discovery["diagnostics"] = _compact_diagnostics(diagnostics)
+    compact_discovery["per_archetype"] = [
+        _compact_fields(
+            item,
+            (
+                "archetype",
+                "category_profile",
+                "keyword",
+                "status",
+                "pages_attempted",
+                "pages_completed",
+                "candidates_emitted",
+                "stats",
+            ),
+        )
+        for item in (discovery.get("per_archetype", []) if isinstance(discovery, Mapping) else [])
+        if isinstance(item, Mapping)
+    ]
+    return {
+        "schema_version": result.get("schema_version", "0.2.4"),
+        "export_format": "compact_v1",
+        "profile": result.get("profile", "northway-product-family-mvp"),
+        "result_id": result.get("result_id"),
+        "generated_at": result.get("generated_at"),
+        "policy": policy,
+        "scan_manifest": manifest,
+        "request_budget": _compact_fields(result.get("request_budget"), ("limit", "used", "remaining")),
+        "discovery": compact_discovery,
+        "summary": _compact_fields(
+            result.get("summary"),
+            (
+                "candidate_count",
+                "opportunity_candidates",
+                "market_shortlist_candidates",
+                "review_required",
+                "rejected",
+            ),
+        ),
+        "ranking": list(result.get("ranking", [])) if isinstance(result.get("ranking"), list) else [],
+        "reports": [
+            _compact_report(report)
+            for report in result.get("reports", [])
+            if isinstance(report, Mapping)
+        ],
+        "export_notes": {
+            "full_evidence_endpoint": "export",
+            "omitted": [
+                "raw provider diagnostics",
+                "duplicate family-resolution evidence",
+                "full product arrays from each Amazon query",
+            ],
+        },
     }
 
 
@@ -995,7 +1350,7 @@ def run_northway_mvp(
     ebay_category_id: str = "6028",
     request_budget: int = 80,
     max_amazon_queries_per_family: int = 3,
-    max_competitive_products: int = 3,
+    max_competitive_products: int | None = None,
     min_family_price_usd: float = 20.0,
     min_observed_ebay_demand: int = 1,
     hiobuy_key: str | None = None,
@@ -1016,7 +1371,7 @@ def run_northway_mvp(
         )
     if not 1 <= max_amazon_queries_per_family <= 5:
         raise ValueError("max_amazon_queries_per_family must be between 1 and 5")
-    if max_competitive_products < 0 or min_family_price_usd < 0 or min_observed_ebay_demand < 0:
+    if min_family_price_usd < 0 or min_observed_ebay_demand < 0:
         raise ValueError("screening thresholds must be non-negative")
     if not isinstance(ebay_category_id, str) or not ebay_category_id.isdigit():
         raise ValueError("ebay_category_id must contain digits only")
@@ -1216,7 +1571,7 @@ def run_northway_mvp(
             failure_reasons.append("OUT_OF_SCOPE")
         elif not isinstance(family, Mapping):
             stages["amazon_family_competition"] = _stage(
-                "REVIEW_REQUIRED", None, "LTE", max_competitive_products, "Family identity is unresolved."
+                "REVIEW_REQUIRED", None, None, None, "Family identity is unresolved; competition was not measured."
             )
             stages["family_price_floor"] = _stage(
                 "REVIEW_REQUIRED", None, "GT", float(min_family_price_usd), "Family identity is unresolved."
@@ -1351,6 +1706,7 @@ def run_northway_mvp(
             "min_family_price_usd": float(min_family_price_usd),
             "min_observed_ebay_demand": min_observed_ebay_demand,
             "max_amazon_queries_per_family": max_amazon_queries_per_family,
+            "competition_upper_bound": None,
         },
         "scan_manifest": {
             "marketplace": "EBAY_US",
@@ -1406,6 +1762,7 @@ __all__ = [
     "aggregate_amazon_family_results",
     "build_amazon_query_pack",
     "classify_scope",
+    "compact_northway_result",
     "northway_mvp_policy",
     "resolve_product_family",
     "run_northway_mvp",

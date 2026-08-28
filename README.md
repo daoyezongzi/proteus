@@ -140,7 +140,8 @@ py -3.12 -m venv .venv
 `http://127.0.0.1:8765/api/docs`。前端只调用本机接口，任何第三方 provider 凭证都
 不会进入浏览器。当前操作台是中文优先的 Northway 初筛界面。
 
-页面的九类范围、阈值和边界由 `/api/v1/northway/policy` 下发。
+页面的九类范围、价格/需求阈值和运行边界由 `/api/v1/northway/policy` 下发。
+Amazon 平替种类不再设置自动上限；数量只用于排序和人工复核。
 以下接口构成这套界面的全部数据来源：
 
 | 方法 | 路径 | 用途 |
@@ -151,7 +152,8 @@ py -3.12 -m venv .venv
 | `GET` | `/api/v1/northway/policy` | Northway 小类、默认阈值和运行边界 |
 | `POST` | `/api/v1/northway/runs` | 异步启动产品家族初筛 |
 | `GET` | `/api/v1/northway/runs/{run_id}` | 查询任务状态、候选和排序 |
-| `GET` | `/api/v1/northway/runs/{run_id}/export` | 下载完整 V0.2.4 JSON |
+| `GET` | `/api/v1/northway/runs/{run_id}/export/compact` | 下载精简 JSON（默认） |
+| `GET` | `/api/v1/northway/runs/{run_id}/export` | 下载完整证据 JSON |
 | `GET/POST` | `/api/v1/mvp/*` | V0.2.3 精确 OEM 兼容链路 |
 | `GET` | `/api/v1/screening/policy` | 三项阈值、市场和服务选择 |
 | `POST` | `/api/v1/screening/evaluate` | 对规范化证据执行严格筛选 |
@@ -165,7 +167,6 @@ $request = @{
   discovery_pages = 1
   request_budget = 80
   max_amazon_queries_per_family = 3
-  max_competitive_products = 3
   min_family_price_usd = 20
   min_observed_ebay_demand = 1
 } | ConvertTo-Json
@@ -184,7 +185,14 @@ Invoke-RestMethod `
 `result.reports`；`MARKET_SHORTLIST_CANDIDATE` 表示值得优先人工复核，不表示可以直接
 采购或上架。`result.discovery.per_archetype` 保存九类各自的采集状态，
 `result.scan_manifest.discovery_queries` 保存实际查询；这些字段也是后续前端改造的稳定
-接口。进程重启会清空当前内存任务记录，前端不持有或调用第三方 Key。
+接口。精简导出保留决策、产品家族、关键读数、分页/预算状态、相关 ASIN 和有限关系样本；
+需要完整 provider 证据时使用 `/export`。进程重启会清空当前内存任务记录，前端不持有或调用第三方 Key。
+
+真实运行中的 eBay/Amazon provider 请求会计入 SerpApi 配额；`request_budget` 是单次运行
+的硬上限，不能把新鲜 Amazon 数据变成零调用。若只需要检查页面或复用已有结果，可运行
+`python web/_dev_server.py` 的本地回放 harness，它使用 stub 数据、不访问 provider，但不代表
+实时市场结果。后续如需正式复用历史结果，应增加带时间戳和明确 `REPLAY` 标记的本地缓存，
+不能把过期数据伪装成新鲜扫描。
 
 严格筛选请求示例：
 

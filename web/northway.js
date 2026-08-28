@@ -105,12 +105,12 @@ const discoveryFailures = new Set([
 const reasonLabels = {
   "Sellable product family resolved.": "可售产品家族已解析。",
   "Observed source listings provide a family-bound sold-count lower bound.": "来源 listing 提供了绑定到该产品族的销量下界。",
-  "Complete family search found competition within the configured limit.": "完整的产品族搜索结果在设定上限内。",
-  "Observed substitute-product clusters exceed the configured limit.": "观察到的平替产品种类超过设定上限。",
+  "Complete family search evidence is available; the observed substitute-product cluster count is retained for ranking and manual review without an automatic upper limit.": "产品族搜索证据完整；平替种类只用于排序和人工复核，不设自动上限。",
+  "Observed competition is only a lower bound because one or more family searches are incomplete; the count has no automatic upper limit.": "部分产品族查询未完成，竞争数量只是下界；不设自动上限。",
   "The substitute-family price floor remains above the configured limit.": "平替产品族最低价高于设定阈值。",
   "The substitute-family price floor is at or below the configured limit.": "平替产品族最低价低于或等于设定阈值。",
   "China non-OEM supply verification is not configured.": "尚未配置国内非原厂供货核验。",
-  "Amazon family search incomplete; low competition cannot be proven.": "Amazon 产品族搜索不完整，无法证明低竞争。",
+  "Amazon family search incomplete; low competition cannot be proven.": "Amazon 产品族搜索不完整，无法证明竞争数量；需人工复核。",
   "Listing title is missing.": "listing 标题缺失。",
 };
 
@@ -241,7 +241,6 @@ function collectForm() {
     discovery_pages: number("discovery_pages"),
     request_budget: number("request_budget"),
     max_amazon_queries_per_family: number("max_amazon_queries_per_family"),
-    max_competitive_products: number("max_competitive_products"),
     min_family_price_usd: number("min_family_price_usd"),
     min_observed_ebay_demand: number("min_observed_ebay_demand"),
   };
@@ -427,6 +426,7 @@ function candidateCard(report) {
   const metricHint = (stage) => stage?.threshold !== null && stage?.threshold !== undefined
     ? `${operatorSymbols[stage.operator] || ""} ${value(stage.threshold)}`.trim()
     : "";
+  const competitionHint = metricHint(competitionStage) || "仅用于排序，无自动上限";
 
   return `<li class="candidate-card" data-decision="${esc(report.decision)}">
     <header class="candidate-head">
@@ -452,7 +452,7 @@ function candidateCard(report) {
       <div class="metric" data-tone="${esc(stageTone(competitionStage.status))}">
         <span>平替种类</span>
         <strong>${esc(value(competition.competitive_product_cluster_count))}</strong>
-        <small>${esc(metricHint(competitionStage))}</small>
+        <small>${esc(competitionHint)}</small>
       </div>
       <div class="metric" data-tone="${esc(stageTone(competitionStage.status))}">
         <span>相关 ASIN</span>
@@ -586,6 +586,8 @@ function renderResult(result) {
   $("#emptyState").hidden = true;
   $("#resultContent").hidden = false;
   $("#exportButton").hidden = false;
+  $("#fullExportButton").hidden = false;
+  $("#fullExportButton").href = `${API}/northway/runs/${encodeURIComponent(activeRunId)}/export`;
 
   const summary = result.summary || {};
   const budget = result.request_budget || {};
@@ -623,6 +625,7 @@ function renderResult(result) {
 function showLoading() {
   $("#resultContent").hidden = true;
   $("#exportButton").hidden = true;
+  $("#fullExportButton").hidden = true;
   const empty = $("#emptyState");
   empty.hidden = false;
   empty.innerHTML = $("#skeletonTemplate").innerHTML;
@@ -673,7 +676,7 @@ $("#runForm").addEventListener("submit", async (event) => {
 
 $("#exportButton").addEventListener("click", () => {
   if (!activeRunId) return;
-  window.location.href = `${API}/northway/runs/${encodeURIComponent(activeRunId)}/export`;
+  window.location.href = `${API}/northway/runs/${encodeURIComponent(activeRunId)}/export/compact`;
 });
 
 boot();

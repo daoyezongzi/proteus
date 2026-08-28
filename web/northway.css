@@ -419,6 +419,12 @@ a { color: inherit; }
 
 .app-bar__meta span { color: var(--outline); }
 
+.app-bar__exports {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -682,6 +688,18 @@ a { color: inherit; }
   color: var(--text-muted);
   font-size: 10.5px;
   line-height: 1.45;
+}
+
+.field--static strong {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container);
+  color: var(--text-variant);
+  font-size: 13px;
 }
 
 .input-with-prefix {
@@ -1686,6 +1704,7 @@ a { color: inherit; }
   .app-bar__meta { display: none; }
   .app-bar__spacer { display: none; }
   .app-bar__crumb { flex: 1; }
+  .app-bar__exports { order: 3; }
   .app-bar .button--quiet { order: 3; }
   .app-bar .button--primary { min-width: 104px; }
   .hero { grid-template-columns: 1fr; gap: var(--space-6); }

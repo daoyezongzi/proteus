@@ -64,10 +64,16 @@
         </div>
         <span class="app-bar__spacer"></span>
         <div class="app-bar__meta">NORTHWAY <span>·</span> V0.2.4</div>
-        <button class="button button--quiet" id="exportButton" type="button" hidden>
-          <span>下载完整 JSON</span>
-          <span class="button__arrow" aria-hidden="true">↓</span>
-        </button>
+        <div class="app-bar__exports" aria-label="导出结果">
+          <button class="button button--quiet" id="exportButton" type="button" hidden>
+            <span>下载精简 JSON</span>
+            <span class="button__arrow" aria-hidden="true">↓</span>
+          </button>
+          <a class="button button--quiet" id="fullExportButton" href="#" hidden>
+            <span>完整证据</span>
+            <span class="button__arrow" aria-hidden="true">↓</span>
+          </a>
+        </div>
         <button class="button button--primary" id="runButton" type="submit" form="runForm" disabled>
           <span class="button__label">开始扫描</span>
           <span class="button__arrow" aria-hidden="true">↗</span>
@@ -129,11 +135,11 @@
                 <small>料号、车型和位置查询包</small>
               </label>
 
-              <label class="field">
-                <span>最多平替产品种类</span>
-                <input id="max_competitive_products" name="max_competitive_products" type="number" min="0" max="100" value="3" required>
-                <small>按产品族聚合，不把报价当种类</small>
-              </label>
+              <div class="field field--static" aria-label="Amazon 竞争计数规则">
+                <span>Amazon 竞争计数</span>
+                <strong>不设自动上限</strong>
+                <small>数量仍用于排序和人工复核，不再直接淘汰。</small>
+              </div>
 
               <label class="field">
                 <span>平替最低价高于</span>
@@ -154,7 +160,7 @@
               <span class="boundary-note__icon" aria-hidden="true">i</span>
               <div>
                 <strong>这里的“通过”是市场初筛</strong>
-                <p>SerpApi 只负责发现与 Amazon 竞争核对。国内非原厂供货、利润和最终适配，仍要在候选卡里人工确认。</p>
+                <p>竞争数量只作为排序和人工判断信号，不设自动上限。SerpApi 只负责发现与 Amazon 核对；国内非原厂供货、利润和最终适配，仍要人工确认。</p>
               </div>
             </div>
           </section>
@@ -217,7 +223,7 @@
             <div class="queue-heading">
               <div>
                 <h3>候选产品族</h3>
-                <p>默认隐藏明确淘汰项；完整 JSON 仍包含所有报告。</p>
+                <p>默认隐藏明确淘汰项；精简 JSON 保留关键证据，完整证据可单独下载。</p>
               </div>
               <nav class="result-filters" id="resultFilters" aria-label="候选状态分类"></nav>
             </div>

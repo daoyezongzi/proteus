@@ -1,5 +1,23 @@
 # Proteus Development Log
 
+## 2026-08-28 — Remove competition cap and add compact evidence export
+
+- Removed the public `max_competitive_products` request/UI field. Complete Amazon
+  family evidence now marks the competition stage `PASSED` regardless of the observed
+  cluster count; the count remains in the report and ranking as a manual-review signal.
+  Incomplete pages still remain `REVIEW_REQUIRED`, and the price floor threshold is
+  unchanged.
+- Added `/api/v1/northway/runs/{run_id}/export/compact` and made it the operator UI's
+  default download. It keeps family identity, decisions, stage readings, budget and
+  pagination state, relevant ASINs, and bounded relation samples, while the existing
+  `/export` endpoint continues to provide the complete audit JSON.
+- Reprojecting the inspected 3,798,063-byte run reduced the compact serialization to
+  492,291 bytes (87.0% smaller). Amazon product URLs are normalized to short `/dp/ASIN`
+  links in the compact view; raw query product arrays and diagnostics are summarized.
+- Confirmed the live-call boundary: fresh SerpApi Amazon data still consumes provider
+  quota. The local `_dev_server.py` replay harness is the no-call option, but it uses
+  stub data and is not a fresh market scan.
+
 ## 2026-08-28 — Claude/TradeEye-style Northway operator workbench
 
 - Rebuilt the Northway frontend into a focused operator workbench: fixed

@@ -60,7 +60,6 @@ class FakeFrontendService:
             "discovery_pages": 1,
             "request_budget": 12,
             "max_amazon_queries_per_family": 3,
-            "max_competitive_products": 3,
             "min_family_price_usd": 20.0,
             "min_observed_ebay_demand": 1,
         }
@@ -158,6 +157,7 @@ def test_frontend_api_exposes_northway_family_screening_and_json_export() -> Non
     )
     run = client.get("/api/v1/northway/runs/northway-123")
     export = client.get("/api/v1/northway/runs/northway-123/export")
+    compact_export = client.get("/api/v1/northway/runs/northway-123/export/compact")
     running_export = client.get("/api/v1/northway/runs/northway-running/export")
 
     assert policy.status_code == 200
@@ -169,12 +169,16 @@ def test_frontend_api_exposes_northway_family_screening_and_json_export() -> Non
     assert export.status_code == 200
     assert export.headers["content-disposition"].endswith('northway-123.json"')
     assert export.json()["ranking"] == []
+    assert compact_export.status_code == 200
+    assert compact_export.headers["content-disposition"].endswith('northway-123-compact.json"')
+    assert compact_export.json()["export_format"] == "compact_v1"
     assert running_export.status_code == 409
 
     openapi = client.get("/api/openapi.json").json()
     model = openapi["components"]["schemas"]["NorthwayMvpRunRequest"]
     assert "max_candidates" not in model["properties"]
     assert "archetype" not in model["properties"]
+    assert "max_competitive_products" not in model["properties"]
 
 
 def test_frontend_api_rejects_legacy_single_archetype_field() -> None:

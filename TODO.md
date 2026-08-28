@@ -64,6 +64,9 @@
   complete state; current `has_next_page=true` correctly produces
   `REVIEW_REQUIRED`, but it prevents any family from passing when descriptive
   queries remain incomplete.
+- [ ] Add an opt-in, timestamped local Amazon cache/replay mode so repeated
+  investigations can avoid provider calls while keeping stale data explicitly
+  marked as `REPLAY` rather than presenting it as a fresh scan.
 - [x] Keep rejected candidates out of the default result view while preserving
   them under a dedicated status category and in the complete JSON export.
 - [x] Add deterministic priority sorting with scope, identity and family
