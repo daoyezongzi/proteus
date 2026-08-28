@@ -88,6 +88,7 @@
       "type": "object",
       "properties": {
         "provider": {"type": "string", "minLength": 1},
+        "enabled": {"type": "boolean"},
         "checked": {"type": "integer", "minimum": 0},
         "supplier_found": {"type": "integer", "minimum": 0},
         "no_supplier": {"type": "integer", "minimum": 0},

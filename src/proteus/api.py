@@ -107,6 +107,7 @@ class NorthwayMvpRunRequest(BaseModel):
     discovery_pages: int = Field(default=1, ge=1, le=10)
     request_budget: int = Field(default=20, ge=1, le=500)
     max_1688_checks: int = Field(default=20, ge=0, le=500)
+    enable_1688_prefilter: bool = True
     max_amazon_queries_per_family: int = Field(default=3, ge=1, le=5)
     min_family_price_usd: float = Field(default=20.0, ge=0, le=1000000)
     min_observed_ebay_demand: int = Field(default=1, ge=0, le=1000000)

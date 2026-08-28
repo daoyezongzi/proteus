@@ -98,6 +98,7 @@ class FakeFrontendService:
             "discovery_pages": 1,
             "request_budget": 12,
             "max_1688_checks": 20,
+            "enable_1688_prefilter": True,
             "max_amazon_queries_per_family": 3,
             "min_family_price_usd": 20.0,
             "min_observed_ebay_demand": 1,
@@ -218,6 +219,7 @@ def test_frontend_api_exposes_northway_family_screening_and_json_export() -> Non
     assert "max_candidates" not in model["properties"]
     assert "archetype" in model["properties"]
     assert "max_1688_checks" in model["properties"]
+    assert model["properties"]["enable_1688_prefilter"]["default"] is True
     assert "max_competitive_products" not in model["properties"]
 
 

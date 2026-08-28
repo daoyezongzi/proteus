@@ -135,6 +135,15 @@
                 <small>独立于 SerpApi；供应商不明不进入 Amazon</small>
               </label>
 
+              <label class="field field--toggle">
+                <span>1688 供应商前置筛选</span>
+                <span class="toggle-control">
+                  <input id="enable_1688_prefilter" name="enable_1688_prefilter" type="checkbox" checked>
+                  <strong id="enable_1688_prefilter_label">已启用</strong>
+                </span>
+                <small>关闭后不访问 1688，仍核对 Amazon；供应商阶段会标记为未执行。</small>
+              </label>
+
               <label class="field">
                 <span>每个家族 Amazon 查询</span>
                 <input id="max_amazon_queries_per_family" name="max_amazon_queries_per_family" type="number" min="1" max="5" value="3" required>

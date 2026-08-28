@@ -322,6 +322,7 @@ def northway_mvp_policy() -> dict[str, Any]:
             "discovery_pages": {"minimum": 1, "maximum": 10, "default": 1},
             "request_budget": {"minimum": 1, "maximum": 500, "default": 20},
             "max_1688_checks": {"minimum": 0, "maximum": 500, "default": 20},
+            "enable_1688_prefilter": {"default": True, "can_disable": True},
         },
         "archetype_selection": {
             "required": True,
@@ -329,11 +330,14 @@ def northway_mvp_policy() -> dict[str, Any]:
             "description": "Each run selects exactly one Northway leaf archetype.",
         },
         "qualification_boundary": (
-            "Each run scans one selected Northway archetype. After local scope, family and "
-            "demand filters, a shallow read-only 1688 supplier prefilter runs before Amazon. "
-            "Only a family with a valid 1688 offer ID, real 1688 URL, supplier identity and "
-            "matching title proceeds to Amazon. Observed competition is a ranking and manual-"
-            "review signal, not an automatic upper bound. It is not a purchase instruction."
+            "Each run scans one selected Northway archetype. By default, after local scope, "
+            "family and demand filters, a shallow read-only 1688 supplier prefilter runs before "
+            "Amazon. Only a family with a valid 1688 offer ID, real 1688 URL, supplier identity "
+            "and matching title proceeds to Amazon. The prefilter may be explicitly disabled for "
+            "a run when 1688 is unavailable; that run can continue Amazon market review, but the "
+            "unverified supplier stage keeps the final decision at REVIEW_REQUIRED. Observed "
+            "competition is a ranking and manual-review signal, not an automatic upper bound. It "
+            "is not a purchase instruction."
         ),
     }
 
@@ -1189,6 +1193,7 @@ def compact_northway_result(result: Mapping[str, Any]) -> dict[str, Any]:
             "min_family_price_usd",
             "min_observed_ebay_demand",
             "max_1688_checks",
+            "enable_1688_prefilter",
             "max_amazon_queries_per_family",
             "competition_upper_bound",
         ),
@@ -1255,7 +1260,7 @@ def compact_northway_result(result: Mapping[str, Any]) -> dict[str, Any]:
         "provider_budgets": compact_provider_budgets,
         "supply_filter": _compact_fields(
             result.get("supply_filter"),
-            ("provider", "checked", "supplier_found", "no_supplier", "review_required", "not_run"),
+            ("provider", "enabled", "checked", "supplier_found", "no_supplier", "review_required", "not_run"),
         ),
         "discovery": compact_discovery,
         "summary": _compact_fields(
@@ -1409,6 +1414,7 @@ def run_northway_mvp(
     ebay_category_id: str = "6028",
     request_budget: int = 20,
     max_1688_checks: int = 20,
+    enable_1688_prefilter: bool = True,
     max_amazon_queries_per_family: int = 3,
     max_competitive_products: int | None = None,
     min_family_price_usd: float = 20.0,
@@ -1432,6 +1438,8 @@ def run_northway_mvp(
         )
     if not isinstance(max_1688_checks, int) or isinstance(max_1688_checks, bool) or not 0 <= max_1688_checks <= 500:
         raise ValueError("max_1688_checks must be between 0 and 500")
+    if not isinstance(enable_1688_prefilter, bool):
+        raise ValueError("enable_1688_prefilter must be a boolean")
     if not 1 <= max_amazon_queries_per_family <= 5:
         raise ValueError("max_amazon_queries_per_family must be between 1 and 5")
     if min_family_price_usd < 0 or min_observed_ebay_demand < 0:
@@ -1638,19 +1646,22 @@ def run_northway_mvp(
         provider=None,
     )
 
-    explicit_prefilter = bool(collectors and SUPPLIER_PREFILTER_COLLECTOR in collectors)
-    explicit_legacy_supply = bool(collectors and SUPPLY_COLLECTOR in collectors)
-    local_cli_available = is_1688_cli_available()
-    if explicit_prefilter:
-        supplier_mode = "injected_prefilter"
-    elif explicit_legacy_supply:
-        supplier_mode = "injected_legacy_supply"
-    elif local_cli_available:
-        supplier_mode = "local_1688_cli"
-    elif hiobuy_key and receiver:
-        supplier_mode = "hiobuy_compatibility"
+    if not enable_1688_prefilter:
+        supplier_mode = "disabled"
     else:
-        supplier_mode = "local_1688_cli"
+        explicit_prefilter = bool(collectors and SUPPLIER_PREFILTER_COLLECTOR in collectors)
+        explicit_legacy_supply = bool(collectors and SUPPLY_COLLECTOR in collectors)
+        local_cli_available = is_1688_cli_available()
+        if explicit_prefilter:
+            supplier_mode = "injected_prefilter"
+        elif explicit_legacy_supply:
+            supplier_mode = "injected_legacy_supply"
+        elif local_cli_available:
+            supplier_mode = "local_1688_cli"
+        elif hiobuy_key and receiver:
+            supplier_mode = "hiobuy_compatibility"
+        else:
+            supplier_mode = "local_1688_cli"
 
     def call_supplier(
         primary: str,
@@ -1676,6 +1687,7 @@ def run_northway_mvp(
         )
 
     supplier_provider_label = {
+        "disabled": "DISABLED_BY_REQUEST",
         "injected_prefilter": "1688_supplier_prefilter",
         "injected_legacy_supply": "china_supply",
         "hiobuy_compatibility": "HIOBUY_PUBLIC_REST",
@@ -1756,7 +1768,28 @@ def run_northway_mvp(
                 evidence_gaps.append("EBAY_DEMAND_FILTER_NOT_PASSED")
         else:
             primary = _clean_text(family.get("identifiers", [{}])[0].get("raw"))
-            if not primary:
+            amazon_allowed = False
+            if not enable_1688_prefilter:
+                if not primary:
+                    stages["china_non_oem_supply"] = _stage(
+                        "REVIEW_REQUIRED",
+                        None,
+                        None,
+                        None,
+                        "No primary family identifier is available; Amazon was not searched.",
+                    )
+                    evidence_gaps.append("PRODUCT_FAMILY_IDENTIFIER_MISSING")
+                else:
+                    stages["china_non_oem_supply"] = _stage(
+                        "NOT_RUN",
+                        None,
+                        None,
+                        None,
+                        "1688 supplier prefilter was disabled for this run; supplier evidence was not collected.",
+                    )
+                    evidence_gaps.append("1688_PREFILTER_DISABLED")
+                    amazon_allowed = True
+            elif not primary:
                 stages["china_non_oem_supply"] = _stage(
                     "REVIEW_REQUIRED", None, None, None, "No primary family identifier is available for 1688."
                 )
@@ -1795,8 +1828,9 @@ def run_northway_mvp(
                     last_query=supply_outcome.get("query", primary),
                     provider=supply_outcome.get("provider", supplier_provider_label),
                 )
+                amazon_allowed = stages["china_non_oem_supply"]["status"] == "PASSED"
 
-            if stages["china_non_oem_supply"]["status"] == "PASSED":
+            if amazon_allowed:
                 query_pack = build_amazon_query_pack(
                     family, max_queries=max_amazon_queries_per_family
                 )
@@ -1849,8 +1883,13 @@ def run_northway_mvp(
                 if not competition["competition_complete"]:
                     evidence_gaps.append("AMAZON_FAMILY_SEARCH_INCOMPLETE")
             else:
+                skip_reason = (
+                    "No primary family identifier is available; Amazon was not searched."
+                    if not primary
+                    else "1688 supplier prefilter did not pass; Amazon was not searched."
+                )
                 stages["amazon_family_competition"] = _stage(
-                    "NOT_RUN", None, None, None, "1688 supplier prefilter did not pass; Amazon was not searched."
+                    "NOT_RUN", None, None, None, skip_reason
                 )
                 stages["family_price_floor"] = _stage("NOT_RUN", None, None, None, "Not evaluated.")
         supply_stage = stages["china_non_oem_supply"]
@@ -1904,6 +1943,7 @@ def run_northway_mvp(
     )
     supply_filter = {
         "provider": supplier_provider_label,
+        "enabled": enable_1688_prefilter,
         "checked": supply_checks_used,
         "supplier_found": supply_statuses["PASSED"],
         "no_supplier": supply_statuses["REJECTED"],
@@ -1934,6 +1974,7 @@ def run_northway_mvp(
             "min_family_price_usd": float(min_family_price_usd),
             "min_observed_ebay_demand": min_observed_ebay_demand,
             "max_1688_checks": max_1688_checks,
+            "enable_1688_prefilter": enable_1688_prefilter,
             "max_amazon_queries_per_family": max_amazon_queries_per_family,
             "competition_upper_bound": None,
         },

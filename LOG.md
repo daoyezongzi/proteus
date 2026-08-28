@@ -1,5 +1,16 @@
 # Proteus Development Log
 
+## 2026-08-28 — Add temporary 1688 prefilter disable switch
+
+- Added the default-on `enable_1688_prefilter` request/UI switch. When disabled, the runner
+  does not call `1688-cli`, including its local authenticated-profile check, and eligible
+  families continue to Amazon market review.
+- Disabled runs mark the 1688 stage `NOT_RUN`, add `1688_PREFILTER_DISABLED`, expose
+  `supply_filter.enabled=false`, and remain `REVIEW_REQUIRED`; they cannot become supplier-
+  qualified or automatic opportunity candidates.
+- The UI automatically changes the result view from “有 1688 供应商” to “可复核” so Amazon
+  results are not hidden, and displays the disabled state in the run notice and budget summary.
+
 ## 2026-08-28 — First live single-category run after 1688 prefilter
 
 - Run `e7f0e998-e836-49bd-a720-f75767151bf9` completed with 13 candidates from 60 eBay

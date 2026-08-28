@@ -82,6 +82,10 @@ def test_policy_is_narrow_and_has_no_candidate_cap() -> None:
     assert policy["run_bounds"]["candidate_cap"] is None
     assert policy["run_bounds"]["request_budget"]["minimum"] == 1
     assert policy["run_bounds"]["max_1688_checks"]["default"] == 20
+    assert policy["run_bounds"]["enable_1688_prefilter"] == {
+        "default": True,
+        "can_disable": True,
+    }
     assert "fog_light_bezel" in policy["archetypes"]
     assert "max_competitive_products" not in policy["default_thresholds"]
     assert policy["competition_rule"]["automatic_upper_bound"] is None
@@ -544,3 +548,70 @@ def test_supplier_prefilter_rejects_without_spending_amazon_budget() -> None:
     assert report["stages"]["amazon_family_competition"]["status"] == "NOT_RUN"
     assert report["decision"] == "REJECTED"
     assert result["request_budget"]["used"] == 1
+
+
+def test_disabling_1688_prefilter_runs_amazon_but_keeps_supply_unverified(monkeypatch) -> None:
+    listing = candidate(
+        "25778388",
+        "Right Fog Light Bezel for 2007-2013 Chevrolet Silverado 25778388",
+    )
+    amazon_calls: list[str] = []
+
+    def discover(**_kwargs):
+        return {
+            "status": "SUCCESS",
+            "retrieved_at": "2026-08-28T00:00:00Z",
+            "stats": {"candidates_emitted": 1},
+            "candidates": [listing],
+            "diagnostics": [],
+        }
+
+    def should_not_call_supplier(*_args, **_kwargs):
+        raise AssertionError("1688 supplier prefilter must be skipped when disabled")
+
+    def should_not_check_cli():
+        raise AssertionError("1688 CLI readiness must be skipped when disabled")
+
+    monkeypatch.setattr("proteus.northway_mvp.is_1688_cli_available", should_not_check_cli)
+
+    def search(query: str, **_kwargs):
+        amazon_calls.append(query)
+        return amazon_result(query, [], complete=False)
+
+    result = run_northway_mvp(
+        serpapi_key="configured",
+        archetype="fog_light_bezel",
+        request_budget=20,
+        max_1688_checks=1,
+        enable_1688_prefilter=False,
+        max_amazon_queries_per_family=1,
+        collectors={
+            "discovery": discover,
+            "amazon_search": search,
+            "1688_supplier_prefilter": should_not_call_supplier,
+        },
+    )
+
+    report = result["reports"][0]
+    assert amazon_calls == ["25778388"]
+    assert report["stages"]["china_non_oem_supply"]["status"] == "NOT_RUN"
+    assert "1688_PREFILTER_DISABLED" in report["evidence_gaps"]
+    assert report["stages"]["amazon_family_competition"]["status"] == "REVIEW_REQUIRED"
+    assert report["decision"] == "REVIEW_REQUIRED"
+    assert result["policy"]["enable_1688_prefilter"] is False
+    assert result["provider_budgets"]["1688"]["used"] == 0
+    assert result["supply_filter"] == {
+        "provider": "DISABLED_BY_REQUEST",
+        "enabled": False,
+        "checked": 0,
+        "supplier_found": 0,
+        "no_supplier": 0,
+        "review_required": 0,
+        "not_run": 1,
+    }
+    schema = json.loads(
+        (Path(__file__).parents[1] / "contracts" / "v0_2_4_northway_mvp_result.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(result)

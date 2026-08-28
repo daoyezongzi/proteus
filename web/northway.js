@@ -79,6 +79,7 @@ const stageOrder = [
 const resultFilters = [
   ["supplier", "有 1688 供应商", (report) => report.stages?.china_non_oem_supply?.status === "PASSED"],
   ["supplier_review", "供应商待核", (report) => report.stages?.china_non_oem_supply?.status === "REVIEW_REQUIRED"],
+  ["supplier_disabled", "1688 未执行", (report) => report.evidence_gaps?.includes("1688_PREFILTER_DISABLED")],
   ["reviewable", "可复核", (report) => report.decision !== "REJECTED"],
   ["priority", "优先候选", (report) => report.decision === "OPPORTUNITY_CANDIDATE"],
   ["review", "待判断", (report) => report.decision === "REVIEW_REQUIRED"],
@@ -115,6 +116,7 @@ const reasonLabels = {
   "A valid family-matching 1688 offer, real offer URL and supplier identity are available.": "已找到匹配产品族的 1688 商品、真实链接和供应商身份。",
   "No valid family-matching 1688 offer with a supplier identity was found.": "没有找到同时匹配产品族且带供应商身份的 1688 商品。",
   "1688 supplier evidence needs review because the provider or parser did not complete.": "1688 供应商证据未完整返回，需要人工复核。",
+  "1688 supplier prefilter was disabled for this run; supplier evidence was not collected.": "本次已关闭 1688 供应商筛选，未采集供应商证据。",
   "Amazon family search incomplete; low competition cannot be proven.": "Amazon 产品族搜索不完整，无法证明竞争数量；需人工复核。",
   "Listing title is missing.": "listing 标题缺失。",
 };
@@ -161,6 +163,17 @@ function syncBudgetMinimum() {
   input.min = String(required);
   input.setCustomValidity(Number(input.value) < required ? `总请求预算至少需要 ${required}` : "");
   $("#budgetHint").textContent = `至少 ${required} 次用于当前小类发现；只计 SerpApi`;
+}
+
+function is1688PrefilterEnabled() {
+  return $("#enable_1688_prefilter")?.checked !== false;
+}
+
+function sync1688PrefilterLabel() {
+  const input = $("#enable_1688_prefilter");
+  const label = $("#enable_1688_prefilter_label");
+  if (!input || !label) return;
+  label.textContent = input.checked ? "已启用" : "暂时关闭";
 }
 
 function archetypeEntries() {
@@ -274,6 +287,7 @@ function collectForm() {
     discovery_pages: number("discovery_pages"),
     request_budget: number("request_budget"),
     max_1688_checks: number("max_1688_checks"),
+    enable_1688_prefilter: is1688PrefilterEnabled(),
     max_amazon_queries_per_family: number("max_amazon_queries_per_family"),
     min_family_price_usd: number("min_family_price_usd"),
     min_observed_ebay_demand: number("min_observed_ebay_demand"),
@@ -686,7 +700,6 @@ function renderRunProgress(progress = {}) {
 
 function renderResult(result) {
   lastResult = result;
-  activeFilter = "supplier";
   $("#emptyState").hidden = true;
   $("#resultContent").hidden = false;
   $("#exportButton").hidden = false;
@@ -698,6 +711,8 @@ function renderResult(result) {
   const providerBudgets = result.provider_budgets || {};
   const supplierBudget = providerBudgets["1688"] || {};
   const supplyFilter = result.supply_filter || {};
+  const supplierPrefilterEnabled = supplyFilter.enabled !== false;
+  activeFilter = supplierPrefilterEnabled ? "supplier" : "reviewable";
   const reports = Array.isArray(result.reports) ? result.reports : [];
   const supplierCandidates = reports.filter((report) => report.stages?.china_non_oem_supply?.status === "PASSED").length;
   const cells = [
@@ -706,7 +721,7 @@ function renderResult(result) {
     [summary.review_required || 0, "需要判断", "review"],
     [summary.rejected || 0, "明确淘汰", "reject"],
     [`${value(budget.used, "0")}/${value(budget.limit, "—")}`, "SerpApi", ""],
-    [`${value(supplierBudget.used, "0")}/${value(supplierBudget.limit, "—")}`, "1688 检查", ""],
+    [supplierPrefilterEnabled ? `${value(supplierBudget.used, "0")}/${value(supplierBudget.limit, "—")}` : "已关闭", "1688 检查", ""],
   ];
   $("#runSummary").innerHTML = cells.map(([number, label, tone]) => `<div class="summary-cell" data-tone="${esc(tone)}"><span>${esc(label)}</span><strong>${esc(value(number))}</strong></div>`).join("");
 
@@ -718,7 +733,9 @@ function renderResult(result) {
   if (budget.remaining === 0) {
     messages.push("本次 SerpApi 预算已用尽。已经发现的候选仍被保留，未完成的 Amazon 查询已标记为证据缺口。");
   }
-  if (supplyFilter.review_required || supplyFilter.not_run) {
+  if (!supplierPrefilterEnabled) {
+    messages.push("本次已关闭 1688 供应商前置筛选，未访问 1688；Amazon 结果仅供市场人工复核，不能视为已有供应商或商机通过。");
+  } else if (supplyFilter.review_required || supplyFilter.not_run) {
     messages.push(`1688 供应商检查：${value(supplyFilter.supplier_found, "0")} 个找到供应商，${value(supplyFilter.no_supplier, "0")} 个无供应商，${value(supplyFilter.review_required, "0")} 个待复核。`);
   }
   notice.hidden = !messages.length;
@@ -731,7 +748,7 @@ function renderResult(result) {
   const pagesCompleted = manifest.pages_completed ?? 0;
   const pagesAttempted = manifest.pages_attempted ?? pagesCompleted;
   const selectedLabel = labels[manifest.selected_archetype || manifest.archetypes?.[0]] || "当前小类";
-  $("#resultSubtitle").textContent = `${selectedLabel} · ${pagesCompleted}/${pagesAttempted || typeCount} 页完成 · ${reports.length} 个去重产品家族；默认只展示有 1688 供应商证据的家族。`;
+  $("#resultSubtitle").textContent = `${selectedLabel} · ${pagesCompleted}/${pagesAttempted || typeCount} 页完成 · ${reports.length} 个去重产品家族；${supplierPrefilterEnabled ? "默认只展示有 1688 供应商证据的家族。" : "本次未执行 1688，默认展示可复核家族。"}`;
 }
 
 function showLoading() {
@@ -740,11 +757,14 @@ function showLoading() {
   $("#fullExportButton").hidden = true;
   const empty = $("#emptyState");
   empty.hidden = false;
+  const supplierText = is1688PrefilterEnabled()
+    ? "正在准备当前小类、1688 供应商和 Amazon 阶段。"
+    : "已关闭 1688 供应商筛选，正在准备当前小类和 Amazon 阶段。";
   empty.innerHTML = `${$("#skeletonTemplate").innerHTML}
     <div class="run-progress" role="status" aria-live="polite">
       <div class="run-progress__head"><strong id="progressPhase">准备扫描</strong><span id="progressMeta">排队中</span></div>
       <div class="run-progress__bar" aria-hidden="true"><span id="progressBar"></span></div>
-      <p id="progressQuery">正在准备当前小类、1688 供应商和 Amazon 阶段。</p>
+      <p id="progressQuery">${supplierText}</p>
     </div>`;
   renderRunProgress({ phase: "queued", current: 0, total: 0, last_query: null, provider: null, budget_used: 0 });
 }
@@ -765,13 +785,16 @@ $("#resultFilters").addEventListener("click", (event) => {
 
 $("#discovery_pages").addEventListener("input", syncBudgetMinimum);
 $("#request_budget").addEventListener("input", syncBudgetMinimum);
+$("#enable_1688_prefilter").addEventListener("change", sync1688PrefilterLabel);
 
 $("#runForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   if (!form.reportValidity()) return;
   setRunBusy(true);
-  setFormStatus("正在扫描当前小类：先筛选 1688 供应商，再使用 Amazon 额度。请不要关闭本页。");
+  setFormStatus(is1688PrefilterEnabled()
+    ? "正在扫描当前小类：先筛选 1688 供应商，再使用 Amazon 额度。请不要关闭本页。"
+    : "本次已关闭 1688 供应商筛选，将直接使用 Amazon 额度；结果需要人工确认货源。请不要关闭本页。");
   showLoading();
 
   try {
@@ -797,4 +820,5 @@ $("#exportButton").addEventListener("click", () => {
   window.location.href = `${API}/northway/runs/${encodeURIComponent(activeRunId)}/export/compact`;
 });
 
+sync1688PrefilterLabel();
 boot();

@@ -14,6 +14,8 @@
   无供应商、provider 失败和未查询必须分成 REJECTED / REVIEW_REQUIRED / NOT_RUN。
 - [x] 前端恢复单分类选择，新增 1688 供应商阶段与“有供应商 / 待核验 / 无供应商”筛选，
   并显示可解释的分阶段进度。
+- [x] 增加默认开启的 `enable_1688_prefilter` 开关；关闭时跳过 1688 调用并继续 Amazon，
+  供应商阶段保留 `NOT_RUN` 和待复核语义。
 
 本节已落地。本机已安装 `1688-cli` 0.1.47，默认 profile 已通过 QR 登录，并经
 `whoami` / `doctor --no-launch` 只读检查；该安装阶段尚未执行真实商品搜索 canary，
