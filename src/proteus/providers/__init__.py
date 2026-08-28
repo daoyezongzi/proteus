@@ -47,6 +47,7 @@ from proteus.providers.local_1688_cli import (
     build_1688_query_pack,
     collect_1688_supplier,
     is_1688_cli_available,
+    is_1688_cli_authenticated,
     is_valid_1688_offer_id,
     is_real_1688_url,
 )
@@ -142,6 +143,7 @@ __all__ = [
     "build_1688_query_pack",
     "collect_1688_supplier",
     "is_1688_cli_available",
+    "is_1688_cli_authenticated",
     "is_valid_1688_offer_id",
     "is_real_1688_url",
     "SERPAPI_SEARCH_ENDPOINT",

@@ -2,7 +2,21 @@ from __future__ import annotations
 
 import json
 
-from proteus.providers.local_1688_cli import collect_1688_supplier
+from proteus.providers.local_1688_cli import (
+    collect_1688_supplier,
+    is_1688_cli_authenticated,
+)
+
+
+def test_local_cli_authentication_check_is_read_only() -> None:
+    calls: list[list[str]] = []
+
+    def run(argv, _timeout):
+        calls.append(list(argv))
+        return 0, '{"loggedIn": true, "memberId": "member-1"}', ""
+
+    assert is_1688_cli_authenticated(command_runner=run) is True
+    assert calls == [["1688", "whoami", "--profile", "default", "--json"]]
 
 
 def test_local_cli_supplier_prefilter_stops_on_search_supplier_evidence() -> None:

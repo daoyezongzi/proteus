@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -90,8 +91,19 @@ def is_valid_1688_offer_id(value: Any) -> bool:
 def _default_command_runner(
     argv: Sequence[str], timeout_seconds: float
 ) -> tuple[int, str, str]:
+    command = list(argv)
+    if os.name == "nt":
+        resolved = shutil.which(command[0])
+        if resolved and resolved.casefold().endswith((".cmd", ".bat")):
+            command = [
+                os.environ.get("ComSpec", "cmd.exe"),
+                "/d",
+                "/c",
+                resolved,
+                *command[1:],
+            ]
     completed = subprocess.run(
-        list(argv),
+        command,
         capture_output=True,
         check=False,
         encoding="utf-8",
@@ -119,6 +131,33 @@ def _parse_json(stdout: str) -> Any | None:
                 continue
             return value
     return None
+
+
+def is_1688_cli_authenticated(
+    executable: str = DEFAULT_EXECUTABLE,
+    *,
+    profile: str = "default",
+    timeout_seconds: float = 8.0,
+    command_runner: CommandRunner | None = None,
+) -> bool:
+    """Check the local profile with ``whoami`` without opening a browser."""
+
+    if not _text(executable) or not _text(profile):
+        return False
+    if command_runner is None and not is_1688_cli_available(executable):
+        return False
+    runner = command_runner or _default_command_runner
+    try:
+        return_code, stdout, _stderr = runner(
+            [executable, "whoami", "--profile", profile, "--json"],
+            float(timeout_seconds),
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError, OSError):
+        return False
+    if return_code != 0:
+        return False
+    payload = _parse_json(stdout)
+    return isinstance(payload, Mapping) and payload.get("loggedIn") is True
 
 
 def _walk_offer_records(value: Any, *, depth: int = 0) -> list[Mapping[str, Any]]:
@@ -469,6 +508,7 @@ __all__ = [
     "build_1688_query_pack",
     "collect_1688_supplier",
     "is_1688_cli_available",
+    "is_1688_cli_authenticated",
     "is_valid_1688_offer_id",
     "is_real_1688_url",
 ]

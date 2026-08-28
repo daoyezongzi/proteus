@@ -17,10 +17,18 @@
 - Updated the Claude/TradeEye-style operator surface with a single-category radio selection,
   supplier-status filters, 1688 evidence cards and live phase/progress text. Local replay and
   compact JSON export were exercised through the browser harness with no console errors.
-- Verification: 332 offline tests passed, Python compilation passed, JSON schema parsing passed,
-  JavaScript syntax check passed, `git diff --check` passed. The current machine does not have
-  the `1688` executable installed, so a real run will fail closed at supplier verification and
-  will not spend Amazon quota until the CLI is installed and logged in.
+- Verification: 333 offline tests passed, Python compilation passed, JSON schema parsing passed,
+  JavaScript syntax check passed, `git diff --check` passed. The local CLI has since been
+  installed and the default profile authenticated with read-only `whoami`/`doctor` checks;
+  no product-search canary has been run yet.
+
+## 2026-08-28 — Activated local 1688 profile
+
+- Installed `1688-cli` 0.1.47 with Node 24 and authenticated the default profile by QR scan.
+- Confirmed the daemon and cached session are healthy. The adapter now recognizes Windows npm
+  `.cmd` shims and reports the local provider as `READY` after a read-only `whoami` check.
+- No 1688 product search or SerpApi run was triggered during setup; the first canary remains
+  an explicit operator action.
 
 ## 2026-08-28 — Approved quota-first category scan and 1688 supplier prefilter
 

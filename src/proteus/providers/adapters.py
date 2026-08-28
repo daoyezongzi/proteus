@@ -20,6 +20,7 @@ from proteus.providers.local_1688_cli import (
     DEFAULT_EXECUTABLE as DEFAULT_1688_CLI_EXECUTABLE,
     collect_1688_supplier,
     is_1688_cli_available,
+    is_1688_cli_authenticated,
 )
 from proteus.providers.nexscope import (
     collect_1688_search,
@@ -419,6 +420,11 @@ class Local1688CliProvider:
 
     def preflight(self) -> ProviderReadiness:
         executable_available = is_1688_cli_available(self.executable)
+        session_authenticated = (
+            is_1688_cli_authenticated(self.executable)
+            if executable_available
+            else False
+        )
         return ProviderReadiness(
             self.provider_id,
             self.capability,
@@ -437,8 +443,10 @@ class Local1688CliProvider:
                 ),
                 ReadinessCheck(
                     "SESSION_AUTHENTICATED",
-                    CheckStatus.UNKNOWN,
-                    "The persistent 1688 profile still needs a live login/doctor check.",
+                    CheckStatus.PASS if session_authenticated else CheckStatus.UNKNOWN,
+                    "The default 1688 profile is authenticated."
+                    if session_authenticated
+                    else "Run 1688 login for the default profile before scanning.",
                 ),
             ),
         )
