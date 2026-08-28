@@ -36,9 +36,11 @@ V0.2.3 精确 OEM 链路和 HioBuy 1688 兼容路径继续保留，但不再是�
 - 展示 eBay、1688、Amazon 各阶段的当前进度和独立预算；
 - 下载包含规则读数、来源、查询、证据缺口、失败原因和排序的完整 JSON。
 
-当前真实一页雾灯框探针检查了 60 条结果，生成 14 个候选；在总请求预算为 5、每家族
-仅执行一个 Amazon 查询的保守探针下，3 个进入市场 shortlist、3 个待复核、8 个明确
-淘汰。该探针证明链路可运行，不代表这些候选已完成供货和利润复核。
+最近一次本机受控运行（2026-08-28，单分类 `hood_latch_release_cable`）检查了 60 条 eBay
+结果，生成 13 个候选；1688 检查 13 个，其中 2 个有供应商、10 个待复核、1 个明确无供应商。
+只有通过供应商阶段的候选进入 Amazon，SerpApi 实际使用 5/20 次；最终为 0 个市场 shortlist、
+12 个待复核、1 个淘汰。该运行验证的是配额优先顺序和失败状态保留，不代表候选已经完成市场、供货
+或利润验收。具体证据和运行 ID 见 `LOG.md`。
 
 ## V0.2.3 兼容链路
 
@@ -116,6 +118,22 @@ py -3.12 -m venv .venv
 `1 × 扫描页数`；1688 检查使用独立的 `max_1688_checks`，不会占用 SerpApi 预算。
 扫描范围内的候选不设数量上限，但页面数、两个 provider 的边界和运行预算仍控制成本。
 
+查询状态和导出精简 JSON：
+
+```powershell
+$runId = $job.run_id
+do {
+  Start-Sleep -Seconds 2
+  $state = Invoke-RestMethod `
+    -Uri "http://127.0.0.1:8765/api/v1/northway/runs/$runId"
+  $state.status
+} while ($state.status -in @("QUEUED", "RUNNING"))
+
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8765/api/v1/northway/runs/$runId/export/compact" `
+  -OutFile ".\northway-$runId.compact.json"
+```
+
 ## 配置
 
 默认只询问 SerpApi Key，并把它存入 Windows 凭证库：
@@ -151,6 +169,23 @@ npm i -g 1688-cli
 
 Proteus 只调用 `search --max`，必要时读取一个 `offer` 详情；本项目不会调用询价、购物车、
 结算或下单命令。
+
+如果启动时提示 Windows `10048` 或“端口 8765 已被占用”，先查看占用进程：
+
+```powershell
+Get-NetTCPConnection -LocalPort 8765 -State Listen |
+  Select-Object LocalAddress, LocalPort, OwningProcess
+Get-Process -Id <PID>
+```
+
+确认是旧的 Proteus 实例后再关闭它，或改用未占用端口手动启动：
+
+```powershell
+Stop-Process -Id <PID>
+.\.venv\Scripts\python.exe -m proteus api --port 8766
+```
+
+然后打开 `http://127.0.0.1:8766/`。关闭 `start-web.bat` 窗口会停止由该窗口启动的服务。
 
 ## 启动前端
 

@@ -1,5 +1,26 @@
 # Proteus Development Log
 
+## 2026-08-28 — First live single-category run after 1688 prefilter
+
+- Run `e7f0e998-e836-49bd-a720-f75767151bf9` completed with 13 candidates from 60 eBay
+  results (`eligible_sold_listings=23`, `listings_with_part_number=13`). The run used the
+  restored single `hood_latch_release_cable` category.
+- The quota-first order behaved as intended: 13 families were checked by local `1688-cli`,
+  2 had a supplier, 1 had an explicit no-supplier result, and 10 remained `REVIEW_REQUIRED`.
+  Only the supplier-passed families reached Amazon; SerpApi used 5/20 requests and the local
+  1688 budget used 13/20 checks.
+- Final run status was 0 market shortlists, 12 `REVIEW_REQUIRED` and 1 rejected. The Amazon
+  evidence was incomplete, so this run does not establish low competition or a zero-result
+  conclusion.
+- The Nissan family exposed the current query-precision issue. Its resolved fitment was
+  polluted as `Nissan Maxima 4RA0A`; the query pack was exact `65621-4RA0A` followed by
+  `hood latch release cable Nissan Maxima 4RA0A`. The exact request returned `HTTP_ERROR` and
+  the fallback timed out. This is provider-incomplete evidence, not proof of 232 competitors.
+- The Amazon screenshot query `nissan maxima hood release cable` was not present in this run's
+  persisted query attempts. It is therefore treated as manual or another-path evidence until
+  its JSON provenance is available. The separate MPN-fragment parser and broad-fallback issues
+  remain open in `TODO.md`; no fix is claimed by this entry.
+
 ## 2026-08-28 — Implemented quota-first single-category funnel and 1688 prefilter
 
 - Restored the public Northway request and UI to one required leaf `archetype`; the nine
