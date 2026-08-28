@@ -146,6 +146,9 @@ npm i -g 1688-cli
 1688 login
 ```
 
+`1688-cli` 是 Node CLI，不安装进 Proteus 的 Python `.venv`；Proteus 通过系统 `PATH`
+调用 `1688`，而 Python `.venv` 继续只负责后端服务和依赖隔离。
+
 Proteus 只调用 `search --max`，必要时读取一个 `offer` 详情；本项目不会调用询价、购物车、
 结算或下单命令。
 
