@@ -19,6 +19,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from proteus import __version__
+from proteus.category_catalog import (
+    CategoryCatalog,
+    CategoryNotFoundError,
+    runtime_category_definition,
+)
 from proteus.credentials import (
     HIOBUY_API_KEY,
     MARKETCHECK_API_KEY,
@@ -28,7 +33,7 @@ from proteus.credentials import (
     resolve_secret,
 )
 from proteus.normalization import normalize_part_number
-from proteus.northway_mvp import ARCHETYPES, compact_northway_result, northway_mvp_policy
+from proteus.northway_mvp import compact_northway_result, northway_mvp_policy
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
     LOCAL_1688_CLI_ID,
@@ -62,6 +67,8 @@ class FrontendService(Protocol):
     def submit_northway_run(self, request: dict) -> dict: ...
 
     def get_northway_run(self, run_id: str) -> dict | None: ...
+
+    def northway_policy(self) -> dict: ...
 
 
 class ApiRunRequest(BaseModel):
@@ -103,21 +110,25 @@ class NorthwayMvpRunRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    archetype: str = Field(min_length=1)
+    archetype: str = Field(
+        min_length=3,
+        max_length=80,
+        pattern=r"^[a-z][a-z0-9_]{2,79}$",
+    )
     discovery_pages: int = Field(default=1, ge=1, le=10)
     request_budget: int = Field(default=20, ge=1, le=500)
     max_1688_checks: int = Field(default=20, ge=0, le=500)
     enable_1688_prefilter: bool = True
     max_amazon_queries_per_family: int = Field(default=3, ge=1, le=5)
+    grade_a_max_competitors: int = Field(default=5, ge=0, le=100000)
+    grade_a_minus_max_competitors: int = Field(default=8, ge=1, le=100000)
     min_family_price_usd: float = Field(default=20.0, ge=0, le=1000000)
     min_observed_ebay_demand: int = Field(default=1, ge=0, le=1000000)
 
     @field_validator("archetype")
     @classmethod
     def validate_archetype(cls, value: str) -> str:
-        if value not in ARCHETYPES:
-            raise ValueError("archetype must be one of the Northway leaf categories")
-        return value
+        return value.strip()
 
     @model_validator(mode="after")
     def validate_discovery_budget(self) -> "NorthwayMvpRunRequest":
@@ -126,6 +137,11 @@ class NorthwayMvpRunRequest(BaseModel):
             raise ValueError(
                 "request_budget must cover the selected archetype discovery pages "
                 f"({required} requests required)"
+            )
+        if self.grade_a_minus_max_competitors <= self.grade_a_max_competitors:
+            raise ValueError(
+                "grade_a_minus_max_competitors must be greater than "
+                "grade_a_max_competitors"
             )
         return self
 
@@ -369,7 +385,8 @@ class InMemoryRunManager:
 
 
 class DefaultFrontendService:
-    def __init__(self) -> None:
+    def __init__(self, *, category_catalog: CategoryCatalog | None = None) -> None:
+        self._category_catalog = category_catalog or CategoryCatalog()
         self._manager = InMemoryRunManager(self._run)
         self._mvp_manager = InMemoryRunManager(self._run_mvp)
         self._northway_manager = InMemoryRunManager(
@@ -478,6 +495,13 @@ class DefaultFrontendService:
     def get_mvp_run(self, run_id: str) -> dict | None:
         return self._mvp_manager.get(run_id)
 
+    def northway_policy(self) -> dict:
+        definitions = self._category_catalog.active_runtime_definitions()
+        return northway_mvp_policy(
+            definitions,
+            category_catalog=self._category_catalog.public_active_catalog(),
+        )
+
     def _run_northway(
         self,
         request: dict,
@@ -493,7 +517,16 @@ class DefaultFrontendService:
         )
 
     def submit_northway_run(self, request: dict) -> dict:
-        return self._northway_manager.submit(request)
+        category_id = str(request.get("archetype") or "")
+        active = self._category_catalog.get_active_definition(category_id)
+        snapshot = dict(request)
+        snapshot["category_definition"] = runtime_category_definition(
+            active["definition"],
+            version_id=active["version_id"],
+            version_number=active["version_number"],
+            status=active["status"],
+        )
+        return self._northway_manager.submit(snapshot)
 
     def get_northway_run(self, run_id: str) -> dict | None:
         return self._northway_manager.get(run_id)
@@ -565,13 +598,32 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="run not found")
         return value
 
+    def resolved_northway_policy() -> dict:
+        policy_getter = getattr(active_service, "northway_policy", None)
+        if callable(policy_getter):
+            return dict(policy_getter())
+        return northway_mvp_policy()
+
     @app.get("/api/v1/northway/policy")
     def northway_policy() -> dict:
-        return northway_mvp_policy()
+        return resolved_northway_policy()
 
     @app.post("/api/v1/northway/runs", status_code=status.HTTP_202_ACCEPTED)
     def submit_northway_run(request: NorthwayMvpRunRequest) -> dict:
-        return active_service.submit_northway_run(request.model_dump())
+        category_id = request.archetype
+        active_categories = resolved_northway_policy().get("archetypes", {})
+        if category_id not in active_categories:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="archetype must be an active Northway leaf category",
+            )
+        try:
+            return active_service.submit_northway_run(request.model_dump())
+        except CategoryNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="the selected category is no longer active; refresh and choose again",
+            ) from exc
 
     @app.get("/api/v1/northway/runs/{run_id}")
     def get_northway_run(run_id: str) -> dict:

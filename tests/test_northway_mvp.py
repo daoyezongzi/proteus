@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
 from proteus.northway_mvp import (
@@ -88,7 +89,19 @@ def test_policy_is_narrow_and_has_no_candidate_cap() -> None:
     }
     assert "fog_light_bezel" in policy["archetypes"]
     assert "max_competitive_products" not in policy["default_thresholds"]
-    assert policy["competition_rule"]["automatic_upper_bound"] is None
+    assert policy["default_thresholds"]["grade_a_max_competitors"] == 5
+    assert policy["default_thresholds"]["grade_a_minus_max_competitors"] == 8
+    assert policy["competition_rule"]["count_field"] == (
+        "competitive_product_cluster_count"
+    )
+
+
+def test_runner_rejects_an_incomplete_category_version_snapshot() -> None:
+    with pytest.raises(ValueError, match="category_version_id"):
+        run_northway_mvp(
+            serpapi_key=None,
+            category_definition={"category_id": "mirror_mount_cover"},
+        )
 
 
 def test_scope_rejects_universal_and_wrong_product_shapes() -> None:
@@ -277,9 +290,26 @@ def test_incomplete_amazon_pages_cannot_prove_low_competition() -> None:
 
     assert aggregate["competition_complete"] is False
     assert aggregate["competition_stage"]["status"] == "REVIEW_REQUIRED"
+    assert aggregate["competition_grade"] == "PENDING"
 
 
-def test_amazon_competition_count_is_report_only_without_an_upper_bound() -> None:
+@pytest.mark.parametrize(
+    ("count", "complete", "expected_grade", "expected_status"),
+    [
+        (5, True, "A", "PASSED"),
+        (6, True, "A-", "PASSED"),
+        (8, True, "A-", "PASSED"),
+        (9, True, "REJECTED", "REJECTED"),
+        (8, False, "PENDING", "REVIEW_REQUIRED"),
+        (9, False, "REJECTED", "REJECTED"),
+    ],
+)
+def test_amazon_competition_grades_use_product_clusters_and_safe_partial_bounds(
+    count: int,
+    complete: bool,
+    expected_grade: str,
+    expected_status: str,
+) -> None:
     resolution = resolve_product_family(
         [
             candidate(
@@ -298,30 +328,35 @@ def test_amazon_competition_count_is_report_only_without_an_upper_bound() -> Non
             "active_offer_count_lower_bound": 1,
             "active_offer_count_complete": True,
         }
-        for index in range(1, 5)
+        for index in range(1, count + 1)
     ]
 
     aggregate = aggregate_amazon_family_results(
         resolution["family"],
-        [amazon_result("25778388", products)],
-        max_competitive_products=0,
+        [amazon_result("25778388", products, complete=complete)],
         min_family_price_usd=20,
+        grade_a_max_competitors=5,
+        grade_a_minus_max_competitors=8,
     )
 
-    assert aggregate["competitive_product_cluster_count"] == 4
-    assert aggregate["competition_stage"]["status"] == "PASSED"
-    assert aggregate["competition_stage"]["operator"] is None
-    assert aggregate["competition_stage"]["threshold"] is None
-    assert "without an automatic upper limit" in aggregate["competition_stage"]["reason"]
+    assert aggregate["competitive_product_cluster_count"] == count
+    assert aggregate["competition_grade"] == expected_grade
+    assert aggregate["competition_stage"]["status"] == expected_status
+    assert aggregate["competition_stage"]["operator"] == "LTE"
 
 
 def test_compact_northway_export_keeps_decisions_and_drops_raw_arrays() -> None:
     full = {
-        "schema_version": "0.2.4",
+        "schema_version": "0.2.5",
         "profile": "northway-product-family-mvp",
         "result_id": "result_0000000000000001",
         "generated_at": "2026-08-28T00:00:00Z",
-        "policy": {"competition_upper_bound": None, "min_family_price_usd": 20.0},
+        "policy": {
+            "grade_a_max_competitors": 5,
+            "grade_a_minus_max_competitors": 8,
+            "category_version_id": "seed.fog_light_bezel.v1",
+            "min_family_price_usd": 20.0,
+        },
         "scan_manifest": {
             "marketplace": "EBAY_US",
             "category_id": "6028",
@@ -351,7 +386,7 @@ def test_compact_northway_export_keeps_decisions_and_drops_raw_arrays() -> None:
         "ranking": ["family-1"],
         "reports": [
             {
-                "schema_version": "0.2.4",
+                "schema_version": "0.2.5",
                 "profile": "northway-product-family-mvp",
                 "candidate_id": "family-1",
                 "discovery_order": 0,
@@ -359,12 +394,18 @@ def test_compact_northway_export_keeps_decisions_and_drops_raw_arrays() -> None:
                 "rank": 1,
                 "category_profile": "vehicle_specific_small_trim",
                 "archetype": "fog_light_bezel",
+                "category_version_id": "seed.fog_light_bezel.v1",
+                "category_group_id": "plastic_parts",
+                "competition_grade": "A",
                 "source_listings": [{"source_listing_id": "ebay-1", "source_listing_title": "title"}],
                 "resolution": {"scope_status": "IN_SCOPE", "identity_status": "RESOLVED", "evidence": [{"raw_value": "long"}]},
                 "family": {"family_key": "family-1", "part_type": "fog light bezel", "evidence": [{"raw_value": "long"}]},
                 "query_pack": [{"query_type": "exact_identifier", "query": "25778388"}],
                 "competition": {
                     "competition_complete": True,
+                    "competition_grade": "A",
+                    "grade_a_max_competitors": 5,
+                    "grade_a_minus_max_competitors": 8,
                     "competitive_product_cluster_count": 1,
                     "competitive_asin_count": 1,
                     "observations": [{"asin": "B000000001", "title": "Brand fog light bezel 25778388", "relation": "INTERCHANGEABLE"}],
@@ -396,6 +437,8 @@ def test_compact_northway_export_keeps_decisions_and_drops_raw_arrays() -> None:
     assert "products" not in compact_report["competition"]["query_evidence"][0]
     assert compact_report["competition"]["relevant_products"][0]["asin"] == "B000000001"
     assert compact_report["competition"]["query_evidence"][0]["products_seen"] == 1
+    assert compact_report["competition_grade"] == "A"
+    assert compact_report["category_version_id"] == "seed.fog_light_bezel.v1"
 
 
 def test_runner_processes_every_discovered_listing_and_records_budget_exhaustion() -> None:
@@ -451,7 +494,7 @@ def test_runner_processes_every_discovered_listing_and_records_budget_exhaustion
     assert len(result["ranking"]) == 2
 
     schema = json.loads(
-        (Path(__file__).parents[1] / "contracts" / "v0_2_4_northway_mvp_result.schema.json").read_text(
+        (Path(__file__).parents[1] / "contracts" / "v0_2_5_northway_mvp_result.schema.json").read_text(
             encoding="utf-8"
         )
     )
@@ -610,7 +653,7 @@ def test_disabling_1688_prefilter_runs_amazon_but_keeps_supply_unverified(monkey
         "not_run": 1,
     }
     schema = json.loads(
-        (Path(__file__).parents[1] / "contracts" / "v0_2_4_northway_mvp_result.schema.json").read_text(
+        (Path(__file__).parents[1] / "contracts" / "v0_2_5_northway_mvp_result.schema.json").read_text(
             encoding="utf-8"
         )
     )

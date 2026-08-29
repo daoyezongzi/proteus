@@ -100,6 +100,8 @@ class FakeFrontendService:
             "max_1688_checks": 20,
             "enable_1688_prefilter": True,
             "max_amazon_queries_per_family": 3,
+            "grade_a_max_competitors": 5,
+            "grade_a_minus_max_competitors": 8,
             "min_family_price_usd": 20.0,
             "min_observed_ebay_demand": 1,
         }
@@ -111,7 +113,7 @@ class FakeFrontendService:
                 "run_id": run_id,
                 "status": "COMPLETED",
                 "result": {
-                    "schema_version": "0.2.4",
+                    "schema_version": "0.2.5",
                     "profile": "northway-product-family-mvp",
                     "reports": [],
                     "ranking": [],
@@ -203,9 +205,12 @@ def test_frontend_api_exposes_northway_family_screening_and_json_export() -> Non
     assert policy.status_code == 200
     assert policy.json()["profile"] == "northway-product-family-mvp"
     assert policy.json()["run_bounds"]["candidate_cap"] is None
+    assert [
+        group["label_zh"] for group in policy.json()["category_catalog"]["groups"]
+    ] == ["拉线", "塑料件", "低责任金属件"]
     assert submitted.status_code == 202
     assert submitted.json() == {"run_id": "northway-123", "status": "QUEUED"}
-    assert run.json()["result"]["schema_version"] == "0.2.4"
+    assert run.json()["result"]["schema_version"] == "0.2.5"
     assert export.status_code == 200
     assert export.headers["content-disposition"].endswith('northway-123.json"')
     assert export.json()["ranking"] == []
@@ -220,6 +225,8 @@ def test_frontend_api_exposes_northway_family_screening_and_json_export() -> Non
     assert "archetype" in model["properties"]
     assert "max_1688_checks" in model["properties"]
     assert model["properties"]["enable_1688_prefilter"]["default"] is True
+    assert model["properties"]["grade_a_max_competitors"]["default"] == 5
+    assert model["properties"]["grade_a_minus_max_competitors"]["default"] == 8
     assert "max_competitive_products" not in model["properties"]
 
 
@@ -240,6 +247,21 @@ def test_frontend_api_requires_budget_for_selected_archetype_pages() -> None:
     response = client.post(
         "/api/v1/northway/runs",
         json={"archetype": "fog_light_bezel", "discovery_pages": 2, "request_budget": 1},
+    )
+
+    assert response.status_code == 422
+
+
+def test_frontend_api_requires_ordered_competition_grade_thresholds() -> None:
+    client = TestClient(create_app(service=FakeFrontendService()))
+
+    response = client.post(
+        "/api/v1/northway/runs",
+        json={
+            "archetype": "fog_light_bezel",
+            "grade_a_max_competitors": 8,
+            "grade_a_minus_max_competitors": 8,
+        },
     )
 
     assert response.status_code == 422

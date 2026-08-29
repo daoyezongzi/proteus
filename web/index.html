@@ -40,7 +40,7 @@
         <div class="profile-card">
           <span class="profile-card__mark" aria-hidden="true">N</span>
           <span>
-            <strong>Northway V0.2.4</strong>
+            <strong>Northway V0.2.5</strong>
             <small>产品家族初筛</small>
           </span>
         </div>
@@ -63,7 +63,7 @@
           <strong>产品族初筛</strong>
         </div>
         <span class="app-bar__spacer"></span>
-        <div class="app-bar__meta">NORTHWAY <span>·</span> V0.2.4</div>
+        <div class="app-bar__meta">NORTHWAY <span>·</span> V0.2.5</div>
         <div class="app-bar__exports" aria-label="导出结果">
           <button class="button button--quiet" id="exportButton" type="button" hidden>
             <span>下载精简 JSON</span>
@@ -150,11 +150,17 @@
                 <small>料号、车型和位置查询包</small>
               </label>
 
-              <div class="field field--static" aria-label="Amazon 竞争计数规则">
-                <span>Amazon 竞争计数</span>
-                <strong>不设自动上限</strong>
-                <small>数量仍用于排序和人工复核，不再直接淘汰。</small>
-              </div>
+              <label class="field">
+                <span>A 级竞争上限</span>
+                <input id="grade_a_max_competitors" name="grade_a_max_competitors" type="number" min="0" max="100000" value="5" required>
+                <small>完整证据下，平替种类 ≤ 此值为 A</small>
+              </label>
+
+              <label class="field">
+                <span>A- 级竞争上限</span>
+                <input id="grade_a_minus_max_competitors" name="grade_a_minus_max_competitors" type="number" min="1" max="100000" value="8" required>
+                <small>高于 A 且 ≤ 此值为 A-；再高则淘汰</small>
+              </label>
 
               <label class="field">
                 <span>平替最低价高于</span>
@@ -175,7 +181,7 @@
               <span class="boundary-note__icon" aria-hidden="true">i</span>
               <div>
                 <strong>这里的“通过”是市场初筛</strong>
-                <p>竞争数量只作为排序和人工判断信号，不设自动上限。SerpApi 只负责发现与 Amazon 核对；国内非原厂供货、利润和最终适配，仍要人工确认。</p>
+                <p>Amazon 完整证据按 A / A- 分级；证据不完整时只能保留待定，除非已观察到的竞争下界超过 A- 上限。国内非原厂供货、利润和最终适配仍要人工确认。</p>
               </div>
             </div>
           </section>
@@ -189,12 +195,12 @@
               <span class="scope-status"><span class="scope-status__dot" aria-hidden="true"></span>单类运行</span>
             </div>
             <p class="section-copy">每次只选择一个叶子小类。先过范围、产品族和 eBay 需求，再用 1688 找到有供应商的家族，最后才消耗 Amazon 查询额度。</p>
-            <div class="scope-list" id="scopeList" aria-label="Northway 扫描类型" role="radiogroup">
+            <div class="scope-list" id="scopeList" aria-label="Northway 两级分类选择">
               <div class="scope-loading">正在加载扫描清单…</div>
             </div>
             <div class="scope-footer">
-              <span><span class="legend-dot legend-dot--trim" aria-hidden="true"></span>车型专用小饰件</span>
-              <span><span class="legend-dot legend-dot--cable" aria-hidden="true"></span>车型专用拉索</span>
+              <span><span class="legend-dot legend-dot--trim" aria-hidden="true"></span>只显示已显式启用的分类版本</span>
+              <span><span class="legend-dot legend-dot--cable" aria-hidden="true"></span>空分组暂不可扫描</span>
             </div>
           </section>
         </section>

@@ -1,5 +1,31 @@
 # Proteus Development Log
 
+## 2026-08-29 — V0.2.5 two-level category catalog and Amazon competition grades
+
+- Replaced the frontend/runtime hard-coded choice list with a local single-user SQLite catalog.
+  The policy now exposes active “拉线 / 塑料件 / 低责任金属件” groups and leaf versions; the
+  UI uses two native dropdowns and disables an empty group instead of inventing an executable
+  category.
+- Added the `CategoryDefinition` JSON contract, packaged seed data and `proteus categories`
+  workflow. Validation is offline, draft versions are immutable and invisible, and activation
+  or archive is always explicit. A run freezes the active category version at submission and
+  records it in the result and compact evidence export.
+- Added configurable product-family competition grading. Complete Amazon evidence assigns A to
+  0–5 substitute clusters and A- to 6–8; 9 or more is rejected. Incomplete evidence remains
+  `PENDING` below 9 and can reject only when the observed lower bound is already 9 or more.
+- Passed catalog aliases and supply keywords into the existing scope, Amazon relation and local
+  1688 query paths, so an Agent-added executable category changes real collection behavior rather
+  than only adding a display option.
+- Recorded the broader “product direction → public exploded diagram/IPL → user-confirmed parts
+  list” concept in `TODO.md` as a later upstream iteration. It is not coupled to this release.
+- Verification: all 350 tests passed; Python compilation, dependency checks, JavaScript syntax,
+  14 JSON parses and whitespace validation passed. The Agent CLI validate → DRAFT → activate smoke
+  made zero external requests. The 0.2.5 wheel contains both new contracts and packaged seed data
+  (`SHA-256 CCFECFC5226A717F3894AB62DE5237950CB953FFAEDEEB75768E34C0A1533B07`), and an
+  installed-wheel validation used the installed package rather than the checkout. Browser replay
+  verified group/leaf switching, empty-group disablement, ordered thresholds, one A plus one A-
+  result, the default A/A- filter and zero console errors.
+
 ## 2026-08-28 — Add temporary 1688 prefilter disable switch
 
 - Added the default-on `enable_1688_prefilter` request/UI switch. When disabled, the runner

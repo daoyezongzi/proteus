@@ -434,3 +434,9 @@ def _validate_contract(value: Any, schema_name: str, label: str) -> None:
         else:
             json_path += f".{item}"
     raise ContractValidationError(f"{label} violates {schema_name} at {json_path}: {error.message}")
+
+
+def validate_json_contract(value: Any, schema_name: str, label: str) -> None:
+    """Validate an arbitrary JSON value against one packaged Proteus contract."""
+
+    _validate_contract(value, schema_name, label)

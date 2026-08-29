@@ -284,7 +284,7 @@ class StubService:
         def amazon_search(query: str, **_kwargs):
             left = "25778389" in query
             products = []
-            count = 4 if left else 1
+            count = 7 if left else 1
             part_number = "25778389" if left else "25778388"
             side = "Left" if left else "Right"
             for index in range(count):
@@ -296,7 +296,7 @@ class StubService:
                             f"Chevrolet Silverado {part_number}"
                         ),
                         "url": f"https://www.amazon.com/dp/B000000{index + (10 if left else 1):03d}",
-                        "price_usd": 12.99 if left else 31.99,
+                        "price_usd": 32.99 if left else 31.99,
                         "active_offer_count_lower_bound": index + 1,
                         "active_offer_count_complete": True,
                     }

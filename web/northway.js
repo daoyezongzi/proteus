@@ -77,12 +77,14 @@ const stageOrder = [
 ];
 
 const resultFilters = [
+  ["graded", "A / A-", (report) => ["A", "A-"].includes(competitionGrade(report))],
+  ["grade_a", "A 级", (report) => competitionGrade(report) === "A"],
+  ["grade_a_minus", "A- 级", (report) => competitionGrade(report) === "A-"],
+  ["competition_pending", "竞争待定", (report) => competitionGrade(report) === "PENDING"],
   ["supplier", "有 1688 供应商", (report) => report.stages?.china_non_oem_supply?.status === "PASSED"],
   ["supplier_review", "供应商待核", (report) => report.stages?.china_non_oem_supply?.status === "REVIEW_REQUIRED"],
   ["supplier_disabled", "1688 未执行", (report) => report.evidence_gaps?.includes("1688_PREFILTER_DISABLED")],
   ["reviewable", "可复核", (report) => report.decision !== "REJECTED"],
-  ["priority", "优先候选", (report) => report.decision === "OPPORTUNITY_CANDIDATE"],
-  ["review", "待判断", (report) => report.decision === "REVIEW_REQUIRED"],
   ["rejected", "已淘汰", (report) => report.decision === "REJECTED"],
 ];
 
@@ -108,8 +110,11 @@ const discoveryFailures = new Set([
 const reasonLabels = {
   "Sellable product family resolved.": "可售产品家族已解析。",
   "Observed source listings provide a family-bound sold-count lower bound.": "来源 listing 提供了绑定到该产品族的销量下界。",
-  "Complete family search evidence is available; the observed substitute-product cluster count is retained for ranking and manual review without an automatic upper limit.": "产品族搜索证据完整；平替种类只用于排序和人工复核，不设自动上限。",
-  "Observed competition is only a lower bound because one or more family searches are incomplete; the count has no automatic upper limit.": "部分产品族查询未完成，竞争数量只是下界；不设自动上限。",
+  "Complete family evidence places the substitute-product cluster count in grade A.": "产品族证据完整，平替种类落在 A 级范围。",
+  "Complete family evidence places the substitute-product cluster count in grade A-.": "产品族证据完整，平替种类落在 A- 级范围。",
+  "The complete substitute-product cluster count exceeds the A- maximum.": "产品族证据完整，平替种类超过 A- 上限，已淘汰。",
+  "The observed substitute-product cluster count already exceeds the A- maximum; this is conclusive even if some family searches are incomplete.": "已观察到的平替种类下界超过 A- 上限；即使查询尚未完成也足以淘汰。",
+  "Observed competition is only a lower bound; A or A- cannot be assigned until all family searches complete.": "部分产品族查询未完成，竞争数量只是下界，暂不能评为 A 或 A-。",
   "The substitute-family price floor remains above the configured limit.": "平替产品族最低价高于设定阈值。",
   "The substitute-family price floor is at or below the configured limit.": "平替产品族最低价低于或等于设定阈值。",
   "China non-OEM supply verification is not configured.": "尚未配置国内非原厂供货核验。",
@@ -124,8 +129,11 @@ const reasonLabels = {
 let activeRunId = null;
 let policy = null;
 let lastResult = null;
-let activeFilter = "supplier";
+let activeFilter = "graded";
 let selectedArchetype = null;
+let selectedGroupId = null;
+let systemReady = false;
+let runBusy = false;
 
 async function json(path, options = {}) {
   const response = await fetch(`${API}${path}`, {
@@ -149,11 +157,17 @@ function setFormStatus(message = "", state = "") {
 }
 
 function setRunBusy(busy) {
+  runBusy = busy;
   const button = $("#runButton");
   const label = $(".button__label", button);
   button.dataset.state = busy ? "busy" : "idle";
-  button.disabled = busy;
+  button.disabled = busy || !systemReady || !selectedArchetype;
   label.textContent = busy ? "扫描中…" : "开始扫描";
+}
+
+function syncRunAvailability() {
+  const button = $("#runButton");
+  if (button) button.disabled = runBusy || !systemReady || !selectedArchetype;
 }
 
 function syncBudgetMinimum() {
@@ -176,6 +190,14 @@ function sync1688PrefilterLabel() {
   label.textContent = input.checked ? "已启用" : "暂时关闭";
 }
 
+function syncCompetitionThresholds() {
+  const gradeA = $("#grade_a_max_competitors");
+  const gradeAMinus = $("#grade_a_minus_max_competitors");
+  if (!gradeA || !gradeAMinus) return;
+  const valid = Number(gradeAMinus.value) > Number(gradeA.value);
+  gradeAMinus.setCustomValidity(valid ? "" : "A- 上限必须大于 A 级上限");
+}
+
 function archetypeEntries() {
   const configured = policy?.archetypes;
   if (configured && Object.keys(configured).length) return Object.entries(configured);
@@ -185,65 +207,109 @@ function archetypeEntries() {
   }]);
 }
 
+function categoryLabel(categoryId) {
+  const configured = policy?.archetypes?.[categoryId];
+  return configured?.label_zh || labels[categoryId] || configured?.part_type || categoryId || "未选择";
+}
+
+function catalogGroups() {
+  const configured = policy?.category_catalog?.groups;
+  if (Array.isArray(configured) && configured.length) return configured;
+  const entries = archetypeEntries();
+  const fallback = [
+    { group_id: "cables", label_zh: "拉线", label_en: "Cables", categories: [] },
+    { group_id: "plastic_parts", label_zh: "塑料件", label_en: "Plastic parts", categories: [] },
+    { group_id: "low_liability_metal_parts", label_zh: "低责任金属件", label_en: "Low-liability metal parts", categories: [] },
+  ];
+  entries.forEach(([key, value]) => {
+    const groupId = value?.category_profile === "vehicle_specific_cable" ? "cables" : "plastic_parts";
+    const group = fallback.find((item) => item.group_id === groupId);
+    group.categories.push({
+      category_id: key,
+      category_version_id: value?.category_version_id || "packaged-seed",
+      label_zh: categoryLabel(key),
+      label_en: value?.part_type || key,
+      discovery_keyword: value?.discovery_keyword || fallbackKeywords[key] || "",
+    });
+  });
+  return fallback;
+}
+
+function categoryGroupLabel(groupId) {
+  const group = catalogGroups().find((item) => item.group_id === groupId);
+  return group?.label_zh || groupId || "";
+}
+
 function profileLabel(profile) {
   return profileLabels[profile] || profile || "未分类";
 }
 
 function renderScopeList() {
   const root = $("#scopeList");
-  const entries = archetypeEntries();
-  if (!selectedArchetype || !entries.some(([key]) => key === selectedArchetype)) {
-    selectedArchetype = entries[0]?.[0] || Object.keys(labels)[0];
+  const groups = catalogGroups();
+  if (!groups.some((group) => group.group_id === selectedGroupId)) {
+    selectedGroupId = groups.find((group) => group.categories?.length)?.group_id || groups[0]?.group_id || null;
   }
+  const activeGroup = groups.find((group) => group.group_id === selectedGroupId) || null;
+  const categories = Array.isArray(activeGroup?.categories) ? activeGroup.categories : [];
+  if (!categories.some((item) => item.category_id === selectedArchetype)) {
+    selectedArchetype = categories[0]?.category_id || null;
+  }
+  const activeCategory = categories.find((item) => item.category_id === selectedArchetype) || null;
+  root.innerHTML = `<div class="category-selectors">
+    <label class="category-field">
+      <span>一级类别</span>
+      <select id="category_group" form="runForm" required aria-label="选择一级类别">
+        ${groups.map((group) => `<option value="${esc(group.group_id)}" ${group.group_id === selectedGroupId ? "selected" : ""}>${esc(group.label_zh)} · ${esc(group.categories?.length || 0)} 类</option>`).join("")}
+      </select>
+      <small>按材料与责任边界分组</small>
+    </label>
+    <label class="category-field">
+      <span>二级零件</span>
+      <select id="category_leaf" name="archetype" form="runForm" required aria-label="选择二级零件" ${categories.length ? "" : "disabled"}>
+        ${categories.length
+          ? categories.map((item) => `<option value="${esc(item.category_id)}" ${item.category_id === selectedArchetype ? "selected" : ""}>${esc(item.label_zh || item.label_en || item.category_id)}</option>`).join("")
+          : `<option value="">暂无已启用的小类</option>`}
+      </select>
+      <small>${categories.length ? "单次只运行一个叶子小类" : "可由 Agent 创建草稿，验证并显式启用后出现"}</small>
+    </label>
+  </div>
+  <div class="category-selection" data-empty="${!activeCategory}">
+    <span class="category-selection__dot" aria-hidden="true"></span>
+    <div><strong>${esc(activeCategory?.label_zh || "当前分组暂无可运行小类")}</strong>
+    <small>${activeCategory ? `${esc(activeCategory.label_en || "")} · 版本 ${esc(activeCategory.category_version_number || activeCategory.category_version_id || "已启用")}` : "不会发起 provider 请求"}</small></div>
+  </div>`;
 
-  const groups = new Map();
-  entries.forEach(([key, value]) => {
-    const profile = value?.category_profile || fallbackProfiles[key] || "other";
-    if (!groups.has(profile)) groups.set(profile, []);
-    groups.get(profile).push({
-      key,
-      label: labels[key] || value?.part_type || key,
-      keyword: value?.discovery_keyword || fallbackKeywords[key] || "",
-    });
+  $("#category_group", root)?.addEventListener("change", (event) => {
+    selectedGroupId = event.currentTarget.value;
+    selectedArchetype = null;
+    renderScopeList();
+    syncBudgetMinimum();
   });
-
-  const orderedProfiles = [
-    ...["vehicle_specific_small_trim", "vehicle_specific_cable"].filter((profile) => groups.has(profile)),
-    ...[...groups.keys()].filter((profile) => !["vehicle_specific_small_trim", "vehicle_specific_cable"].includes(profile)),
-  ];
-  root.innerHTML = orderedProfiles.map((profile) => {
-    const items = groups.get(profile) || [];
-    return `<section class="scope-group" data-profile="${esc(profile)}">
-      <div class="scope-group__head"><span>${esc(profileLabel(profile))}</span><span class="scope-group__count">${items.length} 类</span></div>
-      <div class="scope-items">
-        ${items.map((item) => `<label class="scope-item" data-profile="${esc(profile)}" data-selected="${item.key === selectedArchetype}" title="${esc(item.keyword)}">
-          <input class="scope-item__radio" type="radio" name="archetype" value="${esc(item.key)}" ${item.key === selectedArchetype ? "checked" : ""} aria-label="选择 ${esc(item.label)}">
-          <span class="scope-item__dot" aria-hidden="true"></span>
-          <span class="scope-item__label">${esc(item.label)}</span>
-          <span class="scope-item__keyword" aria-hidden="true">OEM</span>
-        </label>`).join("")}
-      </div>
-    </section>`;
-  }).join("");
-
-  root.querySelectorAll("input[name=archetype]").forEach((input) => {
-    input.addEventListener("change", () => {
-      selectedArchetype = input.value;
-      renderScopeSelection();
-      syncBudgetMinimum();
-    });
+  $("#category_leaf", root)?.addEventListener("change", (event) => {
+    selectedArchetype = event.currentTarget.value || null;
+    renderScopeList();
   });
   renderScopeSelection();
+  syncRunAvailability();
 }
 
 function renderScopeSelection() {
-  document.querySelectorAll(".scope-item").forEach((item) => {
-    const input = $("input[name=archetype]", item);
-    item.dataset.selected = String(Boolean(input?.checked));
+  const label = selectedArchetype ? categoryLabel(selectedArchetype) : categoryGroupLabel(selectedGroupId) || "未分类";
+  $("#scopeTitle").textContent = selectedArchetype ? `选择「${label}」` : `「${label}」暂无小类`;
+}
+
+function applyPolicyDefaults() {
+  const defaults = policy?.default_thresholds || {};
+  const bindings = {
+    grade_a_max_competitors: defaults.grade_a_max_competitors,
+    grade_a_minus_max_competitors: defaults.grade_a_minus_max_competitors,
+  };
+  Object.entries(bindings).forEach(([id, configured]) => {
+    const input = $(`#${id}`);
+    if (input && configured !== undefined && configured !== null) input.value = String(configured);
   });
-  const entry = archetypeEntries().find(([key]) => key === selectedArchetype);
-  const label = entry ? labels[entry[0]] || entry[1]?.part_type || entry[0] : "未选择";
-  $("#scopeTitle").textContent = `选择「${label}」`;
+  syncCompetitionThresholds();
 }
 
 async function boot() {
@@ -258,6 +324,7 @@ async function boot() {
       json("/providers"),
     ]);
     policy = nextPolicy;
+    applyPolicyDefaults();
     renderScopeList();
     syncBudgetMinimum();
     const configured = config.credentials?.SERPAPI_API_KEY?.configured === true;
@@ -267,15 +334,17 @@ async function boot() {
       : local1688?.status === "NOT_READY"
         ? "1688 CLI 待登录"
         : "1688 CLI 未配置";
+    systemReady = configured;
     status.dataset.state = configured ? "ready" : "error";
     $(".system-status__label", status).textContent = configured
       ? `v${health.version} · SerpApi 已就绪 · ${supplierStatus}`
       : `v${health.version} · 请先运行 proteus setup`;
-    $("#runButton").disabled = !configured;
+    syncRunAvailability();
   } catch (error) {
+    systemReady = false;
     status.dataset.state = "error";
     $(".system-status__label", status).textContent = "本地服务不可用";
-    $("#runButton").disabled = true;
+    syncRunAvailability();
     setFormStatus(`请先启动：python -m proteus api（${error.message}）`, "error");
   }
 }
@@ -289,6 +358,8 @@ function collectForm() {
     max_1688_checks: number("max_1688_checks"),
     enable_1688_prefilter: is1688PrefilterEnabled(),
     max_amazon_queries_per_family: number("max_amazon_queries_per_family"),
+    grade_a_max_competitors: number("grade_a_max_competitors"),
+    grade_a_minus_max_competitors: number("grade_a_minus_max_competitors"),
     min_family_price_usd: number("min_family_price_usd"),
     min_observed_ebay_demand: number("min_observed_ebay_demand"),
   };
@@ -308,6 +379,18 @@ function value(raw, fallback = "—") {
   if (typeof raw === "number" && Number.isFinite(raw)) return raw.toLocaleString("en-US");
   if (raw !== null && raw !== undefined && String(raw) !== "") return String(raw);
   return fallback;
+}
+
+function competitionGrade(report) {
+  return report?.competition_grade || report?.competition?.competition_grade || "NOT_RUN";
+}
+
+function gradeLabel(grade) {
+  return ({ A: "A", "A-": "A-", PENDING: "待定", REJECTED: "淘汰", NOT_RUN: "未核验" })[grade] || grade || "未核验";
+}
+
+function gradeTone(grade) {
+  return ({ A: "pass", "A-": "review", PENDING: "review", REJECTED: "reject" })[grade] || "";
 }
 
 function money(raw, fallback = "待核对") {
@@ -494,8 +577,8 @@ function candidateCard(report) {
   const [verdict, tone] = decisionMeta[report.decision] || decisionMeta.REVIEW_REQUIRED;
   const identifiers = familyIdentifiers(family);
   const gaps = report.evidence_gaps || [];
-  const profile = profileLabel(report.category_profile || report.resolution?.category_profile);
-  const title = labels[report.archetype] || family.part_type || "未解析产品家族";
+  const profile = categoryGroupLabel(report.category_group_id) || profileLabel(report.category_profile || report.resolution?.category_profile);
+  const title = categoryLabel(report.archetype) || family.part_type || "未解析产品家族";
   const competitionStage = stages.amazon_family_competition || {};
   const priceStage = stages.family_price_floor || {};
   const demandStage = stages.demand || {};
@@ -506,7 +589,11 @@ function candidateCard(report) {
   const metricHint = (stage) => stage?.threshold !== null && stage?.threshold !== undefined
     ? `${operatorSymbols[stage.operator] || ""} ${value(stage.threshold)}`.trim()
     : "";
-  const competitionHint = metricHint(competitionStage) || "仅用于排序，无自动上限";
+  const grade = competitionGrade(report);
+  const clusterCount = competition.competitive_product_cluster_count;
+  const competitionHint = clusterCount === null || clusterCount === undefined
+    ? "尚未运行 Amazon 核对"
+    : `${value(clusterCount)} 个平替${competition.competition_complete ? " · 完整" : " · 当前下界"}`;
 
   return `<li class="candidate-card" data-decision="${esc(report.decision)}">
     <header class="candidate-head">
@@ -523,15 +610,16 @@ function candidateCard(report) {
         </div>
       </div>
       <div class="candidate-verdict">
+        <span class="competition-grade" data-tone="${esc(gradeTone(grade))}">竞争等级 ${esc(gradeLabel(grade))}</span>
         <span class="verdict" data-tone="${esc(tone)}">${esc(verdict)}</span>
         <span class="candidate-rank-note">${esc(detailMeta)}</span>
       </div>
     </header>
 
     <div class="metric-grid" aria-label="候选核心读数">
-      <div class="metric" data-tone="${esc(stageTone(competitionStage.status))}">
-        <span>平替种类</span>
-        <strong>${esc(value(competition.competitive_product_cluster_count))}</strong>
+      <div class="metric" data-tone="${esc(gradeTone(grade))}">
+        <span>竞争等级</span>
+        <strong>${esc(gradeLabel(grade))}</strong>
         <small>${esc(competitionHint)}</small>
       </div>
       <div class="metric" data-tone="${esc(stageTone(competitionStage.status))}">
@@ -651,7 +739,7 @@ function renderCoverage(result) {
   $("#coverageMeta").textContent = `${candidateTypes}/${entries.length} 类产出候选 · ${completed}/${attempted || entries.length} 页完成`;
   root.innerHTML = entries.map((entry) => {
     const status = entry.status || "UNKNOWN";
-    const profile = profileLabel(entry.category_profile);
+    const profile = categoryGroupLabel(entry.category_group_id) || profileLabel(entry.category_profile);
     const key = entry.archetype || "unknown";
     const count = entry.candidates_emitted ?? entry.stats?.candidates_emitted ?? 0;
     const pages = entry.pages_attempted !== undefined
@@ -660,7 +748,7 @@ function renderCoverage(result) {
     return `<div class="coverage-item" data-status="${esc(status)}" data-tone="${discoveryFailures.has(status) ? "error" : ""}">
       <div class="coverage-item__head">
         <span class="coverage-item__dot" aria-hidden="true"></span>
-        <span class="coverage-item__label">${esc(labels[key] || key)}</span>
+        <span class="coverage-item__label">${esc(categoryLabel(key))}</span>
         <span class="coverage-item__status">${esc(coverageStatusText(entry))}</span>
       </div>
       <span class="coverage-item__keyword" title="${esc(entry.keyword || "")}">${esc(profile)} · ${esc(entry.keyword || "关键词待回传")}</span>
@@ -712,14 +800,15 @@ function renderResult(result) {
   const supplierBudget = providerBudgets["1688"] || {};
   const supplyFilter = result.supply_filter || {};
   const supplierPrefilterEnabled = supplyFilter.enabled !== false;
-  activeFilter = supplierPrefilterEnabled ? "supplier" : "reviewable";
   const reports = Array.isArray(result.reports) ? result.reports : [];
-  const supplierCandidates = reports.filter((report) => report.stages?.china_non_oem_supply?.status === "PASSED").length;
+  const gradedCount = reports.filter((report) => ["A", "A-"].includes(competitionGrade(report))).length;
+  activeFilter = gradedCount ? "graded" : "reviewable";
   const cells = [
     [summary.candidate_count ?? reports.length, "全部候选", ""],
-    [supplierCandidates, "有供应商", "pass"],
-    [summary.review_required || 0, "需要判断", "review"],
-    [summary.rejected || 0, "明确淘汰", "reject"],
+    [summary.grade_a || 0, "A 级", "pass"],
+    [summary.grade_a_minus || 0, "A- 级", "review"],
+    [summary.competition_pending || 0, "竞争待定", "review"],
+    [summary.competition_rejected || 0, "竞争淘汰", "reject"],
     [`${value(budget.used, "0")}/${value(budget.limit, "—")}`, "SerpApi", ""],
     [supplierPrefilterEnabled ? `${value(supplierBudget.used, "0")}/${value(supplierBudget.limit, "—")}` : "已关闭", "1688 检查", ""],
   ];
@@ -738,6 +827,9 @@ function renderResult(result) {
   } else if (supplyFilter.review_required || supplyFilter.not_run) {
     messages.push(`1688 供应商检查：${value(supplyFilter.supplier_found, "0")} 个找到供应商，${value(supplyFilter.no_supplier, "0")} 个无供应商，${value(supplyFilter.review_required, "0")} 个待复核。`);
   }
+  if (summary.competition_pending) {
+    messages.push(`${value(summary.competition_pending)} 个产品族的 Amazon 证据不完整，竞争等级保持待定；没有被误标为 A 或 A-。`);
+  }
   notice.hidden = !messages.length;
   notice.textContent = messages.join(" ");
 
@@ -747,8 +839,8 @@ function renderResult(result) {
   const typeCount = manifest.archetypes?.length ?? 1;
   const pagesCompleted = manifest.pages_completed ?? 0;
   const pagesAttempted = manifest.pages_attempted ?? pagesCompleted;
-  const selectedLabel = labels[manifest.selected_archetype || manifest.archetypes?.[0]] || "当前小类";
-  $("#resultSubtitle").textContent = `${selectedLabel} · ${pagesCompleted}/${pagesAttempted || typeCount} 页完成 · ${reports.length} 个去重产品家族；${supplierPrefilterEnabled ? "默认只展示有 1688 供应商证据的家族。" : "本次未执行 1688，默认展示可复核家族。"}`;
+  const selectedLabel = categoryLabel(manifest.selected_archetype || manifest.archetypes?.[0]) || "当前小类";
+  $("#resultSubtitle").textContent = `${selectedLabel} · ${pagesCompleted}/${pagesAttempted || typeCount} 页完成 · ${reports.length} 个去重产品家族；${gradedCount ? "默认展示已完成分级的 A / A- 产品。" : "本次没有可确认的 A / A-，默认展示全部可复核家族。"}`;
 }
 
 function showLoading() {
@@ -786,10 +878,17 @@ $("#resultFilters").addEventListener("click", (event) => {
 $("#discovery_pages").addEventListener("input", syncBudgetMinimum);
 $("#request_budget").addEventListener("input", syncBudgetMinimum);
 $("#enable_1688_prefilter").addEventListener("change", sync1688PrefilterLabel);
+$("#grade_a_max_competitors").addEventListener("input", syncCompetitionThresholds);
+$("#grade_a_minus_max_competitors").addEventListener("input", syncCompetitionThresholds);
 
 $("#runForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  syncCompetitionThresholds();
+  if (!selectedArchetype) {
+    setFormStatus("当前一级类别没有已启用的小类，请选择其他类别。", "error");
+    return;
+  }
   if (!form.reportValidity()) return;
   setRunBusy(true);
   setFormStatus(is1688PrefilterEnabled()
@@ -821,4 +920,5 @@ $("#exportButton").addEventListener("click", () => {
 });
 
 sync1688PrefilterLabel();
+syncCompetitionThresholds();
 boot();

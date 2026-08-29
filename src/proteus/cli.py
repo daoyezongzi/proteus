@@ -410,6 +410,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         return api_main(active_argv[1:])
+    if active_argv[:1] == ["categories"]:
+        from proteus.category_cli import main as category_main
+
+        return category_main(active_argv[1:])
     if active_argv[:2] == ["providers", "check"]:
         from proteus.providers.canary import main as provider_canary_main
 

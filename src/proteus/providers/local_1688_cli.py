@@ -287,7 +287,21 @@ def build_1688_query_pack(
 
     add(raw_part_number)
     part_type = _text(family.get("part_type")) if isinstance(family, Mapping) else ""
-    part_keyword = _PART_KEYWORDS.get(part_type.casefold(), part_type)
+    configured_keywords = (
+        [
+            _text(value)
+            for value in family.get("supply_keywords", [])
+            if _text(value)
+        ]
+        if isinstance(family, Mapping)
+        and isinstance(family.get("supply_keywords"), Sequence)
+        and not isinstance(family.get("supply_keywords"), (str, bytes))
+        else []
+    )
+    part_keywords = configured_keywords or [
+        _PART_KEYWORDS.get(part_type.casefold(), part_type)
+    ]
+    part_keyword = part_keywords[0]
     fitment = None
     if isinstance(family, Mapping) and isinstance(family.get("fitments"), list):
         for item in family["fitments"][:1]:
@@ -299,7 +313,8 @@ def build_1688_query_pack(
                     break
     if fitment:
         add(f"{fitment} {part_keyword}")
-    add(part_keyword)
+    for keyword in part_keywords:
+        add(keyword)
     return queries[:3]
 
 
@@ -315,7 +330,15 @@ def _title_matches(
     if canonical_identifier and canonical_identifier in canonical_title:
         return True
     part_type = _text(family.get("part_type")) if isinstance(family, Mapping) else ""
-    aliases = _PART_ALIASES.get(part_type.casefold(), (part_type,))
+    configured_aliases: list[str] = []
+    if isinstance(family, Mapping):
+        for key in ("supply_aliases", "category_aliases"):
+            values = family.get(key)
+            if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+                configured_aliases.extend(_text(value) for value in values if _text(value))
+    aliases = configured_aliases or list(
+        _PART_ALIASES.get(part_type.casefold(), (part_type,))
+    )
     return any(alias.casefold() in folded for alias in aliases if alias)
 
 

@@ -3,9 +3,52 @@ from __future__ import annotations
 import json
 
 from proteus.providers.local_1688_cli import (
+    build_1688_query_pack,
     collect_1688_supplier,
     is_1688_cli_authenticated,
 )
+
+
+def test_catalog_supply_keywords_extend_queries_and_title_matching() -> None:
+    family = {
+        "part_type": "mirror mount cover",
+        "fitments": [{"make": "Toyota", "model": "RAV4"}],
+        "supply_keywords": ["后视镜底座盖"],
+        "supply_aliases": ["mirror mount cover", "后视镜底座盖"],
+    }
+
+    assert build_1688_query_pack(family, "87945-0R010") == [
+        "87945-0R010",
+        "Toyota RAV4 后视镜底座盖",
+        "后视镜底座盖",
+    ]
+
+    def run(argv, _timeout):
+        return (
+            0,
+            json.dumps(
+                {
+                    "offers": [
+                        {
+                            "offerId": "628196518519",
+                            "title": "丰田 RAV4 后视镜底座盖",
+                            "detailUrl": "https://detail.1688.com/offer/628196518519.html",
+                            "supplier": {"companyName": "测试塑料件供应商"},
+                        }
+                    ]
+                }
+            ),
+            "",
+        )
+
+    outcome = collect_1688_supplier(
+        "87945-0R010",
+        family=family,
+        command_runner=run,
+    )
+
+    assert outcome["acquisition_status"] == "SUCCESS"
+    assert outcome["supplier_found"] is True
 
 
 def test_local_cli_authentication_check_is_read_only() -> None:

@@ -1,15 +1,15 @@
-# Proteus V0.2.4
+# Proteus V0.2.5
 
-> 当前执行版本：**单分类配额优先扫描 + 1688 供应商前置过滤**。旧的九类统一扫描
-> 仍保留在历史实现说明中，不是本次默认入口。
+> 当前执行版本：**数据库驱动的两级分类 + 单分类配额优先扫描 + Amazon 竞争分级**。
+> 旧的九类统一扫描仍保留在历史实现说明中，不是本次默认入口。
 
 Proteus 是按可售产品家族筛选低竞争汽车零件的本地操作台。当前 Northway MVP 以
-northwayautoparts 的车型专用小饰件和机械拉索为产品形态参考。由于当前没有本地候选
-数据库，公开入口每次只选择一个零件类型；1688 供应商检查作为 Amazon 前置过滤，
-以节省 SerpApi 配额：
+northwayautoparts 的车型专用小饰件和机械拉索为产品形态参考。公开入口从本机 SQLite
+分类目录选择一个一级分组和一个已启用的叶子零件类型；1688 供应商检查作为 Amazon
+前置过滤，以节省 SerpApi 配额：
 
 ```text
-选择一个车型专用小零件 archetype
+选择一级类别 → 一个已启用的叶子小类
 → 在该类型的显式 eBay 页范围内发现全部候选
 → 先拒绝 Universal-fit、化学品和错误产品形态
 → 解析车型、年份、左右侧、套装数量和零件号为 sellable_product_family
@@ -17,7 +17,9 @@ northwayautoparts 的车型专用小饰件和机械拉索为产品形态参考�
 → 只把有供应商的产品族送入 Amazon 核验
 → 生成 OEM + 车型描述 Amazon query pack
 → 分开统计平替产品种类、ASIN、seller offers 和平替最低价
-→ 按通过项、证据缺口和家族竞争排序
+→ 完整竞争证据：0–5 个平替为 A、6–8 个为 A-、9 个以上淘汰
+→ 不完整证据：不足 9 个保持 PENDING，已观察到 9 个以上才可安全淘汰
+→ 按竞争等级、通过项、证据缺口和家族竞争排序
 → 供应商和市场证据都满足的候选 + 完整 JSON 人工复核
 ```
 
@@ -25,14 +27,16 @@ northwayautoparts 的车型专用小饰件和机械拉索为产品形态参考�
 不等于库存、MOQ、利润或可下单；供应商阶段失败、风控和未查询会分别保留为可解释状态。
 V0.2.3 精确 OEM 链路和 HioBuy 1688 兼容路径继续保留，但不再是默认页面。
 
-## V0.2.4 当前可以做什么
+## V0.2.5 当前可以做什么
 
-- 一次运行选择一个 Northway 风格末级零件类型；两个产品 profile 仅用于分组；
+- 用“拉线 / 塑料件 / 低责任金属件”一级下拉框和动态二级下拉框选择一个末级类型；
+- 从本机 SQLite 读取 ACTIVE 分类版本，并在提交时把版本快照冻结到该次运行；
+- 通过 Agent 友好的 JSON + CLI 创建 DRAFT、离线验证、显式启用或归档分类；
 - 不使用 `max_candidates` 截断，处理已扫描页面中发现的全部候选；
 - 将左右件、单件/套装、车型和年份解析为不同产品家族；
 - 默认在 Amazon 前先用本地 `1688-cli` 或兼容 HioBuy 做供应商存在性预筛；风控时可按次关闭，继续做 Amazon 市场复核；
-- 使用多个 Amazon 查询统计平替产品种类、ASIN、报价和最低价；
-- 默认展示同时通过供应商和市场阶段的候选，并按“有供应商 / 待核验 / 无供应商”切换；
+- 使用多个 Amazon 查询统计平替产品种类、ASIN、报价和最低价，按可配置的 A / A- 上限分级；
+- 默认展示已有完整证据的 A / A- 产品；Amazon 不完整结果单独列为竞争待定；
 - 展示 eBay、1688、Amazon 各阶段的当前进度和独立预算；
 - 下载包含规则读数、来源、查询、证据缺口、失败原因和排序的完整 JSON。
 
@@ -200,8 +204,9 @@ Stop-Process -Id <PID>
 `http://127.0.0.1:8765/api/docs`。前端只调用本机接口，任何第三方 provider 凭证都
 不会进入浏览器。当前操作台是中文优先的 Northway 初筛界面。
 
-页面的九类范围、价格/需求阈值、1688 供应商条件和运行边界由 `/api/v1/northway/policy` 下发。
-Amazon 平替种类不再设置自动上限；数量只用于排序和人工复核。
+页面的 ACTIVE 分类分组、叶子版本、价格/需求阈值、A/A- 分级、1688 供应商条件和运行边界
+由 `/api/v1/northway/policy` 下发。默认 A 级上限为 5，A- 级上限为 8；两者均可按次调整，
+但 A- 上限必须严格大于 A 级上限。
 以下接口构成这套界面的全部数据来源：
 
 | 方法 | 路径 | 用途 |
@@ -209,7 +214,7 @@ Amazon 平替种类不再设置自动上限；数量只用于排序和人工复�
 | `GET` | `/api/v1/health` | 版本和当前 profile |
 | `GET` | `/api/v1/config/status` | 脱敏配置与各 profile readiness |
 | `GET` | `/api/v1/providers` | provider 预检与严格筛选服务策略 |
-| `GET` | `/api/v1/northway/policy` | Northway 小类、默认阈值和运行边界 |
+| `GET` | `/api/v1/northway/policy` | 两级 ACTIVE 分类、版本、默认阈值和运行边界 |
 | `POST` | `/api/v1/northway/runs` | 异步启动单分类产品家族初筛 |
 | `GET` | `/api/v1/northway/runs/{run_id}` | 查询任务状态、候选和排序 |
 | `GET` | `/api/v1/northway/runs/{run_id}/export/compact` | 下载精简 JSON（默认） |
@@ -228,6 +233,8 @@ $request = @{
   discovery_pages = 1
   request_budget = 20
   max_amazon_queries_per_family = 3
+  grade_a_max_competitors = 5
+  grade_a_minus_max_competitors = 8
   max_1688_checks = 20
   enable_1688_prefilter = $true
   min_family_price_usd = 20
@@ -246,9 +253,10 @@ Invoke-RestMethod `
 
 任务状态依次为 `QUEUED`、`RUNNING`、`COMPLETED` 或 `FAILED`。运行中还会返回
 `phase`、`current`、`total`、`last_query`、`provider`、`budget_used` 和 `updated_at`。
-完成后读取 `result.reports`；只有供应商阶段通过且市场证据完整的记录才进入默认最终候选，
-不表示可以直接采购或上架。`result.discovery` 保存所选类型状态，`result.scan_manifest`
-保存实际查询；1688 供应商证据和独立计数也会保留。精简导出保留决策、产品家族、关键读数、
+完成后读取 `result.reports`。`competition_grade` 是 `A`、`A-`、`PENDING`、`REJECTED`
+或 `NOT_RUN`；它只表示 Amazon 产品家族竞争等级，不表示可以直接采购或上架。
+`result.discovery` 保存所选类型状态，`result.scan_manifest` 保存实际查询和分类版本；1688
+供应商证据和独立计数也会保留。精简导出保留决策、产品家族、关键读数、
 分页/预算状态、供应商摘要、相关 ASIN 和有限关系样本；需要完整 provider 证据时使用
 `/export`。进程重启会清空当前内存任务记录，前端不持有或调用第三方 Key。
 
@@ -262,6 +270,39 @@ Invoke-RestMethod `
 `python web/_dev_server.py` 的本地回放 harness，它使用 stub 数据、不访问 provider，但不代表
 实时市场结果。后续如需正式复用历史结果，应增加带时间戳和明确 `REPLAY` 标记的本地缓存，
 不能把过期数据伪装成新鲜扫描。
+
+## 分类目录维护
+
+分类目录是本机单用户 SQLite 数据库，默认位置可由下列命令查看：
+
+```powershell
+.\.venv\Scripts\python.exe -m proteus categories path
+.\.venv\Scripts\python.exe -m proteus categories list
+```
+
+分类定义遵循 [`contracts/v0_2_5_category_definition.schema.json`](contracts/v0_2_5_category_definition.schema.json)，
+可从 [`examples/northway_category_definition.example.json`](examples/northway_category_definition.example.json)
+复制一份作为起点。Agent 或用户可以先参考现有定义，再按保守流程增加或更新一个小类：
+
+```powershell
+.\.venv\Scripts\python.exe -m proteus categories show fog_light_bezel
+.\.venv\Scripts\python.exe -m proteus categories validate --file .\new-category.json
+.\.venv\Scripts\python.exe -m proteus categories draft --file .\new-category.json
+.\.venv\Scripts\python.exe -m proteus categories activate <category_id> --version <version_id>
+```
+
+`validate`、`draft` 和 `activate` 都只访问本地文件与数据库，不消耗 marketplace/provider
+额度。导入只创建不可变 `DRAFT`；只有离线验证通过并执行显式 `activate`，分类才会出现在
+两个下拉框中。更新已有小类会创建新版本，不会原地覆盖历史定义；运行提交时记录并冻结
+当时的 `category_version_id`。不再使用的小类可显式归档：
+
+```powershell
+.\.venv\Scripts\python.exe -m proteus categories archive <category_id>
+```
+
+当前执行器只支持已有的车型专用小饰件和机械拉索身份能力。`低责任金属件` 分组因此先作为
+空分组展示；在增加可靠的孔位、尺寸或接口能力前，带未知能力缺口的定义可以保存为草稿，
+但不能启用。
 
 严格筛选请求示例：
 

@@ -1,0 +1,57 @@
+{
+  "schema_version": "0.2.5",
+  "category_id": "mirror_mount_cover",
+  "group": {
+    "group_id": "plastic_parts",
+    "label_zh": "塑料件",
+    "label_en": "Plastic parts",
+    "display_order": 20
+  },
+  "label_zh": "后视镜安装盖",
+  "label_en": "Mirror mount cover",
+  "display_order": 60,
+  "material_family": "PLASTIC",
+  "identity_profile": "vehicle_specific_small_trim",
+  "part_type": "mirror mount cover",
+  "aliases": [
+    "mirror mount cover",
+    "mirror base cover"
+  ],
+  "discovery": {
+    "ebay_category_id": "6028",
+    "queries": [
+      "mirror mount cover OEM"
+    ]
+  },
+  "supply": {
+    "keywords": [
+      "后视镜底座盖"
+    ],
+    "aliases": [
+      "mirror mount cover",
+      "mirror base cover",
+      "后视镜底座盖"
+    ]
+  },
+  "required_capabilities": [
+    "PART_TYPE_ALIAS_MATCH",
+    "PART_IDENTIFIER",
+    "VEHICLE_FITMENT",
+    "SIDE",
+    "POSITION",
+    "PACKAGE_QUANTITY"
+  ],
+  "risk": {
+    "level": "LOW",
+    "rationale": "Small cosmetic vehicle-specific plastic trim."
+  },
+  "examples": {
+    "positive_titles": [
+      "Left Mirror Mount Cover 87945-0R010 for Toyota RAV4 2013-2018"
+    ],
+    "negative_titles": [
+      "Universal blind spot mirror pair"
+    ]
+  },
+  "notes": "Example only. Review identity, risk, discovery and supply terms before activation."
+}

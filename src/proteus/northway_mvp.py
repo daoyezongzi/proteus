@@ -10,6 +10,7 @@ import json
 import re
 from typing import Any
 
+from proteus.category_catalog import builtin_public_catalog, builtin_runtime_categories
 from proteus.normalization import normalize_part_number
 from proteus.providers.hiobuy import collect_1688_supply
 from proteus.providers.local_1688_cli import (
@@ -28,78 +29,7 @@ SUPPLY_COLLECTOR = "china_supply"
 SUPPLIER_PREFILTER_COLLECTOR = "1688_supplier_prefilter"
 
 
-ARCHETYPES: dict[str, dict[str, Any]] = {
-    "fog_light_bezel": {
-        "profile": "vehicle_specific_small_trim",
-        "part_type": "fog light bezel",
-        "aliases": ("fog light bezel", "fog lamp bezel", "fog light cover", "fog lamp cover"),
-        "discovery_keyword": "fog light bezel OEM",
-    },
-    "tow_hook_cover": {
-        "profile": "vehicle_specific_small_trim",
-        "part_type": "tow hook cover",
-        "aliases": ("tow hook cover", "tow eye cover", "towing eye cover"),
-        "discovery_keyword": "tow hook cover OEM",
-    },
-    "bumper_reflector": {
-        "profile": "vehicle_specific_small_trim",
-        "part_type": "bumper reflector",
-        "aliases": ("bumper reflector", "rear reflector", "bumper side reflector"),
-        "discovery_keyword": "bumper reflector OEM",
-    },
-    "headlight_washer_cover": {
-        "profile": "vehicle_specific_small_trim",
-        "part_type": "headlight washer cover",
-        "aliases": (
-            "headlight washer cover",
-            "headlamp washer cover",
-            "headlight washer cap",
-            "headlamp washer cap",
-            "headlight washer covers",
-        ),
-        "discovery_keyword": "headlight washer cover OEM",
-    },
-    "lower_air_deflector": {
-        "profile": "vehicle_specific_small_trim",
-        "part_type": "lower air deflector",
-        "aliases": ("lower air deflector", "lower splash shield", "lower air shield"),
-        "discovery_keyword": "lower air deflector OEM",
-    },
-    "hood_latch_release_cable": {
-        "profile": "vehicle_specific_cable",
-        "part_type": "hood latch release cable",
-        "aliases": (
-            "hood latch release cable",
-            "hood release cable",
-            "bonnet release cable",
-            "hood lock cable",
-        ),
-        "discovery_keyword": "hood release cable OEM",
-    },
-    "accelerator_cable": {
-        "profile": "vehicle_specific_cable",
-        "part_type": "accelerator cable",
-        "aliases": ("accelerator cable", "throttle cable", "gas pedal cable"),
-        "discovery_keyword": "accelerator cable OEM",
-    },
-    "door_handle_bowden_cable": {
-        "profile": "vehicle_specific_cable",
-        "part_type": "door handle Bowden cable",
-        "aliases": ("door handle bowden cable", "door handle cable", "door latch cable"),
-        "discovery_keyword": "door handle cable OEM",
-    },
-    "transmission_shift_control_cable": {
-        "profile": "vehicle_specific_cable",
-        "part_type": "transmission shift control cable",
-        "aliases": (
-            "transmission shift control cable",
-            "shift control cable",
-            "gear selector cable",
-            "shifter cable",
-        ),
-        "discovery_keyword": "shift control cable OEM",
-    },
-}
+ARCHETYPES: dict[str, dict[str, Any]] = builtin_runtime_categories()
 
 _OUT_OF_SCOPE_TERMS = (
     "universal",
@@ -220,15 +150,20 @@ def _slug(value: str) -> str:
     return normalized or "unknown"
 
 
-def _archetype(key: str) -> dict[str, Any]:
-    if key not in ARCHETYPES:
+def _archetype(
+    key: str,
+    category_definitions: Mapping[str, Mapping[str, Any]] | None = None,
+) -> Mapping[str, Any]:
+    active = category_definitions if category_definitions is not None else ARCHETYPES
+    if key not in active:
         raise ValueError(f"unknown Northway archetype: {key}")
-    return ARCHETYPES[key]
+    return active[key]
 
 
 def _selected_archetypes(
     archetype: str | None,
     archetypes: Sequence[str] | None,
+    category_definitions: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[str]:
     if archetype is not None and archetypes is not None:
         raise ValueError("use archetype or archetypes, not both")
@@ -239,23 +174,28 @@ def _selected_archetypes(
             raise ValueError("archetypes must be a sequence of archetype keys")
         selected = list(dict.fromkeys(archetypes))
     else:
-        selected = list(ARCHETYPES)
+        selected = list(
+            category_definitions if category_definitions is not None else ARCHETYPES
+        )
     if not selected:
         raise ValueError("at least one Northway archetype is required")
     for key in selected:
         if not isinstance(key, str):
             raise ValueError("archetype keys must be strings")
-        _archetype(key)
+        _archetype(key, category_definitions)
     return selected
 
 
 def _matching_archetype(
     candidates: Sequence[Mapping[str, Any]],
     selected: Sequence[str],
+    category_definitions: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> str:
     title = _clean_text(candidates[0].get("source_listing_title")) if candidates else ""
     for key in selected:
-        if classify_scope(title, key)["status"] == "IN_SCOPE":
+        if classify_scope(
+            title, key, category_definitions=category_definitions
+        )["status"] == "IN_SCOPE":
             return key
     for candidate in candidates:
         discovered_as = candidate.get("_discovery_archetype")
@@ -272,9 +212,24 @@ def _public_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def northway_mvp_policy() -> dict[str, Any]:
+def northway_mvp_policy(
+    category_definitions: Mapping[str, Mapping[str, Any]] | None = None,
+    *,
+    category_catalog: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    active = category_definitions if category_definitions is not None else ARCHETYPES
+    profile_labels = {
+        "vehicle_specific_small_trim": "Vehicle-specific small trim",
+        "vehicle_specific_cable": "Vehicle-specific cable",
+    }
+    profiles = sorted({str(value["profile"]) for value in active.values()})
+    public_catalog = (
+        dict(category_catalog)
+        if category_catalog is not None
+        else builtin_public_catalog()
+    )
     return {
-        "schema_version": "0.2.4",
+        "schema_version": "0.2.5",
         "profile": "northway-product-family-mvp",
         "decision_labels": [
             "OPPORTUNITY_CANDIDATE",
@@ -283,39 +238,47 @@ def northway_mvp_policy() -> dict[str, Any]:
             "REJECTED",
         ],
         "category_profiles": {
-            "vehicle_specific_small_trim": {
-                "label": "Vehicle-specific small trim",
+            profile: {
+                "label": profile_labels.get(profile, profile),
                 "archetypes": [
                     key
-                    for key, value in ARCHETYPES.items()
-                    if value["profile"] == "vehicle_specific_small_trim"
+                    for key, value in active.items()
+                    if value["profile"] == profile
                 ],
-            },
-            "vehicle_specific_cable": {
-                "label": "Vehicle-specific cable",
-                "archetypes": [
-                    key
-                    for key, value in ARCHETYPES.items()
-                    if value["profile"] == "vehicle_specific_cable"
-                ],
-            },
+            }
+            for profile in profiles
         },
         "archetypes": {
             key: {
                 "category_profile": value["profile"],
                 "part_type": value["part_type"],
                 "discovery_keyword": value["discovery_keyword"],
+                "category_id": key,
+                "category_version_id": value.get("category_version_id"),
+                "group_id": value.get("group_id"),
+                "label_zh": value.get("label_zh"),
+                "label_en": value.get("label_en"),
+                "material_family": value.get("material_family"),
             }
-            for key, value in ARCHETYPES.items()
+            for key, value in active.items()
         },
+        "category_catalog": public_catalog,
         "default_thresholds": {
             "min_family_price_usd": 20.0,
             "min_observed_ebay_demand": 1,
             "max_amazon_queries_per_family": 3,
+            "grade_a_max_competitors": 5,
+            "grade_a_minus_max_competitors": 8,
         },
         "competition_rule": {
-            "automatic_upper_bound": None,
-            "count_usage": "ranking_and_manual_review",
+            "count_field": "competitive_product_cluster_count",
+            "grade_a": {"operator": "LTE", "maximum": 5},
+            "grade_a_minus": {"operator": "BETWEEN_INCLUSIVE", "minimum": 6, "maximum": 8},
+            "reject": {"operator": "GT", "threshold": 8},
+            "incomplete_evidence": (
+                "Reject only when the observed lower bound already exceeds the A- maximum; "
+                "otherwise keep the grade pending."
+            ),
         },
         "run_bounds": {
             "candidate_cap": None,
@@ -335,15 +298,21 @@ def northway_mvp_policy() -> dict[str, Any]:
             "Amazon. Only a family with a valid 1688 offer ID, real 1688 URL, supplier identity "
             "and matching title proceeds to Amazon. The prefilter may be explicitly disabled for "
             "a run when 1688 is unavailable; that run can continue Amazon market review, but the "
-            "unverified supplier stage keeps the final decision at REVIEW_REQUIRED. Observed "
-            "competition is a ranking and manual-review signal, not an automatic upper bound. It "
-            "is not a purchase instruction."
+            "unverified supplier stage keeps the final decision at REVIEW_REQUIRED. Complete "
+            "Amazon family evidence grades 0-5 substitute clusters as A and 6-8 as A-; 9 or "
+            "more is rejected. Incomplete evidence remains pending unless its observed lower "
+            "bound is already 9 or more. This is not a purchase instruction."
         ),
     }
 
 
-def classify_scope(title: str, archetype_key: str) -> dict[str, Any]:
-    profile = _archetype(archetype_key)
+def classify_scope(
+    title: str,
+    archetype_key: str,
+    *,
+    category_definitions: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    profile = _archetype(archetype_key, category_definitions)
     text = _clean_text(title).casefold()
     reasons: list[str] = []
     if not text:
@@ -505,12 +474,17 @@ def resolve_product_family(
     archetype_key: str,
     *,
     fitment_rows: Sequence[Mapping[str, Any]] | None = None,
+    category_definitions: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    profile = _archetype(archetype_key)
+    profile = _archetype(archetype_key, category_definitions)
     if not candidates:
         raise ValueError("at least one discovery candidate is required")
     title = _clean_text(candidates[0].get("source_listing_title"))
-    scope = classify_scope(title, archetype_key)
+    scope = classify_scope(
+        title,
+        archetype_key,
+        category_definitions=category_definitions,
+    )
     if scope["status"] == "OUT_OF_SCOPE":
         return {
             "scope_status": "OUT_OF_SCOPE",
@@ -698,11 +672,20 @@ def _product_sides(title: str) -> set[str]:
     return sides
 
 
-def _product_relation(family: Mapping[str, Any], product: Mapping[str, Any]) -> dict[str, Any]:
+def _product_relation(
+    family: Mapping[str, Any],
+    product: Mapping[str, Any],
+    *,
+    category_definition: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     title = _clean_text(product.get("title"))
     folded = title.casefold()
-    profile = next(
-        (value for value in ARCHETYPES.values() if value["part_type"] == family.get("part_type")),
+    profile = category_definition or next(
+        (
+            value
+            for value in ARCHETYPES.values()
+            if value["part_type"] == family.get("part_type")
+        ),
         None,
     )
     if not title or profile is None:
@@ -785,8 +768,23 @@ def aggregate_amazon_family_results(
     query_results: Sequence[Mapping[str, Any]],
     *,
     min_family_price_usd: float,
+    grade_a_max_competitors: int = 5,
+    grade_a_minus_max_competitors: int = 8,
+    category_definition: Mapping[str, Any] | None = None,
     max_competitive_products: int | None = None,
 ) -> dict[str, Any]:
+    if (
+        isinstance(grade_a_max_competitors, bool)
+        or not isinstance(grade_a_max_competitors, int)
+        or isinstance(grade_a_minus_max_competitors, bool)
+        or not isinstance(grade_a_minus_max_competitors, int)
+        or grade_a_max_competitors < 0
+        or grade_a_minus_max_competitors <= grade_a_max_competitors
+    ):
+        raise ValueError(
+            "competition grade thresholds must be integers with "
+            "0 <= grade_a_max_competitors < grade_a_minus_max_competitors"
+        )
     products_by_asin: dict[str, dict[str, Any]] = {}
     matched_queries: dict[str, set[str]] = defaultdict(set)
     query_evidence: list[dict[str, Any]] = []
@@ -817,7 +815,11 @@ def aggregate_amazon_family_results(
     observations: list[dict[str, Any]] = []
     relevant: list[dict[str, Any]] = []
     for asin, product in products_by_asin.items():
-        relation = _product_relation(family, product)
+        relation = _product_relation(
+            family,
+            product,
+            category_definition=category_definition,
+        )
         observation = {
             **product,
             "asin": asin,
@@ -850,21 +852,46 @@ def aggregate_amazon_family_results(
         and not isinstance(item.get("price_usd"), bool)
     ]
     cluster_count = len(clusters)
-    if not complete:
+    if cluster_count > grade_a_minus_max_competitors:
+        competition_grade = "REJECTED"
+        competition_stage = _stage(
+            "REJECTED",
+            cluster_count,
+            "LTE",
+            grade_a_minus_max_competitors,
+            (
+                "The observed substitute-product cluster count already exceeds the A- maximum; "
+                "this is conclusive even if some family searches are incomplete."
+                if not complete
+                else "The complete substitute-product cluster count exceeds the A- maximum."
+            ),
+        )
+    elif not complete:
+        competition_grade = "PENDING"
         competition_stage = _stage(
             "REVIEW_REQUIRED",
             cluster_count,
-            None,
-            None,
-            "Observed competition is only a lower bound because one or more family searches are incomplete; the count has no automatic upper limit.",
+            "LTE",
+            grade_a_minus_max_competitors,
+            "Observed competition is only a lower bound; A or A- cannot be assigned until all family searches complete.",
         )
-    else:
+    elif cluster_count <= grade_a_max_competitors:
+        competition_grade = "A"
         competition_stage = _stage(
             "PASSED",
             cluster_count,
-            None,
-            None,
-            "Complete family search evidence is available; the observed substitute-product cluster count is retained for ranking and manual review without an automatic upper limit.",
+            "LTE",
+            grade_a_max_competitors,
+            "Complete family evidence places the substitute-product cluster count in grade A.",
+        )
+    else:
+        competition_grade = "A-"
+        competition_stage = _stage(
+            "PASSED",
+            cluster_count,
+            "LTE",
+            grade_a_minus_max_competitors,
+            "Complete family evidence places the substitute-product cluster count in grade A-.",
         )
     price_floor = min(prices) if prices else None
     aftermarket_floor = min(aftermarket_prices) if aftermarket_prices else None
@@ -895,6 +922,9 @@ def aggregate_amazon_family_results(
         )
     return {
         "competition_complete": complete,
+        "competition_grade": competition_grade,
+        "grade_a_max_competitors": grade_a_max_competitors,
+        "grade_a_minus_max_competitors": grade_a_minus_max_competitors,
         "competitive_product_cluster_count": cluster_count,
         "competitive_asin_count": len(relevant),
         "original_equipment_asin_count": sum(
@@ -1038,6 +1068,9 @@ def _compact_competition(value: Any) -> dict[str, Any]:
         value,
         (
             "competition_complete",
+            "competition_grade",
+            "grade_a_max_competitors",
+            "grade_a_minus_max_competitors",
             "competitive_product_cluster_count",
             "competitive_asin_count",
             "original_equipment_asin_count",
@@ -1136,6 +1169,9 @@ def _compact_report(value: Any) -> dict[str, Any]:
                 "rank",
                 "category_profile",
                 "archetype",
+                "category_version_id",
+                "category_group_id",
+                "competition_grade",
             ),
         ),
         "source_listings": [
@@ -1195,10 +1231,11 @@ def compact_northway_result(result: Mapping[str, Any]) -> dict[str, Any]:
             "max_1688_checks",
             "enable_1688_prefilter",
             "max_amazon_queries_per_family",
-            "competition_upper_bound",
+            "grade_a_max_competitors",
+            "grade_a_minus_max_competitors",
+            "category_version_id",
         ),
     )
-    policy["competition_upper_bound"] = None
     manifest = _compact_fields(
         result.get("scan_manifest"),
         (
@@ -1392,10 +1429,12 @@ def _rank_key(report: Mapping[str, Any]) -> tuple[Any, ...]:
         for stage in stages.values()
     )
     competition = report.get("competition", {}).get("competitive_product_cluster_count")
+    grade_order = {"A": 0, "A-": 1, "PENDING": 2, "NOT_RUN": 3, "REJECTED": 4}
     price = report.get("competition", {}).get("aftermarket_family_price_floor_usd")
     demand = report.get("demand", {}).get("observed_sold_count_lower_bound")
     return (
         decision_order.get(report.get("decision"), 9),
+        grade_order.get(report.get("competition_grade"), 9),
         -passed,
         len(report.get("evidence_gaps", [])),
         competition if isinstance(competition, int) else 10**9,
@@ -1417,6 +1456,8 @@ def run_northway_mvp(
     enable_1688_prefilter: bool = True,
     max_amazon_queries_per_family: int = 3,
     max_competitive_products: int | None = None,
+    grade_a_max_competitors: int = 5,
+    grade_a_minus_max_competitors: int = 8,
     min_family_price_usd: float = 20.0,
     min_observed_ebay_demand: int = 1,
     hiobuy_key: str | None = None,
@@ -1424,8 +1465,56 @@ def run_northway_mvp(
     max_supply_moq: int = 10,
     collectors: Mapping[str, Callable[..., Mapping[str, Any]]] | None = None,
     progress_callback: Callable[[Mapping[str, Any]], None] | None = None,
+    category_definition: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    selected_archetypes = _selected_archetypes(archetype, archetypes)
+    category_definitions: Mapping[str, Mapping[str, Any]] = ARCHETYPES
+    if category_definition is not None:
+        missing_snapshot_fields = [
+            field
+            for field in (
+                "category_id",
+                "category_version_id",
+                "group_id",
+                "profile",
+                "part_type",
+                "discovery_keyword",
+            )
+            if not _clean_text(category_definition.get(field))
+        ]
+        version_number = category_definition.get("category_version_number")
+        if (
+            isinstance(version_number, bool)
+            or not isinstance(version_number, int)
+            or version_number < 1
+        ):
+            missing_snapshot_fields.append("category_version_number")
+        if missing_snapshot_fields:
+            raise ValueError(
+                "category_definition is not an executable version snapshot; missing: "
+                + ", ".join(sorted(set(missing_snapshot_fields)))
+            )
+        category_id = _clean_text(category_definition.get("category_id"))
+        if archetype is not None and archetype != category_id:
+            raise ValueError("archetype must match category_definition.category_id")
+        if archetypes is not None and list(archetypes) != [category_id]:
+            raise ValueError("category_definition supports exactly its one leaf category")
+        category_definitions = {category_id: dict(category_definition)}
+        if archetype is None and archetypes is None:
+            archetype = category_id
+    selected_archetypes = _selected_archetypes(
+        archetype,
+        archetypes,
+        category_definitions,
+    )
+    catalog_ebay_category_ids = {
+        str(_archetype(key, category_definitions).get("ebay_category_id") or "")
+        for key in selected_archetypes
+        if _archetype(key, category_definitions).get("ebay_category_id")
+    }
+    if len(catalog_ebay_category_ids) > 1:
+        raise ValueError("selected categories require different eBay category IDs")
+    if catalog_ebay_category_ids:
+        ebay_category_id = next(iter(catalog_ebay_category_ids))
     if not isinstance(discovery_pages, int) or isinstance(discovery_pages, bool) or not 1 <= discovery_pages <= 10:
         raise ValueError("discovery_pages must be between 1 and 10")
     if not isinstance(request_budget, int) or isinstance(request_budget, bool) or not 1 <= request_budget <= 500:
@@ -1442,6 +1531,18 @@ def run_northway_mvp(
         raise ValueError("enable_1688_prefilter must be a boolean")
     if not 1 <= max_amazon_queries_per_family <= 5:
         raise ValueError("max_amazon_queries_per_family must be between 1 and 5")
+    if (
+        isinstance(grade_a_max_competitors, bool)
+        or not isinstance(grade_a_max_competitors, int)
+        or isinstance(grade_a_minus_max_competitors, bool)
+        or not isinstance(grade_a_minus_max_competitors, int)
+        or grade_a_max_competitors < 0
+        or grade_a_minus_max_competitors <= grade_a_max_competitors
+    ):
+        raise ValueError(
+            "competition grade thresholds must satisfy "
+            "0 <= grade_a_max_competitors < grade_a_minus_max_competitors"
+        )
     if min_family_price_usd < 0 or min_observed_ebay_demand < 0:
         raise ValueError("screening thresholds must be non-negative")
     if not isinstance(ebay_category_id, str) or not ebay_category_id.isdigit():
@@ -1500,7 +1601,7 @@ def run_northway_mvp(
     discovery_by_archetype: list[dict[str, Any]] = []
     discovery_statuses: list[str] = []
     for archetype_key in selected_archetypes:
-        profile = _archetype(archetype_key)
+        profile = _archetype(archetype_key, category_definitions)
         type_stats = Counter()
         type_pages_attempted = 0
         type_pages_completed = 0
@@ -1575,6 +1676,8 @@ def run_northway_mvp(
             {
                 "archetype": archetype_key,
                 "category_profile": profile["profile"],
+                "category_version_id": profile.get("category_version_id"),
+                "category_group_id": profile.get("group_id"),
                 "keyword": profile["discovery_keyword"],
                 "status": type_status,
                 "pages_attempted": type_pages_attempted,
@@ -1609,8 +1712,16 @@ def run_northway_mvp(
 
     resolved_groups: list[dict[str, Any]] = []
     for order, group in enumerate(listing_groups.values()):
-        group_archetype = _matching_archetype(group, selected_archetypes)
-        resolution = resolve_product_family(group, group_archetype)
+        group_archetype = _matching_archetype(
+            group,
+            selected_archetypes,
+            category_definitions,
+        )
+        resolution = resolve_product_family(
+            group,
+            group_archetype,
+            category_definitions=category_definitions,
+        )
         resolved_groups.append(
             {
                 "order": order,
@@ -1696,6 +1807,7 @@ def run_northway_mvp(
     for group in deduped:
         resolution = group["resolution"]
         family = resolution.get("family")
+        selected_category = _archetype(group["archetype"], category_definitions)
         report_id = (
             str(family["family_key"])
             if isinstance(family, Mapping)
@@ -1727,6 +1839,9 @@ def run_northway_mvp(
         query_pack: list[dict[str, str]] = []
         competition: dict[str, Any] = {
             "competition_complete": False,
+            "competition_grade": "NOT_RUN",
+            "grade_a_max_competitors": grade_a_max_competitors,
+            "grade_a_minus_max_competitors": grade_a_minus_max_competitors,
             "competitive_product_cluster_count": None,
             "competitive_asin_count": None,
             "offer_count_by_asin": {},
@@ -1812,7 +1927,17 @@ def run_northway_mvp(
                     last_query=primary,
                     provider=supplier_provider_label,
                 )
-                supply_outcome = call_supplier(primary, family)
+                supplier_family = {
+                    **family,
+                    "category_aliases": list(selected_category.get("aliases", [])),
+                    "supply_keywords": list(
+                        selected_category.get("supply_keywords", [])
+                    ),
+                    "supply_aliases": list(
+                        selected_category.get("supply_aliases", [])
+                    ),
+                }
+                supply_outcome = call_supplier(primary, supplier_family)
                 provider_attempts.append(
                     {
                         "provider": supply_outcome.get("provider", supplier_provider_label),
@@ -1877,6 +2002,9 @@ def run_northway_mvp(
                     query_results,
                     max_competitive_products=max_competitive_products,
                     min_family_price_usd=float(min_family_price_usd),
+                    grade_a_max_competitors=grade_a_max_competitors,
+                    grade_a_minus_max_competitors=grade_a_minus_max_competitors,
+                    category_definition=selected_category,
                 )
                 stages["amazon_family_competition"] = competition["competition_stage"]
                 stages["family_price_floor"] = competition["price_stage"]
@@ -1901,7 +2029,7 @@ def run_northway_mvp(
         decision = _report_decision(stages)
         reports.append(
             {
-                "schema_version": "0.2.4",
+                "schema_version": "0.2.5",
                 "profile": "northway-product-family-mvp",
                 "candidate_id": report_id,
                 "discovery_order": group["order"],
@@ -1909,6 +2037,11 @@ def run_northway_mvp(
                 "rank": None,
                 "category_profile": resolution.get("category_profile"),
                 "archetype": group["archetype"],
+                "category_version_id": selected_category.get(
+                    "category_version_id"
+                ),
+                "category_group_id": selected_category.get("group_id"),
+                "competition_grade": competition["competition_grade"],
                 "source_listings": group["source_listings"],
                 "resolution": resolution,
                 "family": family,
@@ -1941,6 +2074,7 @@ def run_northway_mvp(
         report.get("stages", {}).get("china_non_oem_supply", {}).get("status")
         for report in reports
     )
+    competition_grades = Counter(report["competition_grade"] for report in reports)
     supply_filter = {
         "provider": supplier_provider_label,
         "enabled": enable_1688_prefilter,
@@ -1951,8 +2085,15 @@ def run_northway_mvp(
         "not_run": supply_statuses["NOT_RUN"],
     }
     generated_at = _utc_now()
+    selected_versions = [
+        str(_archetype(key, category_definitions).get("category_version_id") or "")
+        for key in selected_archetypes
+    ]
     run_id = hashlib.sha256(
-        f"{','.join(selected_archetypes)}:{generated_at}:{len(reports)}".encode("utf-8")
+        (
+            f"{','.join(selected_archetypes)}:{','.join(selected_versions)}:"
+            f"{generated_at}:{len(reports)}"
+        ).encode("utf-8")
     ).hexdigest()[:16]
     emit_progress(
         phase="completed",
@@ -1961,22 +2102,28 @@ def run_northway_mvp(
         provider=None,
     )
     return {
-        "schema_version": "0.2.4",
+        "schema_version": "0.2.5",
         "profile": "northway-product-family-mvp",
         "result_id": f"result_{run_id}",
         "generated_at": generated_at,
         "policy": {
             "archetypes": selected_archetypes,
             "category_profiles": sorted(
-                {_archetype(key)["profile"] for key in selected_archetypes}
+                {
+                    _archetype(key, category_definitions)["profile"]
+                    for key in selected_archetypes
+                }
             ),
-            "max_competitive_products": max_competitive_products,
             "min_family_price_usd": float(min_family_price_usd),
             "min_observed_ebay_demand": min_observed_ebay_demand,
             "max_1688_checks": max_1688_checks,
             "enable_1688_prefilter": enable_1688_prefilter,
             "max_amazon_queries_per_family": max_amazon_queries_per_family,
-            "competition_upper_bound": None,
+            "grade_a_max_competitors": grade_a_max_competitors,
+            "grade_a_minus_max_competitors": grade_a_minus_max_competitors,
+            "category_version_id": selected_versions[0]
+            if len(selected_versions) == 1
+            else None,
         },
         "scan_manifest": {
             "marketplace": "EBAY_US",
@@ -1985,8 +2132,18 @@ def run_northway_mvp(
             "discovery_queries": [
                 {
                     "archetype": key,
-                    "category_profile": _archetype(key)["profile"],
-                    "keyword": _archetype(key)["discovery_keyword"],
+                    "category_profile": _archetype(
+                        key, category_definitions
+                    )["profile"],
+                    "category_version_id": _archetype(
+                        key, category_definitions
+                    ).get("category_version_id"),
+                    "category_group_id": _archetype(
+                        key, category_definitions
+                    ).get("group_id"),
+                    "keyword": _archetype(
+                        key, category_definitions
+                    )["discovery_keyword"],
                 }
                 for key in selected_archetypes
             ],
@@ -2033,6 +2190,11 @@ def run_northway_mvp(
             "market_shortlist_candidates": counts["MARKET_SHORTLIST_CANDIDATE"],
             "review_required": counts["REVIEW_REQUIRED"],
             "rejected": counts["REJECTED"],
+            "grade_a": competition_grades["A"],
+            "grade_a_minus": competition_grades["A-"],
+            "competition_pending": competition_grades["PENDING"],
+            "competition_not_run": competition_grades["NOT_RUN"],
+            "competition_rejected": competition_grades["REJECTED"],
         },
         "supply_filter": supply_filter,
         "ranking": [report["candidate_id"] for report in reports],

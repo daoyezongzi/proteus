@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "v0_2_5_northway_mvp_result.schema.json",
+  "title": "Proteus V0.2.5 Northway MVP Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile",
+    "result_id",
+    "generated_at",
+    "policy",
+    "scan_manifest",
+    "request_budget",
+    "provider_budgets",
+    "supply_filter",
+    "discovery",
+    "summary",
+    "ranking",
+    "reports"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.2.5"},
+    "profile": {"const": "northway-product-family-mvp"},
+    "result_id": {"type": "string", "pattern": "^result_[a-f0-9]{16}$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "policy": {"type": "object"},
+    "scan_manifest": {
+      "type": "object",
+      "required": [
+        "marketplace",
+        "category_id",
+        "archetypes",
+        "discovery_queries",
+        "pages_requested",
+        "pages_attempted",
+        "pages_completed",
+        "candidate_cap",
+        "selected_archetype"
+      ],
+      "properties": {
+        "marketplace": {"const": "EBAY_US"},
+        "category_id": {"type": "string", "pattern": "^[0-9]+$"},
+        "archetypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "discovery_queries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "archetype",
+              "category_profile",
+              "category_version_id",
+              "category_group_id",
+              "keyword"
+            ],
+            "properties": {
+              "archetype": {"type": "string", "minLength": 1},
+              "category_profile": {"type": "string", "minLength": 1},
+              "category_version_id": {"type": "string", "minLength": 1},
+              "category_group_id": {"type": "string", "minLength": 1},
+              "keyword": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "pages_requested": {"type": "integer", "minimum": 1},
+        "pages_attempted": {"type": "integer", "minimum": 0},
+        "pages_completed": {"type": "integer", "minimum": 0},
+        "candidate_cap": {"type": "null"},
+        "selected_archetype": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "request_budget": {"$ref": "#/$defs/request_budget"},
+    "provider_budgets": {
+      "type": "object",
+      "required": ["serpapi", "1688"],
+      "properties": {
+        "serpapi": {"$ref": "#/$defs/budget"},
+        "1688": {"$ref": "#/$defs/budget"}
+      },
+      "additionalProperties": false
+    },
+    "supply_filter": {
+      "type": "object",
+      "required": [
+        "provider",
+        "enabled",
+        "checked",
+        "supplier_found",
+        "no_supplier",
+        "review_required",
+        "not_run"
+      ],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "enabled": {"type": "boolean"},
+        "checked": {"type": "integer", "minimum": 0},
+        "supplier_found": {"type": "integer", "minimum": 0},
+        "no_supplier": {"type": "integer", "minimum": 0},
+        "review_required": {"type": "integer", "minimum": 0},
+        "not_run": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "discovery": {"type": "object"},
+    "summary": {
+      "type": "object",
+      "required": [
+        "candidate_count",
+        "opportunity_candidates",
+        "market_shortlist_candidates",
+        "review_required",
+        "rejected",
+        "grade_a",
+        "grade_a_minus",
+        "competition_pending",
+        "competition_not_run",
+        "competition_rejected"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "candidate_count": {"type": "integer", "minimum": 0},
+        "opportunity_candidates": {"type": "integer", "minimum": 0},
+        "market_shortlist_candidates": {"type": "integer", "minimum": 0},
+        "review_required": {"type": "integer", "minimum": 0},
+        "rejected": {"type": "integer", "minimum": 0},
+        "grade_a": {"type": "integer", "minimum": 0},
+        "grade_a_minus": {"type": "integer", "minimum": 0},
+        "competition_pending": {"type": "integer", "minimum": 0},
+        "competition_not_run": {"type": "integer", "minimum": 0},
+        "competition_rejected": {"type": "integer", "minimum": 0}
+      }
+    },
+    "ranking": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "reports": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/report"}
+    }
+  },
+  "$defs": {
+    "budget": {
+      "type": "object",
+      "required": ["limit", "used", "remaining"],
+      "properties": {
+        "limit": {"type": "integer", "minimum": 0},
+        "used": {"type": "integer", "minimum": 0},
+        "remaining": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "request_budget": {
+      "type": "object",
+      "required": ["limit", "used", "remaining"],
+      "properties": {
+        "limit": {"type": "integer", "minimum": 1},
+        "used": {"type": "integer", "minimum": 0},
+        "remaining": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "competition_grade": {
+      "enum": ["A", "A-", "PENDING", "NOT_RUN", "REJECTED"]
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "profile",
+        "candidate_id",
+        "discovery_order",
+        "decision",
+        "rank",
+        "category_profile",
+        "archetype",
+        "category_version_id",
+        "category_group_id",
+        "competition_grade",
+        "source_listings",
+        "resolution",
+        "family",
+        "query_pack",
+        "competition",
+        "demand",
+        "supply",
+        "stages",
+        "evidence_gaps",
+        "failure_reasons",
+        "provider_attempts"
+      ],
+      "properties": {
+        "schema_version": {"const": "0.2.5"},
+        "profile": {"const": "northway-product-family-mvp"},
+        "candidate_id": {"type": "string", "minLength": 1},
+        "discovery_order": {"type": "integer", "minimum": 0},
+        "decision": {
+          "enum": [
+            "OPPORTUNITY_CANDIDATE",
+            "MARKET_SHORTLIST_CANDIDATE",
+            "REVIEW_REQUIRED",
+            "REJECTED"
+          ]
+        },
+        "rank": {"type": "integer", "minimum": 1},
+        "category_profile": {"type": ["string", "null"]},
+        "archetype": {"type": "string", "minLength": 1},
+        "category_version_id": {"type": "string", "minLength": 1},
+        "category_group_id": {"type": "string", "minLength": 1},
+        "competition_grade": {"$ref": "#/$defs/competition_grade"},
+        "source_listings": {"type": "array", "items": {"type": "object"}},
+        "resolution": {"type": "object"},
+        "family": {"type": ["object", "null"]},
+        "query_pack": {"type": "array", "items": {"type": "object"}},
+        "competition": {
+          "type": "object",
+          "required": [
+            "competition_complete",
+            "competition_grade",
+            "grade_a_max_competitors",
+            "grade_a_minus_max_competitors",
+            "competitive_product_cluster_count"
+          ],
+          "properties": {
+            "competition_complete": {"type": "boolean"},
+            "competition_grade": {"$ref": "#/$defs/competition_grade"},
+            "grade_a_max_competitors": {"type": "integer", "minimum": 0},
+            "grade_a_minus_max_competitors": {"type": "integer", "minimum": 1},
+            "competitive_product_cluster_count": {"type": ["integer", "null"], "minimum": 0}
+          }
+        },
+        "demand": {"type": "object"},
+        "supply": {"type": ["object", "null"]},
+        "stages": {"type": "object"},
+        "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+        "failure_reasons": {"type": "array", "items": {"type": "string"}},
+        "provider_attempts": {"type": "array", "items": {"type": "object"}}
+      }
+    }
+  }
+}
