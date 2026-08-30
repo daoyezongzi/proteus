@@ -400,6 +400,14 @@ class SupplierCaptureParserProbeRequest(BaseModel):
         default_factory=list, max_length=8
     )
     embedded_data_markers: list[str] = Field(default_factory=list, max_length=12)
+    document_ready_state: Literal["loading", "interactive", "complete", "unknown"] = "unknown"
+    body_text_length: int = Field(default=0, ge=0, le=1_000_000)
+    visible_image_count: int = Field(default=0, ge=0, le=100_000)
+    resource_count: int = Field(default=0, ge=0, le=100_000)
+    offerish_resource_count: int = Field(default=0, ge=0, le=100_000)
+    apiish_resource_count: int = Field(default=0, ge=0, le=100_000)
+    light_dom_data_attribute_names: list[str] = Field(default_factory=list, max_length=24)
+    onclick_count: int = Field(default=0, ge=0, le=100_000)
 
     @field_validator("embedded_data_markers")
     @classmethod
@@ -413,6 +421,13 @@ class SupplierCaptureParserProbeRequest(BaseModel):
     def validate_identity_markers(cls, value: list[str]) -> list[str]:
         if any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,40}", item) for item in value):
             raise ValueError("light DOM identity markers must contain attribute names")
+        return value
+
+    @field_validator("light_dom_data_attribute_names")
+    @classmethod
+    def validate_data_attribute_names(cls, value: list[str]) -> list[str]:
+        if any(not re.fullmatch(r"data-[A-Za-z0-9_-]{1,40}", item) for item in value):
+            raise ValueError("data attribute names must contain attribute names")
         return value
 
 

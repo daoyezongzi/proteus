@@ -246,6 +246,11 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
     assert fallback["probe"]["iframe_hints"][0]["host_class"] == "1688"
     assert fallback["probe"]["iframe_hints"][0]["same_origin_accessible"] is False
     assert fallback["probe"]["iframe_hints"][0]["url"] == "https://show.1688.com/page/offers.html"
+    assert fallback["probe"]["document_ready_state"] == "complete"
+    assert fallback["probe"]["body_text_length"] > 0
+    assert fallback["probe"]["resource_count"] >= fallback["probe"]["offerish_resource_count"] >= 0
+    assert fallback["probe"]["apiish_resource_count"] >= 0
+    assert "data-href" in fallback["probe"]["light_dom_data_attribute_names"]
     assert "token=" not in json.dumps(fallback["probe"], ensure_ascii=False)
     assert "example.com" not in json.dumps(fallback["probe"], ensure_ascii=False)
     assert shadow_probe["shadow_host_count"] == 1

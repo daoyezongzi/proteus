@@ -34,7 +34,9 @@ evidence, not collected offers. The same probe records only sanitized HTTPS
 1688 link candidates and identity-attribute names from the top-level DOM.
 It also records bounded top-level product-structure hints and iframe
 accessibility/size metadata; cross-origin iframe content and foreign URLs are
-not persisted.
+not persisted. Finally, it records only page-state counters (ready state, body
+text/image counts, resource URL class counts, top-level data-attribute names,
+and inline-handler count); raw resource URLs and page text are not persisted.
 
 ## Boundary
 

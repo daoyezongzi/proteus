@@ -464,6 +464,71 @@
     });
   }
 
+  function pageStateHints(documentRoot) {
+    let documentReadyState = "unknown";
+    try {
+      if (["loading", "interactive", "complete"].includes(documentRoot.readyState)) {
+        documentReadyState = documentRoot.readyState;
+      }
+    } catch (_error) {
+      // Keep the state bounded when a document-like test double omits readyState.
+    }
+    let bodyTextLength = 0;
+    try {
+      bodyTextLength = Math.min(1_000_000, normalizeText(documentRoot.body?.textContent).length);
+    } catch (_error) {
+      // Keep the diagnostic optional for a detached document.
+    }
+    let visibleImageCount = 0;
+    try {
+      visibleImageCount = queryAll(documentRoot, ["img"]).filter(isRendered).length;
+    } catch (_error) {
+      // Keep the diagnostic optional when layout is unavailable.
+    }
+    const dataAttributeNames = new Set();
+    let onclickCount = 0;
+    try {
+      const elements = queryAll(documentRoot, ["*"]);
+      for (const element of elements) {
+        if (element.hasAttribute?.("onclick")) onclickCount += 1;
+        for (const name of element.getAttributeNames?.() || []) {
+          if (/^data-[A-Za-z0-9_-]{1,40}$/.test(name)) dataAttributeNames.add(name);
+          if (dataAttributeNames.size >= 24) break;
+        }
+        if (dataAttributeNames.size >= 24) break;
+      }
+    } catch (_error) {
+      // Keep the diagnostic bounded when attribute enumeration is unavailable.
+    }
+    let resourceCount = 0;
+    let offerishResourceCount = 0;
+    let apiishResourceCount = 0;
+    try {
+      const performance = documentRoot.defaultView?.performance;
+      const entries = performance?.getEntriesByType?.("resource") || [];
+      resourceCount = Math.min(100_000, entries.length);
+      for (const entry of entries) {
+        const name = String(entry?.name || "");
+        if (/(offer|product|goods|item|sku|detail|商品|货品)/i.test(name)) offerishResourceCount += 1;
+        if (/(\/api(?:\/|[?])|ajax|search|query|data|graphql|jsonp)/i.test(name)) apiishResourceCount += 1;
+      }
+      offerishResourceCount = Math.min(100_000, offerishResourceCount);
+      apiishResourceCount = Math.min(100_000, apiishResourceCount);
+    } catch (_error) {
+      // Performance entries are not guaranteed in all content-script contexts.
+    }
+    return {
+      document_ready_state: documentReadyState,
+      body_text_length: bodyTextLength,
+      visible_image_count: visibleImageCount,
+      resource_count: resourceCount,
+      offerish_resource_count: offerishResourceCount,
+      apiish_resource_count: apiishResourceCount,
+      light_dom_data_attribute_names: [...dataAttributeNames].sort().slice(0, 24),
+      onclick_count: Math.min(100_000, onclickCount),
+    };
+  }
+
   function parserProbe(documentRoot, profile, pageUrl) {
     const allElements = queryAll(documentRoot, ["*"]);
     const configuredOffers = queryAll(documentRoot, profile.offer_link_selectors || []);
@@ -522,6 +587,7 @@
       light_dom_structure_hints: lightDomStructureHints(allElements),
       iframe_hints: iframeHints(documentRoot, profile, pageUrl),
       embedded_data_markers: embeddedMarkers.slice(0, 12),
+      ...pageStateHints(documentRoot),
     };
   }
 

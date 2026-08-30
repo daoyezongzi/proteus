@@ -267,6 +267,20 @@ function parserProbeDescription(probe, pageNumber = 1) {
     parts.push(`iframe 结构：${details}`);
   }
   if (markers.length) parts.push(`嵌入数据标记：${markers.join("、")}`);
+  if (probe.document_ready_state || Number.isFinite(Number(probe.body_text_length))) {
+    const state = probe.document_ready_state || "unknown";
+    const bodyLength = Number(probe.body_text_length || 0);
+    const imageCount = Number(probe.visible_image_count || 0);
+    const resourceCount = Number(probe.resource_count || 0);
+    const offerishCount = Number(probe.offerish_resource_count || 0);
+    const apiishCount = Number(probe.apiish_resource_count || 0);
+    parts.push(`页面状态：${state}，正文 ${bodyLength} 字符，可见图片 ${imageCount}，资源 ${resourceCount}（商品相关 ${offerishCount}、接口相关 ${apiishCount}）`);
+  }
+  const dataAttributes = Array.isArray(probe.light_dom_data_attribute_names)
+    ? probe.light_dom_data_attribute_names
+    : [];
+  if (dataAttributes.length) parts.push(`顶层 data 属性：${dataAttributes.join("、")}`);
+  if (Number(probe.onclick_count || 0)) parts.push(`顶层 onclick：${Number(probe.onclick_count)}`);
   return `${parts.join("；")}。`;
 }
 

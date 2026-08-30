@@ -1,5 +1,19 @@
 # Proteus Development Log
 
+## 2026-08-30 — V0.2.8 页面状态/资源计数探针（等待真实 Edge 复验）
+
+- 最新真实 capture `cap_ae57bd060df54879af70f35a2522bc84` 仍是
+  `PARSER_FAILED/PAGE_OFFERS_NOT_CONFIRMED`：第一页 35 个链接、0 个商品候选，
+  `offerlist` 仅 1 个链接/1 张图片，`newofferlist` 仅 1 个链接，Shadow Root
+  全部为菜单结构，两个 iframe 均无可读商品文档。现有证据已排除“只差再加一个普通
+  offer 选择器”这一解释；`has_next_page=true` 不是停顿根因。
+- 增加有界页面状态探针：`readyState`、正文/可见图片数量、Performance Resource
+  总数及商品/接口关键词计数、顶层 `data-*` 属性名和 `onclick` 数量。只保存计数与
+  属性名，不保存资源 URL、请求内容、页面原文、Cookie 或令牌。
+- 本地全量回归通过；下一步需在普通 Edge Reload 扩展后重新点击同一店铺。若
+  `readyState=complete` 且资源/图片也无商品迹象，应转向页面实际接口/壳渲染路径；
+  若资源迹象明显但商品仍为 0，再单独延长等待窗口或跟踪渲染时序，暂不盲改选择器。
+
 ## 2026-08-30 — V0.2.8 Shadow Root 结构探针（等待真实 Edge 复验）
 
 - 当前真实 capture `cap_a8257cd1a865431cb8c80eb5d9d0bd06` 已确认 API 页面提交链路正常：
