@@ -326,6 +326,49 @@ class SupplierCaptureShadowRootHintRequest(BaseModel):
     text_length: int = Field(ge=0, le=1_000_000)
 
 
+class SupplierCaptureDomStructureHintRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tag: str = Field(min_length=1, max_length=20, pattern=r"^[a-z][a-z0-9-]*$")
+    id_name: str | None = Field(default=None, max_length=120)
+    class_name: str | None = Field(default=None, max_length=240)
+    role: str | None = Field(default=None, max_length=80)
+    child_count: int = Field(ge=0, le=1_000_000)
+    anchor_count: int = Field(ge=0, le=1_000_000)
+    image_count: int = Field(ge=0, le=1_000_000)
+    visible: bool
+    identity_attribute_names: list[str] = Field(default_factory=list, max_length=16)
+    text_length: int = Field(ge=0, le=1_000_000)
+
+    @field_validator("identity_attribute_names")
+    @classmethod
+    def validate_identity_attribute_names(cls, value: list[str]) -> list[str]:
+        if any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,40}", item) for item in value):
+            raise ValueError("DOM identity attribute names must contain attribute names")
+        return value
+
+
+class SupplierCaptureFrameHintRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    host_class: Literal["1688", "foreign", "blank"]
+    url: str | None = Field(
+        default=None,
+        max_length=700,
+        pattern=r"^https://(?:[a-zA-Z0-9-]+\.)*1688\.com(?:/[^\s#]*)?$",
+    )
+    id_name: str | None = Field(default=None, max_length=120)
+    class_name: str | None = Field(default=None, max_length=240)
+    title: str | None = Field(default=None, max_length=120)
+    visible: bool
+    width: int = Field(ge=0, le=10_000)
+    height: int = Field(ge=0, le=10_000)
+    same_origin_accessible: bool
+    anchor_count: int = Field(ge=0, le=1_000_000)
+    offer_candidate_count: int = Field(ge=0, le=100_000)
+    text_length: int = Field(ge=0, le=1_000_000)
+
+
 class SupplierCaptureParserProbeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -350,6 +393,12 @@ class SupplierCaptureParserProbeRequest(BaseModel):
         default_factory=list, max_length=24
     )
     light_dom_identity_markers: list[str] = Field(default_factory=list, max_length=24)
+    light_dom_structure_hints: list[SupplierCaptureDomStructureHintRequest] = Field(
+        default_factory=list, max_length=24
+    )
+    iframe_hints: list[SupplierCaptureFrameHintRequest] = Field(
+        default_factory=list, max_length=8
+    )
     embedded_data_markers: list[str] = Field(default_factory=list, max_length=12)
 
     @field_validator("embedded_data_markers")

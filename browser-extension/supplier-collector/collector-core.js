@@ -351,6 +351,119 @@
     return hints;
   }
 
+  function lightDomStructureHints(elements) {
+    const identityAttributes = [
+      "data-href",
+      "data-url",
+      "data-link",
+      "data-offer-url",
+      "data-offer-id",
+      "data-offerid",
+      "data-item-id",
+      "data-id",
+      "data-product-id",
+    ];
+    const candidates = [];
+    for (const element of elements) {
+      const className = normalizeText(typeof element.className === "string" ? element.className : "").slice(0, 240);
+      const idName = normalizeText(element.getAttribute?.("id")).slice(0, 120);
+      const role = normalizeText(element.getAttribute?.("role")).slice(0, 80);
+      const signal = `${className} ${idName} ${role}`.toLowerCase();
+      if (!/(offer|product|goods|item|card|sku|list|商品|产品|货品)/i.test(signal)) continue;
+      const childCount = Number(element.children?.length || 0);
+      const anchorCount = queryAll(element, ["a"]).length;
+      const imageCount = queryAll(element, ["img"]).length;
+      const identityNames = identityAttributes.filter((attribute) => element.hasAttribute?.(attribute));
+      let visible = false;
+      try {
+        const rect = element.getBoundingClientRect?.();
+        visible = Boolean(rect && rect.width > 0 && rect.height > 0);
+      } catch (_error) {
+        visible = false;
+      }
+      const score = Number(/(offer|product|goods|sku|card)/i.test(signal)) * 4
+        + Number(/(item|list|商品|产品|货品)/i.test(signal)) * 2
+        + Number(anchorCount > 0 || imageCount > 0 || identityNames.length > 0);
+      candidates.push({
+        score,
+        hint: {
+          tag: String(element.tagName || "unknown").toLowerCase().slice(0, 20),
+          ...(idName ? { id_name: idName } : {}),
+          ...(className ? { class_name: className } : {}),
+          ...(role ? { role } : {}),
+          child_count: childCount,
+          anchor_count: anchorCount,
+          image_count: imageCount,
+          visible,
+          identity_attribute_names: identityNames,
+          text_length: Math.min(1_000_000, normalizeText(element.textContent).length),
+        },
+      });
+    }
+    return candidates
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 24)
+      .map((item) => item.hint);
+  }
+
+  function iframeHints(documentRoot, profile, pageUrl) {
+    return queryAll(documentRoot, ["iframe"]).slice(0, 8).map((element) => {
+      const rawUrl = element.src || element.getAttribute?.("src") || "";
+      let parsed = null;
+      try {
+        parsed = new URL(rawUrl, pageUrl);
+      } catch (_error) {
+        parsed = null;
+      }
+      const host = String(parsed?.hostname || "").toLowerCase();
+      const hostClass = !rawUrl || host === "about:blank" ? "blank" : is1688Host(host) ? "1688" : "foreign";
+      const safeUrl = safeDiagnosticUrl(rawUrl, pageUrl);
+      const idName = normalizeText(element.getAttribute?.("id")).slice(0, 120);
+      const className = normalizeText(typeof element.className === "string" ? element.className : "").slice(0, 240);
+      const title = normalizeText(element.getAttribute?.("title")).slice(0, 120);
+      let visible = false;
+      let width = 0;
+      let height = 0;
+      try {
+        const rect = element.getBoundingClientRect?.();
+        width = Math.min(10_000, Math.max(0, Math.round(rect?.width || 0)));
+        height = Math.min(10_000, Math.max(0, Math.round(rect?.height || 0)));
+        visible = Boolean(rect && rect.width > 0 && rect.height > 0);
+      } catch (_error) {
+        // Keep the frame metadata bounded if layout is unavailable.
+      }
+      let sameOriginAccessible = false;
+      let anchorCount = 0;
+      let offerCandidateCount = 0;
+      let textLength = 0;
+      try {
+        const frameDocument = element.contentDocument;
+        if (frameDocument) {
+          sameOriginAccessible = true;
+          anchorCount = queryAll(frameDocument, ["a"]).length;
+          offerCandidateCount = offerElements(frameDocument, profile).length;
+          textLength = Math.min(1_000_000, normalizeText(frameDocument.body?.textContent).length);
+        }
+      } catch (_error) {
+        // Cross-origin frames expose no readable document to the top page.
+      }
+      return {
+        host_class: hostClass,
+        ...(safeUrl ? { url: safeUrl } : {}),
+        ...(idName ? { id_name: idName } : {}),
+        ...(className ? { class_name: className } : {}),
+        ...(title ? { title } : {}),
+        visible,
+        width,
+        height,
+        same_origin_accessible: sameOriginAccessible,
+        anchor_count: anchorCount,
+        offer_candidate_count: offerCandidateCount,
+        text_length: textLength,
+      };
+    });
+  }
+
   function parserProbe(documentRoot, profile, pageUrl) {
     const allElements = queryAll(documentRoot, ["*"]);
     const configuredOffers = queryAll(documentRoot, profile.offer_link_selectors || []);
@@ -406,6 +519,8 @@
       shadow_root_hints: shadowRootHints(documentRoot, profile),
       link_candidates: linkCandidates,
       light_dom_identity_markers: identityMarkers,
+      light_dom_structure_hints: lightDomStructureHints(allElements),
+      iframe_hints: iframeHints(documentRoot, profile, pageUrl),
       embedded_data_markers: embeddedMarkers.slice(0, 12),
     };
   }

@@ -279,6 +279,31 @@ def test_supplier_scout_api_exposes_user_triggered_edge_capture_lifecycle() -> N
                         }
                     ],
                     "light_dom_identity_markers": ["data-offer-id"],
+                    "light_dom_structure_hints": [
+                        {
+                            "tag": "div",
+                            "class_name": "product-card",
+                            "child_count": 3,
+                            "anchor_count": 1,
+                            "image_count": 1,
+                            "visible": True,
+                            "identity_attribute_names": ["data-offer-id"],
+                            "text_length": 40,
+                        }
+                    ],
+                    "iframe_hints": [
+                        {
+                            "host_class": "1688",
+                            "url": "https://show.1688.com/page/offers.html",
+                            "visible": True,
+                            "width": 300,
+                            "height": 150,
+                            "same_origin_accessible": False,
+                            "anchor_count": 0,
+                            "offer_candidate_count": 0,
+                            "text_length": 0,
+                        }
+                    ],
                     "embedded_data_markers": [],
                 },
             },

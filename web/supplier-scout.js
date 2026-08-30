@@ -229,6 +229,8 @@ function parserProbeDescription(probe, pageNumber = 1) {
   const shadowRoots = Array.isArray(probe.shadow_root_hints) ? probe.shadow_root_hints : [];
   const links = Array.isArray(probe.link_candidates) ? probe.link_candidates : [];
   const identityMarkers = Array.isArray(probe.light_dom_identity_markers) ? probe.light_dom_identity_markers : [];
+  const structures = Array.isArray(probe.light_dom_structure_hints) ? probe.light_dom_structure_hints : [];
+  const iframes = Array.isArray(probe.iframe_hints) ? probe.iframe_hints : [];
   const markers = Array.isArray(probe.embedded_data_markers) ? probe.embedded_data_markers : [];
   const parts = [
     `第 ${Number(pageNumber || 1)} 页 DOM 有 ${Number(probe.anchor_count || 0)} 个链接`,
@@ -256,6 +258,14 @@ function parserProbeDescription(probe, pageNumber = 1) {
     parts.push(`发现 ${links.length} 个可追踪 1688 链接（${examples}）`);
   }
   if (identityMarkers.length) parts.push(`顶层身份属性：${identityMarkers.join("、")}`);
+  if (structures.length) {
+    const details = structures.slice(0, 3).map((item) => `${item.class_name || item.id_name || item.tag}：${item.anchor_count} 链接/${item.image_count} 图片`).join("、");
+    parts.push(`顶层疑似商品结构（${details}）`);
+  }
+  if (iframes.length) {
+    const details = iframes.map((item) => `${item.host_class}/${item.same_origin_accessible ? "可读" : "不可读"}`).join("、");
+    parts.push(`iframe 结构：${details}`);
+  }
   if (markers.length) parts.push(`嵌入数据标记：${markers.join("、")}`);
   return `${parts.join("；")}。`;
 }

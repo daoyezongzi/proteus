@@ -243,6 +243,9 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
             "text": "分类",
         }
     ]
+    assert fallback["probe"]["iframe_hints"][0]["host_class"] == "1688"
+    assert fallback["probe"]["iframe_hints"][0]["same_origin_accessible"] is False
+    assert fallback["probe"]["iframe_hints"][0]["url"] == "https://show.1688.com/page/offers.html"
     assert "token=" not in json.dumps(fallback["probe"], ensure_ascii=False)
     assert "example.com" not in json.dumps(fallback["probe"], ensure_ascii=False)
     assert shadow_probe["shadow_host_count"] == 1
@@ -260,3 +263,16 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
     ]
     assert shadow_probe["link_candidates"] == []
     assert shadow_probe["light_dom_identity_markers"] == []
+    assert shadow_probe["light_dom_structure_hints"] == [
+        {
+            "tag": "div",
+            "id_name": "shadow-host",
+            "class_name": "product-shell",
+            "child_count": 0,
+            "anchor_count": 0,
+            "image_count": 0,
+            "visible": True,
+            "identity_attribute_names": [],
+            "text_length": 0,
+        }
+    ]

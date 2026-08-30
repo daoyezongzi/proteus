@@ -32,6 +32,9 @@ nested-root count and text length). It does not persist Shadow Root text,
 cookies, tokens or cross-origin frame contents; these counters are diagnostic
 evidence, not collected offers. The same probe records only sanitized HTTPS
 1688 link candidates and identity-attribute names from the top-level DOM.
+It also records bounded top-level product-structure hints and iframe
+accessibility/size metadata; cross-origin iframe content and foreign URLs are
+not persisted.
 
 ## Boundary
 
