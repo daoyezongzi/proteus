@@ -6,15 +6,20 @@
 - [x] 保存单个 1688 供应商来源，归一化重复/带跟踪参数的 URL，并拒绝 HTTP、凭证、外站或
   两个不同来源混入同一输入。
 - [x] 通过显式页数和商品数上限建立不可变店铺快照；完整、部分、明确空店、登录、滑块、
-  超时、解析失败和 CLI 失败各自保留，不把失败或风控当成零商品。
+  超时、解析失败和采集器失败各自保留，不把失败或风控当成零商品。
+- [x] 增加项目内 Manifest V3 Edge 扩展；它由用户在普通 Edge 工具栏显式触发，只读取当前
+  已渲染页面并发送到本机 loopback，不申请 Cookie、debugger、proxy 或 webRequest 权限。
+- [x] 增加短期令牌、店铺域名绑定、顺序/幂等页面提交、暂停恢复和版本化 selector profile；
+  未证明为空的页面不消耗页号，未知分页会保留证据并暂停。
 - [x] 使用独立 `supplier_scout.sqlite3` 保存供应商、只读检查审计与快照；提交时冻结所选
   ACTIVE 分类版本，所有已观察商品都保留分类、身份、市场预算和最终去向。
 - [x] 对身份充分的商品复用精确 eBay 需求与 Amazon 产品家族 A/A-/PENDING/淘汰语义；
   明确零需求停止 Amazon，预算不足则后续商品为 `NOT_RUN_BUDGET`。
 - [x] 提供独立 API、精简/完整 JSON、回放 harness 和响应式页面；真实示例店 headless
   canary 已正确返回 `RISK_CONTROL`，没有产生空店结论。
-- [ ] 由用户在方便时按次启用 headed 模式并亲自完成一次 1688 滑块，验证该示例店在人工
-  放行后的真实 offer/pagination DOM；该验收不能由 Agent 自动解 CAPTCHA。
+- [ ] 由用户首次在 `edge://extensions` 加载项目内扩展，并在该示例店正常显示后点击一次
+  工具栏扩展，完成真实 ordinary-Edge offer/pagination 验收；登录或 CAPTCHA 必须继续由
+  用户亲自处理，Agent 不静默安装扩展也不自动解验证。
 - [ ] `1688-cli` 升级后重新核验 session/daemon 内部边界，再显式更新 bridge 版本门；在此
   之前非 0.1.47 版本保持 fail closed。
 - [ ] 根据首个真实店铺快照补充中文车型/品牌与料号形态 fixture；身份不足继续人工复核，

@@ -10,10 +10,30 @@ reuses Proteus market evidence to identify A / A- product-family candidates.
 This is a new candidate-source direction. It must not replace or silently alter
 the existing category/eBay-first Northway workflow.
 
+## 2026-08-30 acquisition revision
+
+Live acceptance showed that the dependency-owned Playwright profile can pass an
+initial login but is still placed into layered Alibaba Captcha 2.0 challenges.
+Three bounded runs ended as `TIMEOUT` with zero observed offers and
+`STORE_BRIDGE_FAILED`. The installed CLI session also enables a stealth plugin
+internally, which conflicts with this plan's explicit no-stealth boundary.
+
+The primary acquisition path is therefore revised to a user-triggered local
+Manifest V3 Edge extension running inside the user's ordinary signed-in Edge
+tab. The user handles login and any CAPTCHA. After the page is normally visible,
+the extension may deterministically scroll, extract visible offer cards and
+navigate ordinary pagination within explicit limits. It must stop and preserve
+partial evidence whenever authentication, risk control or an unrecognized page
+appears. It never reads or exports cookies and never attempts CAPTCHA solving.
+
+The existing Playwright bridge remains a fail-closed compatibility path at the
+API layer during this revision, but the product UI no longer presents it as the
+normal way to clear verification.
+
 ## Baseline and current evidence
 
-- Git baseline is clean at `d17782c`; local `main` is one commit ahead of
-  `origin/main` before this task starts.
+- Revision baseline is clean at `b1fdda5`; local `main` is two commits ahead of
+  `origin/main` before the Edge-collector task starts.
 - Example source:
   `https://shop3w093345o1043.1688.com/page/offerlist.htm`.
 - The user-supplied Markdown URL duplicated the full URL and included tracking
@@ -75,17 +95,24 @@ operations:
 2. `collect_store_offers(source, max_pages, max_offers)` returns a normalized
    inventory snapshot with page-completeness evidence.
 
-First perform a live capability probe against the supplied store. Prefer a
-stable supported `1688-cli` command if it becomes available. With the installed
-version, a project-owned Node bridge may reuse the CLI's authenticated session
-primitive only if the probe proves ordinary store navigation and deterministic
-offer/pagination extraction without reading or exporting cookies. Version-gate
-that bridge and fail closed when the dependency layout or response contract
-changes.
+Use a project-owned, locally sideloaded MV3 Edge extension as the primary
+collector. A Proteus capture session binds one saved supplier, one short-lived
+opaque token, one page limit and one offer limit. After an explicit toolbar
+click, the extension claims the newest matching pending session, extracts only
+the normally rendered supplier-list page and posts normalized page evidence to
+the loopback API. The backend validates supplier/page binding, sequential page
+numbers and offer IDs, deduplicates across pages, and alone decides whether the
+snapshot is complete, partial or blocked.
 
-If the source cannot be acquired without unsupported behavior, retain the
-provider contract and implement an explicit JSON/CSV snapshot-import fallback;
-do not label it automated or complete.
+The extension is plain packaged HTML/CSS/JavaScript under
+`browser-extension/supplier-collector/` with no remote code and narrowly scoped
+permissions for `https://*.1688.com/*` and the loopback Proteus API. Selector
+profiles are non-executable JSON served by Proteus so an Agent can update page
+structure matching without changing evidence semantics.
+
+Retain explicit JSON/CSV or saved-page import as a later fallback; do not label
+an imported or bounded observation as a complete store unless end-of-pagination
+evidence proves it.
 
 Normalized snapshot fields include supplier identity, submitted/canonical URL,
 retrieval time, pages attempted/completed, observed/available offer counts,
@@ -143,6 +170,12 @@ GET  /api/v1/supplier-scout/policy
 GET  /api/v1/supplier-scout/suppliers
 POST /api/v1/supplier-scout/suppliers/inspect
 POST /api/v1/supplier-scout/suppliers
+POST /api/v1/supplier-scout/captures
+GET  /api/v1/supplier-scout/captures/pending
+GET  /api/v1/supplier-scout/captures/{capture_id}
+POST /api/v1/supplier-scout/captures/{capture_id}/claim
+POST /api/v1/supplier-scout/captures/{capture_id}/pages
+POST /api/v1/supplier-scout/captures/{capture_id}/pause
 POST /api/v1/supplier-scout/runs
 GET  /api/v1/supplier-scout/runs/{run_id}
 GET  /api/v1/supplier-scout/runs/{run_id}/export/compact
@@ -151,10 +184,12 @@ GET  /api/v1/supplier-scout/runs/{run_id}/export
 
 Add “供应商反向选品” to the sidebar as a separate static page/module rather
 than further coupling the existing Northway form. The view includes supplier
-verification, source/page/offer and market budgets, ACTIVE category scope,
-progress, inventory completeness, evidence warnings, result filters and JSON
-exports. It must state observations such as “60 observed / source still has a
-next page: PARTIAL” plainly.
+verification, an Edge-collector setup/status panel, source/page/offer and market
+budgets, ACTIVE category scope, progress, inventory completeness, evidence
+warnings, result filters and JSON exports. It must state observations such as
+“60 observed / source still has a next page: PARTIAL” plainly. A market run may
+reference a same-supplier immutable captured snapshot and must not reacquire the
+store when that snapshot is supplied.
 
 ## Scope
 
@@ -180,16 +215,18 @@ next page: PARTIAL” plainly.
 
 1. Freeze URL, supplier, inventory snapshot and result contracts with fixtures
    and failing tests.
-2. Probe the example store through the authenticated local 1688 session; record
-   the stable identity, observed data source and pagination/completeness markers.
-3. Implement URL normalization, catalog provider/bridge and SQLite snapshots.
-4. Implement supplier-first classification and market runner using reusable
+2. Implement and test short-lived capture sessions, sequential page ingestion,
+   supplier binding, deduplication and immutable snapshot sealing.
+3. Implement the local MV3 Edge extension and selector-profile contract.
+4. Connect captured snapshots to the existing supplier-first market runner.
+5. Implement supplier-first classification and market runner using reusable
    Northway/provider helpers.
-5. Add API models, async manager integration and bounded exports.
-6. Add the separate navigation workspace and dynamic result states.
-7. Run unit/contract/full-suite tests, package checks, read-only CLI canaries and
-   real browser acceptance.
-8. Update `README.md`, `LOG.md` and `TODO.md`, inspect the complete diff, then
+6. Add API models, async manager integration and bounded exports.
+7. Add the separate navigation workspace and dynamic result states.
+8. Run unit/contract/full-suite tests, package checks, static extension checks
+   and a local browser fixture acceptance; real 1688 acceptance still requires
+   the user's ordinary signed-in Edge session.
+9. Update `README.md`, `LOG.md` and `TODO.md`, inspect the complete diff, then
    commit task-owned changes without pushing.
 
 ## Verification
@@ -198,6 +235,9 @@ next page: PARTIAL” plainly.
   credentials, schemes and multiple-URL ambiguity.
 - Catalog fixtures cover complete, partial, empty, authentication, risk-control,
   timeout, malformed payload, duplicate offer and supplier-mismatch outcomes.
+- Capture tests cover token rejection, expiry, same-host claim, sequential and
+  idempotent pages, duplicate offers, explicit empty evidence, page/offer bounds,
+  blocked-page pause and same-supplier snapshot reuse.
 - Persistence tests prove immutable snapshots and no category-database impact.
 - Runner tests prove category unmatched/ambiguous, identity incomplete,
   market-budget preservation, A/A-/pending/rejected semantics and complete
@@ -207,7 +247,9 @@ next page: PARTIAL” plainly.
 - A live read-only canary must make no write command and must not claim
   completeness unless pagination evidence proves it.
 - Browser acceptance covers navigation, supplier verification, partial coverage,
-  progress, filters, errors, exports and zero console errors.
+  extension setup, capture creation/progress, filters, errors, exports and zero
+  console errors. The extension fixture verifies offer extraction, risk-control
+  detection and next-page discovery without contacting 1688.
 - Final gates: full pytest suite, Python compilation, dependency check,
   JavaScript syntax, JSON parse/schema checks, `git diff --check`, build/install
   smoke and staged-diff self-review.

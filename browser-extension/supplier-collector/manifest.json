@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Proteus 1688 店铺采集器",
+  "version": "0.2.6",
+  "description": "从用户正常打开的 1688 供应商页面有界采集可见商品，并发送到本机 Proteus。",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.1688.com/*",
+    "http://127.0.0.1:8765/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Proteus 店铺采集",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.1688.com/*"
+      ],
+      "js": [
+        "collector-core.js",
+        "collector.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

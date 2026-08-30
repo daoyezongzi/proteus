@@ -1,0 +1,62 @@
+{
+  "schema_version": "1",
+  "profile_id": "1688-store-offer-list-v1",
+  "parser_version": "1.0.0",
+  "offer_link_selectors": [
+    "a[href*='detail.1688.com/offer/']",
+    "a[href*='//detail.1688.com/offer/']"
+  ],
+  "card_selectors": [
+    "[data-offer-id]",
+    "[class*='offer-card']",
+    "[class*='offerCard']",
+    "[class*='product-card']",
+    "[class*='productCard']",
+    "li"
+  ],
+  "title_selectors": [
+    "[class*='title']",
+    "[class*='subject']",
+    "h2",
+    "h3"
+  ],
+  "price_selectors": [
+    "[class*='price']",
+    "[class*='Price']"
+  ],
+  "next_page_selectors": [
+    "a[rel='next']",
+    "a[aria-label*='下一页']",
+    "button[aria-label*='下一页']",
+    "[class*='pagination'] [class*='next']",
+    "[class*='pager'] [class*='next']"
+  ],
+  "risk_selectors": [
+    "iframe[src*='captcha']",
+    "iframe[src*='punish']",
+    "[class*='captcha']",
+    "[id*='captcha']"
+  ],
+  "risk_text": [
+    "拖动滑块",
+    "请完成验证",
+    "安全验证",
+    "访问受限",
+    "出现完整的两个"
+  ],
+  "auth_text": [
+    "快捷登录",
+    "请登录后继续",
+    "账号登录"
+  ],
+  "empty_text": [
+    "该店铺暂无商品",
+    "店铺暂无商品",
+    "暂无相关商品"
+  ],
+  "scroll": {
+    "max_rounds": 12,
+    "settle_ms": 700,
+    "stable_rounds": 2
+  }
+}

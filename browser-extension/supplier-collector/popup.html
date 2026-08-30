@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proteus 店铺采集</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <p class="eyebrow">PROTEUS · LOCAL COLLECTOR</p>
+    <h1>1688 店铺采集</h1>
+    <p class="lead">请先在 Proteus 创建任务，并在当前普通 Edge 页面完成登录或验证。</p>
+    <section class="status" id="status" aria-live="polite">正在检查本机任务…</section>
+    <button class="primary" id="start" type="button" disabled>开始或继续采集</button>
+    <button class="secondary" id="openProteus" type="button">打开 Proteus</button>
+    <button class="text" id="clear" type="button" hidden>清除失效的本地状态</button>
+    <p class="boundary">扩展只发送可见商品字段和页面证据摘要；不会读取 Cookie，也不会处理验证码。</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

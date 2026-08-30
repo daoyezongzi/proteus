@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import monotonic, sleep
 
+import pytest
 from fastapi.testclient import TestClient
 
 from proteus.api import DefaultFrontendService, create_app
@@ -80,6 +82,75 @@ class SupplierScoutApiService:
             "status": "ACTIVE",
         }
 
+    def latest_supplier_snapshot(self, supplier_id: str) -> dict | None:
+        assert supplier_id == "sup_123"
+        return {
+            "snapshot_id": "snap_123",
+            "supplier_id": supplier_id,
+            "acquisition_status": "PARTIAL",
+            "observed_offer_count": 1,
+            "inventory_complete": False,
+        }
+
+    def create_supplier_capture(self, request: dict) -> dict:
+        assert request == {"supplier_id": "sup_123", "max_pages": 3, "max_offers": 100}
+        return {
+            "capture_id": "cap_123",
+            "capture_token": "capture-secret",
+            "supplier_id": "sup_123",
+            "shop_host": "shop3w093345o1043.1688.com",
+            "canonical_url": STORE_URL,
+            "status": "PENDING",
+            "max_pages": 3,
+            "max_offers": 100,
+        }
+
+    def pending_supplier_capture(self, shop_host: str) -> dict | None:
+        assert shop_host == "shop3w093345o1043.1688.com"
+        return {
+            "capture_id": "cap_123",
+            "capture_token": "capture-secret",
+            "shop_host": shop_host,
+            "status": "PENDING",
+        }
+
+    def get_supplier_capture(self, capture_id: str) -> dict | None:
+        if capture_id != "cap_123":
+            return None
+        return {
+            "capture_id": capture_id,
+            "supplier_id": "sup_123",
+            "status": "CAPTURING",
+            "pages_completed": 0,
+            "observed_offer_count": 0,
+        }
+
+    def claim_supplier_capture(self, capture_id: str, token: str, request: dict) -> dict:
+        assert capture_id == "cap_123"
+        assert token == "capture-secret"
+        assert request["page_url"] == STORE_URL
+        return {"capture_id": capture_id, "status": "CAPTURING"}
+
+    def ingest_supplier_capture_page(
+        self, capture_id: str, token: str, request: dict
+    ) -> dict:
+        assert capture_id == "cap_123"
+        assert token == "capture-secret"
+        assert request["offers"][0]["offer_id"] == "10001"
+        return {
+            "capture_id": capture_id,
+            "status": "COMPLETED",
+            "snapshot_id": "snap_123",
+            "pages_completed": 1,
+            "observed_offer_count": 1,
+        }
+
+    def pause_supplier_capture(self, capture_id: str, token: str, request: dict) -> dict:
+        assert capture_id == "cap_123"
+        assert token == "capture-secret"
+        assert request["reason"] == "RISK_CONTROL"
+        return {"capture_id": capture_id, "status": "PAUSED", "snapshot_id": "snap_124"}
+
     def submit_supplier_scout_run(self, request: dict) -> dict:
         assert request["supplier_id"] == "sup_123"
         assert request["selected_category_ids"] == ["fog_light_bezel"]
@@ -145,6 +216,72 @@ def test_supplier_scout_api_exposes_sources_inspection_runs_and_exports() -> Non
     assert running.status_code == 409
 
 
+def test_supplier_scout_api_exposes_user_triggered_edge_capture_lifecycle() -> None:
+    client = TestClient(create_app(service=SupplierScoutApiService()))
+
+    created = client.post(
+        "/api/v1/supplier-scout/captures",
+        json={"supplier_id": "sup_123", "max_pages": 3, "max_offers": 100},
+    )
+    pending = client.get(
+        "/api/v1/supplier-scout/captures/pending",
+        params={"shop_host": "shop3w093345o1043.1688.com"},
+    )
+    missing_host = client.get("/api/v1/supplier-scout/captures/pending")
+    claimed = client.post(
+        "/api/v1/supplier-scout/captures/cap_123/claim",
+        headers={"X-Proteus-Capture-Token": "capture-secret"},
+        json={"page_url": STORE_URL, "extension_version": "0.2.6"},
+    )
+    captured = client.post(
+        "/api/v1/supplier-scout/captures/cap_123/pages",
+        headers={"X-Proteus-Capture-Token": "capture-secret"},
+        json={
+            "page_number": 1,
+            "page_url": STORE_URL,
+            "has_next_page": False,
+            "available_offer_count": 1,
+            "empty_state": False,
+            "offers": [
+                {
+                    "offer_id": "10001",
+                    "title": "测试商品",
+                    "offer_url": "https://detail.1688.com/offer/10001.html",
+                }
+            ],
+            "evidence": {"dom_sha256": "a" * 64},
+        },
+    )
+    status_response = client.get("/api/v1/supplier-scout/captures/cap_123")
+    latest = client.get("/api/v1/supplier-scout/suppliers/sup_123/snapshots/latest")
+    paused = client.post(
+        "/api/v1/supplier-scout/captures/cap_123/pause",
+        headers={"X-Proteus-Capture-Token": "capture-secret"},
+        json={"reason": "RISK_CONTROL", "page_url": STORE_URL},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["capture_token"] == "capture-secret"
+    assert pending.json()["capture"]["capture_id"] == "cap_123"
+    assert missing_host.status_code == 422
+    assert claimed.json()["status"] == "CAPTURING"
+    assert captured.json()["snapshot_id"] == "snap_123"
+    assert status_response.json()["status"] == "CAPTURING"
+    assert latest.json()["snapshot"]["snapshot_id"] == "snap_123"
+    assert paused.json()["status"] == "PAUSED"
+
+
+def test_supplier_capture_mutations_require_the_opaque_token() -> None:
+    client = TestClient(create_app(service=SupplierScoutApiService()))
+
+    response = client.post(
+        "/api/v1/supplier-scout/captures/cap_123/claim",
+        json={"page_url": STORE_URL},
+    )
+
+    assert response.status_code == 422
+
+
 def test_supplier_scout_api_validates_bounds_categories_and_grade_order() -> None:
     client = TestClient(create_app(service=SupplierScoutApiService()))
 
@@ -205,6 +342,119 @@ def test_default_service_persists_and_binds_supplier_inspection_audit(
     audit = store.get_inspection(inspected["inspection"]["inspection_id"])
     assert audit["supplier_id"] == supplier["supplier_id"]
     assert audit["diagnostics"] == [{"code": "MANUAL_CHALLENGE_REQUIRED"}]
+
+
+def test_default_service_reuses_a_same_supplier_edge_snapshot_without_reacquiring(
+    tmp_path: Path,
+) -> None:
+    store = SupplierScoutStore(tmp_path / "supplier-scout.sqlite3")
+    source = store.add_supplier("测试供应商", STORE_URL)
+    saved = store.save_snapshot(
+        source["supplier_id"],
+        {
+            "schema_version": "0.2.6",
+            "provider": "PROTEUS_EDGE_EXTENSION",
+            "source_method": "USER_INITIATED_BROWSER_EXTENSION",
+            "canonical_url": STORE_URL,
+            "supplier": {"shop_host": "shop3w093345o1043.1688.com"},
+            "retrieved_at": "2026-08-30T00:00:00Z",
+            "acquisition_status": "EMPTY",
+            "pages_attempted": 1,
+            "pages_completed": 1,
+            "observed_offer_count": 0,
+            "available_offer_count": 0,
+            "has_next_page": False,
+            "inventory_complete": True,
+            "offers": [],
+            "warnings": [],
+        },
+    )
+
+    def collector(*_args, **_kwargs):
+        raise AssertionError("captured snapshot must skip the Playwright bridge")
+
+    service = DefaultFrontendService(
+        category_catalog=CategoryCatalog(tmp_path / "categories.sqlite3"),
+        supplier_store=store,
+        supplier_store_collector=collector,
+    )
+    submitted = service.submit_supplier_scout_run(
+        {
+            "supplier_id": source["supplier_id"],
+            "inventory_snapshot_id": saved["snapshot_id"],
+            "selected_category_ids": [],
+            "max_pages": 3,
+            "max_offers": 100,
+            "headed": False,
+            "challenge_timeout_seconds": 180,
+            "market_request_budget": 0,
+            "max_amazon_queries_per_family": 3,
+            "grade_a_max_competitors": 5,
+            "grade_a_minus_max_competitors": 8,
+            "min_family_price_usd": 20,
+            "min_observed_ebay_demand": 1,
+        }
+    )
+    deadline = monotonic() + 2
+    record = service.get_supplier_scout_run(submitted["run_id"])
+    while record and record["status"] not in {"COMPLETED", "FAILED"} and monotonic() < deadline:
+        sleep(0.01)
+        record = service.get_supplier_scout_run(submitted["run_id"])
+
+    assert record is not None
+    assert record["status"] == "COMPLETED"
+    assert record["result"]["inventory"]["snapshot_id"] == saved["snapshot_id"]
+    assert record["result"]["inventory"]["acquisition_status"] == "EMPTY"
+
+
+def test_default_service_rejects_a_blocked_zero_offer_snapshot(
+    tmp_path: Path,
+) -> None:
+    store = SupplierScoutStore(tmp_path / "supplier-scout.sqlite3")
+    source = store.add_supplier("测试供应商", STORE_URL)
+    saved = store.save_snapshot(
+        source["supplier_id"],
+        {
+            "schema_version": "0.2.6",
+            "provider": "PROTEUS_EDGE_EXTENSION",
+            "source_method": "USER_INITIATED_BROWSER_EXTENSION",
+            "canonical_url": STORE_URL,
+            "supplier": {"shop_host": "shop3w093345o1043.1688.com"},
+            "retrieved_at": "2026-08-30T00:00:00Z",
+            "acquisition_status": "RISK_CONTROL",
+            "pages_attempted": 0,
+            "pages_completed": 0,
+            "observed_offer_count": 0,
+            "available_offer_count": None,
+            "has_next_page": None,
+            "inventory_complete": False,
+            "offers": [],
+            "warnings": ["RISK_CONTROL"],
+        },
+    )
+    service = DefaultFrontendService(
+        category_catalog=CategoryCatalog(tmp_path / "categories.sqlite3"),
+        supplier_store=store,
+    )
+
+    with pytest.raises(ValueError, match="not usable"):
+        service.submit_supplier_scout_run(
+            {
+                "supplier_id": source["supplier_id"],
+                "inventory_snapshot_id": saved["snapshot_id"],
+                "selected_category_ids": [],
+                "max_pages": 3,
+                "max_offers": 100,
+                "headed": False,
+                "challenge_timeout_seconds": 180,
+                "market_request_budget": 0,
+                "max_amazon_queries_per_family": 3,
+                "grade_a_max_competitors": 5,
+                "grade_a_minus_max_competitors": 8,
+                "min_family_price_usd": 20,
+                "min_observed_ebay_demand": 1,
+            }
+        )
 
 
 def test_supplier_scout_inspection_rejects_non_1688_and_http_targets() -> None:

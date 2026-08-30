@@ -14,7 +14,7 @@ from threading import Lock
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -55,6 +55,14 @@ from proteus.supplier_scout import (
     run_supplier_scout,
     supplier_scout_policy,
 )
+from proteus.supplier_capture import (
+    CAPTURE_PROTOCOL_VERSION,
+    CaptureAuthorizationError,
+    CaptureConflictError,
+    CaptureNotFoundError,
+    SupplierCaptureManager,
+    supplier_collector_profile as load_supplier_collector_profile,
+)
 from proteus.automatic_mvp import automatic_mvp_policy
 
 
@@ -88,6 +96,28 @@ class FrontendService(Protocol):
     def inspect_supplier_scout_supplier(self, request: dict) -> dict: ...
 
     def add_supplier_scout_supplier(self, request: dict) -> dict: ...
+
+    def latest_supplier_snapshot(self, supplier_id: str) -> dict | None: ...
+
+    def create_supplier_capture(self, request: dict) -> dict: ...
+
+    def supplier_collector_profile(self) -> dict: ...
+
+    def pending_supplier_capture(self, shop_host: str) -> dict | None: ...
+
+    def get_supplier_capture(self, capture_id: str) -> dict | None: ...
+
+    def claim_supplier_capture(
+        self, capture_id: str, token: str, request: dict
+    ) -> dict: ...
+
+    def ingest_supplier_capture_page(
+        self, capture_id: str, token: str, request: dict
+    ) -> dict: ...
+
+    def pause_supplier_capture(
+        self, capture_id: str, token: str, request: dict
+    ) -> dict: ...
 
     def submit_supplier_scout_run(self, request: dict) -> dict: ...
 
@@ -207,12 +237,85 @@ class SupplierScoutSupplierRequest(BaseModel):
         return value.strip()
 
 
+class SupplierCaptureCreateRequest(BaseModel):
+    """Create one bounded user-triggered Edge collection session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_id: str = Field(min_length=5, max_length=100, pattern=r"^sup_[a-zA-Z0-9_-]+$")
+    max_pages: int = Field(default=3, ge=1, le=20)
+    max_offers: int = Field(default=100, ge=1, le=1000)
+
+
+class SupplierCaptureClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page_url: str = Field(min_length=10, max_length=6000)
+    extension_version: str | None = Field(default=None, min_length=1, max_length=50)
+    parser_version: str | None = Field(default=None, min_length=1, max_length=50)
+
+
+class SupplierCaptureOfferRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    offer_id: str = Field(min_length=1, max_length=30, pattern=r"^[0-9]+$")
+    title: str = Field(min_length=1, max_length=500)
+    offer_url: str = Field(
+        min_length=30,
+        max_length=2000,
+        pattern=r"^https://detail\.1688\.com/offer/[0-9]+\.html(?:[?#].*)?$",
+    )
+    image_url: str | None = Field(default=None, min_length=10, max_length=2000)
+    price_cny: float | None = Field(default=None, ge=0)
+    moq: int | None = Field(default=None, ge=0)
+
+    @field_validator("image_url")
+    @classmethod
+    def validate_image_url(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith("https://"):
+            raise ValueError("image_url must use HTTPS")
+        return value
+
+
+class SupplierCaptureEvidenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dom_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    document_title: str | None = Field(default=None, max_length=300)
+    profile_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class SupplierCapturePageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page_number: int = Field(ge=1, le=20)
+    page_url: str = Field(min_length=10, max_length=6000)
+    has_next_page: bool | None = None
+    available_offer_count: int | None = Field(default=None, ge=0)
+    empty_state: bool = False
+    offers: list[SupplierCaptureOfferRequest] = Field(default_factory=list, max_length=500)
+    evidence: SupplierCaptureEvidenceRequest
+
+
+class SupplierCapturePauseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Literal["AUTH_REQUIRED", "RISK_CONTROL", "PARSER_FAILED", "TIMEOUT"]
+    page_url: str = Field(min_length=10, max_length=6000)
+
+
 class SupplierScoutRunRequest(BaseModel):
     """One supplier source, one immutable inventory snapshot, bounded market checks."""
 
     model_config = ConfigDict(extra="forbid")
 
     supplier_id: str = Field(min_length=5, max_length=100, pattern=r"^sup_[a-zA-Z0-9_-]+$")
+    inventory_snapshot_id: str | None = Field(
+        default=None,
+        min_length=6,
+        max_length=100,
+        pattern=r"^snap_[a-zA-Z0-9_-]+$",
+    )
     selected_category_ids: list[str] = Field(default_factory=list, max_length=100)
     max_pages: int = Field(default=3, ge=1, le=20)
     max_offers: int = Field(default=100, ge=1, le=1000)
@@ -243,6 +346,21 @@ class SupplierScoutRunRequest(BaseModel):
                 "grade_a_minus_max_competitors must be greater than grade_a_max_competitors"
             )
         return self
+
+
+def _validate_supplier_snapshot_for_run(snapshot: Mapping[str, Any]) -> None:
+    status_value = str(snapshot.get("acquisition_status") or "").upper()
+    observed = int(snapshot.get("observed_offer_count") or 0)
+    complete = snapshot.get("inventory_complete") is True
+    usable = (
+        (status_value == "SUCCESS" and complete and observed > 0)
+        or (status_value == "EMPTY" and complete and observed == 0)
+        or (status_value == "PARTIAL" and observed > 0)
+    )
+    if not usable:
+        raise ValueError(
+            "inventory snapshot is not usable for screening; capture visible offers first"
+        )
 
 
 class EvidenceSource(BaseModel):
@@ -500,6 +618,7 @@ class DefaultFrontendService:
         self._supplier_store_collector = (
             supplier_store_collector or collect_1688_store_offers
         )
+        self._supplier_capture_manager = SupplierCaptureManager(self._supplier_store)
         self._manager = InMemoryRunManager(self._run)
         self._mvp_manager = InMemoryRunManager(self._run_mvp)
         self._northway_manager = InMemoryRunManager(
@@ -650,10 +769,25 @@ class DefaultFrontendService:
 
     def supplier_scout_policy(self) -> dict:
         definitions = self._category_catalog.active_runtime_definitions()
-        return supplier_scout_policy(
+        policy = supplier_scout_policy(
             definitions,
             category_catalog=self._category_catalog.public_active_catalog(),
         )
+        extension_relative_path = Path("browser-extension") / "supplier-collector"
+        extension_absolute_path = (
+            Path(__file__).resolve().parents[2] / extension_relative_path
+        ).resolve()
+        policy["edge_collector"] = {
+            "protocol_version": CAPTURE_PROTOCOL_VERSION,
+            "extension_path": extension_relative_path.as_posix(),
+            "extension_path_absolute": str(extension_absolute_path)
+            if extension_absolute_path.is_dir()
+            else None,
+            "api_base": "http://127.0.0.1:8765/api/v1",
+            "primary": True,
+            "handles_captcha": False,
+        }
+        return policy
 
     def list_supplier_scout_suppliers(self) -> dict:
         return self._supplier_store.list_suppliers()
@@ -685,6 +819,75 @@ class DefaultFrontendService:
     def add_supplier_scout_supplier(self, request: dict) -> dict:
         return self._supplier_store.add_supplier(request["label"], request["target"])
 
+    def latest_supplier_snapshot(self, supplier_id: str) -> dict | None:
+        self._supplier_store.get_supplier(supplier_id)
+        snapshot = self._supplier_store.latest_snapshot(supplier_id)
+        if snapshot is None:
+            return None
+        return {
+            key: deepcopy(snapshot.get(key))
+            for key in (
+                "snapshot_id",
+                "supplier_id",
+                "snapshot_sha256",
+                "retrieved_at",
+                "acquisition_status",
+                "inventory_complete",
+                "pages_attempted",
+                "pages_completed",
+                "observed_offer_count",
+                "available_offer_count",
+                "has_next_page",
+                "source_method",
+                "warnings",
+            )
+        }
+
+    def create_supplier_capture(self, request: dict) -> dict:
+        return self._supplier_capture_manager.create_capture(
+            request["supplier_id"],
+            max_pages=request["max_pages"],
+            max_offers=request["max_offers"],
+        )
+
+    def supplier_collector_profile(self) -> dict:
+        return load_supplier_collector_profile()
+
+    def pending_supplier_capture(self, shop_host: str) -> dict | None:
+        return self._supplier_capture_manager.pending_capture(shop_host=shop_host)
+
+    def get_supplier_capture(self, capture_id: str) -> dict | None:
+        try:
+            return self._supplier_capture_manager.get_capture(capture_id)
+        except CaptureNotFoundError:
+            return None
+
+    def claim_supplier_capture(
+        self, capture_id: str, token: str, request: dict
+    ) -> dict:
+        return self._supplier_capture_manager.claim_capture(
+            capture_id,
+            token,
+            page_url=request["page_url"],
+            extension_version=request.get("extension_version"),
+            parser_version=request.get("parser_version"),
+        )
+
+    def ingest_supplier_capture_page(
+        self, capture_id: str, token: str, request: dict
+    ) -> dict:
+        return self._supplier_capture_manager.ingest_page(capture_id, token, request)
+
+    def pause_supplier_capture(
+        self, capture_id: str, token: str, request: dict
+    ) -> dict:
+        return self._supplier_capture_manager.pause_capture(
+            capture_id,
+            token,
+            reason=request["reason"],
+            page_url=request["page_url"],
+        )
+
     def _run_supplier_scout(
         self,
         request: dict,
@@ -693,29 +896,43 @@ class DefaultFrontendService:
     ) -> Mapping[str, Any]:
         source = request["_supplier_source"]
         definitions = request["_category_definitions"]
+        captured_snapshot_id = request.get("_inventory_snapshot_id")
+        snapshot: dict[str, Any] | None = None
+        if captured_snapshot_id:
+            snapshot = self._supplier_store.get_snapshot(str(captured_snapshot_id))
+            if snapshot.get("supplier_id") != source["supplier_id"]:
+                raise ValueError("inventory snapshot belongs to a different supplier")
+            _validate_supplier_snapshot_for_run(snapshot)
         if progress is not None:
             progress(
                 {
                     "phase": "supplier_inventory",
-                    "current": 0,
-                    "total": 0,
+                    "current": int(snapshot.get("observed_offer_count") or 0)
+                    if snapshot
+                    else 0,
+                    "total": int(snapshot.get("observed_offer_count") or 0)
+                    if snapshot
+                    else 0,
                     "last_query": source["canonical_url"],
-                    "provider": "LOCAL_1688_STORE_BRIDGE",
+                    "provider": "PROTEUS_EDGE_EXTENSION"
+                    if snapshot
+                    else "LOCAL_1688_STORE_BRIDGE",
                     "budget_used": 0,
                 }
             )
-        snapshot = dict(
-            self._supplier_store_collector(
-                source["canonical_url"],
-                max_pages=request["max_pages"],
-                max_offers=request["max_offers"],
-                headed=request["headed"],
-                challenge_timeout_seconds=request["challenge_timeout_seconds"],
+        if snapshot is None:
+            snapshot = dict(
+                self._supplier_store_collector(
+                    source["canonical_url"],
+                    max_pages=request["max_pages"],
+                    max_offers=request["max_offers"],
+                    headed=request["headed"],
+                    challenge_timeout_seconds=request["challenge_timeout_seconds"],
+                )
             )
-        )
-        snapshot["supplier_id"] = source["supplier_id"]
-        saved = self._supplier_store.save_snapshot(source["supplier_id"], snapshot)
-        snapshot.update(saved)
+            snapshot["supplier_id"] = source["supplier_id"]
+            saved = self._supplier_store.save_snapshot(source["supplier_id"], snapshot)
+            snapshot.update(saved)
         identity = snapshot.get("supplier")
         if isinstance(identity, Mapping):
             self._supplier_store.update_supplier_identity(source["supplier_id"], identity)
@@ -745,6 +962,13 @@ class DefaultFrontendService:
                 "selected category is no longer active: " + ", ".join(unknown)
             )
         snapshot = dict(request)
+        captured_snapshot_id = request.get("inventory_snapshot_id")
+        if captured_snapshot_id:
+            captured = self._supplier_store.get_snapshot(str(captured_snapshot_id))
+            if captured.get("supplier_id") != source["supplier_id"]:
+                raise ValueError("inventory snapshot belongs to a different supplier")
+            _validate_supplier_snapshot_for_run(captured)
+            snapshot["_inventory_snapshot_id"] = str(captured_snapshot_id)
         snapshot["selected_category_ids"] = selected
         snapshot["_supplier_source"] = source
         snapshot["_category_definitions"] = {
@@ -934,6 +1158,110 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
+
+    @app.get("/api/v1/supplier-scout/suppliers/{supplier_id}/snapshots/latest")
+    def latest_supplier_snapshot(supplier_id: str) -> dict:
+        getter = getattr(active_service, "latest_supplier_snapshot", None)
+        if not callable(getter):
+            return {"snapshot": None}
+        try:
+            snapshot = getter(supplier_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="supplier not found") from exc
+        return {
+            "snapshot": dict(snapshot) if isinstance(snapshot, Mapping) else None
+        }
+
+    @app.post(
+        "/api/v1/supplier-scout/captures",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_supplier_capture(request: SupplierCaptureCreateRequest) -> dict:
+        creator = getattr(active_service, "create_supplier_capture", None)
+        if not callable(creator):
+            raise HTTPException(status_code=501, detail="Edge capture is unavailable")
+        try:
+            return dict(creator(request.model_dump()))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="supplier not found") from exc
+        except (CaptureConflictError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+
+    @app.get("/api/v1/supplier-scout/collector/profile")
+    def get_supplier_collector_profile() -> dict:
+        getter = getattr(active_service, "supplier_collector_profile", None)
+        return dict(getter()) if callable(getter) else load_supplier_collector_profile()
+
+    @app.get("/api/v1/supplier-scout/captures/pending")
+    def pending_supplier_capture(shop_host: str) -> dict:
+        getter = getattr(active_service, "pending_supplier_capture", None)
+        capture = getter(shop_host) if callable(getter) else None
+        return {"capture": dict(capture) if isinstance(capture, Mapping) else None}
+
+    @app.get("/api/v1/supplier-scout/captures/{capture_id}")
+    def get_supplier_capture(capture_id: str) -> dict:
+        getter = getattr(active_service, "get_supplier_capture", None)
+        capture = getter(capture_id) if callable(getter) else None
+        if not isinstance(capture, Mapping):
+            raise HTTPException(status_code=404, detail="capture not found")
+        return dict(capture)
+
+    def capture_mutation_error(exc: Exception) -> HTTPException:
+        if isinstance(exc, CaptureNotFoundError):
+            return HTTPException(status_code=404, detail="capture not found")
+        if isinstance(exc, CaptureAuthorizationError):
+            return HTTPException(status_code=403, detail=str(exc))
+        if isinstance(exc, CaptureConflictError):
+            return HTTPException(status_code=409, detail=str(exc))
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        )
+
+    @app.post("/api/v1/supplier-scout/captures/{capture_id}/claim")
+    def claim_supplier_capture(
+        capture_id: str,
+        request: SupplierCaptureClaimRequest,
+        capture_token: str = Header(alias="X-Proteus-Capture-Token"),
+    ) -> dict:
+        claimer = getattr(active_service, "claim_supplier_capture", None)
+        if not callable(claimer):
+            raise HTTPException(status_code=501, detail="Edge capture is unavailable")
+        try:
+            return dict(claimer(capture_id, capture_token, request.model_dump()))
+        except (CaptureNotFoundError, CaptureAuthorizationError, CaptureConflictError, ValueError) as exc:
+            raise capture_mutation_error(exc) from exc
+
+    @app.post("/api/v1/supplier-scout/captures/{capture_id}/pages")
+    def ingest_supplier_capture_page(
+        capture_id: str,
+        request: SupplierCapturePageRequest,
+        capture_token: str = Header(alias="X-Proteus-Capture-Token"),
+    ) -> dict:
+        ingester = getattr(active_service, "ingest_supplier_capture_page", None)
+        if not callable(ingester):
+            raise HTTPException(status_code=501, detail="Edge capture is unavailable")
+        try:
+            return dict(ingester(capture_id, capture_token, request.model_dump()))
+        except (CaptureNotFoundError, CaptureAuthorizationError, CaptureConflictError, ValueError) as exc:
+            raise capture_mutation_error(exc) from exc
+
+    @app.post("/api/v1/supplier-scout/captures/{capture_id}/pause")
+    def pause_supplier_capture(
+        capture_id: str,
+        request: SupplierCapturePauseRequest,
+        capture_token: str = Header(alias="X-Proteus-Capture-Token"),
+    ) -> dict:
+        pauser = getattr(active_service, "pause_supplier_capture", None)
+        if not callable(pauser):
+            raise HTTPException(status_code=501, detail="Edge capture is unavailable")
+        try:
+            return dict(pauser(capture_id, capture_token, request.model_dump()))
+        except (CaptureNotFoundError, CaptureAuthorizationError, CaptureConflictError, ValueError) as exc:
+            raise capture_mutation_error(exc) from exc
 
     @app.post(
         "/api/v1/supplier-scout/runs",

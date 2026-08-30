@@ -12,11 +12,11 @@ const sourceStatus = {
   EMPTY: ["已证实空店", "pass", "店铺明确报告 0 件商品且没有下一页。"],
   PARTIAL: ["部分读取", "review", "已保存可见商品，但店铺仍有下一页或触及读取上限。"],
   RISK_CONTROL: ["需要人工验证", "review", "1688 返回滑块或访问验证；这不是零商品。"],
-  AUTH_REQUIRED: ["需要重新登录", "review", "本地 1688 profile 当前无法进入该店。"],
+  AUTH_REQUIRED: ["需要重新登录", "review", "普通 Edge 当前页面需要用户完成登录。"],
   TIMEOUT: ["读取超时", "error", "店铺页面未在边界内完成响应。"],
   PARSER_FAILED: ["页面无法确认", "error", "没有足够结构化证据证明商品清单或空店。"],
-  CLI_ERROR: ["本地采集器失败", "error", "请检查 1688 CLI 与浏览器运行环境。"],
-  NOT_CONFIGURED: ["采集器未配置", "error", "需要本机 1688 CLI 0.1.47 与已登录 profile。"],
+  CLI_ERROR: ["兼容采集器失败", "error", "旧只读 bridge 没有取得可用店铺证据。"],
+  NOT_CONFIGURED: ["采集器未配置", "error", "请优先创建普通 Edge 采集任务。"],
 };
 
 const categoryStatusLabels = {
@@ -59,8 +59,12 @@ let policy = null;
 let suppliers = [];
 let lastResult = null;
 let activeRunId = null;
+let activeCaptureId = null;
+let activeSnapshotId = null;
 let activeFilter = "all";
 let runBusy = false;
+let captureBusy = false;
+let capturePollGeneration = 0;
 
 async function json(path, options = {}) {
   const response = await fetch(`${API}${path}`, {
@@ -71,7 +75,9 @@ async function json(path, options = {}) {
     const payload = await response.json().catch(() => null);
     const detail = payload?.detail;
     const message = Array.isArray(detail) ? detail[0]?.msg : detail;
-    throw new Error(message || `本地接口返回 ${response.status}`);
+    const error = new Error(message || `本地接口返回 ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -90,9 +96,11 @@ function setStatus(message = "", tone = "") {
 function setBusy(busy) {
   runBusy = busy;
   const button = $("#runButton");
-  button.disabled = busy || !$("#supplier_id").value || selectedCategories().length === 0;
-  $(".button__label", button).textContent = busy ? "筛选中…" : "读取并筛选";
+  button.disabled = busy || captureBusy || !$("#supplier_id").value || !activeSnapshotId || selectedCategories().length === 0;
+  $(".button__label", button).textContent = busy ? "筛选中…" : "使用快照筛选";
   button.dataset.state = busy ? "busy" : "idle";
+  const captureButton = $("#createCaptureButton");
+  if (captureButton) captureButton.disabled = busy || captureBusy || !$("#supplier_id").value;
 }
 
 function selectedCategories() {
@@ -101,6 +109,10 @@ function selectedCategories() {
 
 function syncRunAvailability() {
   setBusy(runBusy);
+}
+
+function selectedSupplier() {
+  return suppliers.find((supplier) => supplier.supplier_id === $("#supplier_id").value) || null;
 }
 
 function renderCategories() {
@@ -159,13 +171,6 @@ async function refreshSuppliers(preferredId = null) {
   renderSuppliers(preferredId);
 }
 
-function currentTarget() {
-  const typed = $("#supplier_target").value.trim();
-  if (typed) return typed;
-  const selected = suppliers.find((supplier) => supplier.supplier_id === $("#supplier_id").value);
-  return selected?.canonical_url || "";
-}
-
 function showSourceVerdict(outcome) {
   const element = $("#sourceVerdict");
   const [label, tone, description] = sourceStatus[outcome.acquisition_status] || [outcome.acquisition_status || "未知状态", "error", "没有可解释的采集状态。"];
@@ -174,37 +179,6 @@ function showSourceVerdict(outcome) {
   element.hidden = false;
   element.dataset.tone = tone;
   element.innerHTML = `<strong>${esc(label)}</strong>${esc(description)} <span>${observed} 件已观察 / ${esc(available)} 件报告总量；${Number(outcome.pages_completed || 0)} 页完成。</span>`;
-}
-
-async function inspectSupplier() {
-  const target = currentTarget();
-  if (!target) {
-    setStatus("请先输入店铺 URL，或选择一个已保存供应商。", "error");
-    return;
-  }
-  const button = $("#inspectButton");
-  button.disabled = true;
-  setStatus($("#headed").checked ? "已打开人工验证模式；如出现窗口，请由你亲自完成滑块。" : "正在做 1 页只读检查…");
-  try {
-    const outcome = await json("/supplier-scout/suppliers/inspect", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        target,
-        max_pages: 1,
-        max_offers: 20,
-        headed: $("#headed").checked,
-        challenge_timeout_seconds: 180,
-      }),
-    });
-    showSourceVerdict(outcome);
-    const tone = ["SUCCESS", "EMPTY"].includes(outcome.acquisition_status) ? "success" : "error";
-    setStatus(`只读检查完成：${sourceStatus[outcome.acquisition_status]?.[0] || outcome.acquisition_status}`, tone);
-  } catch (error) {
-    setStatus(`检查失败：${error.message}`, "error");
-  } finally {
-    button.disabled = false;
-  }
 }
 
 async function saveSupplier() {
@@ -223,7 +197,8 @@ async function saveSupplier() {
       body: JSON.stringify({ label, target }),
     });
     await refreshSuppliers(saved.supplier_id);
-    setStatus(`已保存「${saved.label}」；运行时会重新读取并冻结店铺快照。`, "success");
+    await loadLatestSnapshot();
+    setStatus(`已保存「${saved.label}」；现在可以创建普通 Edge 采集任务。`, "success");
   } catch (error) {
     setStatus(`保存失败：${error.message}`, "error");
   } finally {
@@ -231,13 +206,154 @@ async function saveSupplier() {
   }
 }
 
+function captureDescription(capture) {
+  const pages = Number(capture?.pages_completed || 0);
+  const offers = Number(capture?.observed_offer_count || 0);
+  const descriptions = {
+    PENDING: "任务已创建。请在打开的普通 Edge 店铺页完成登录，然后点击工具栏里的 Proteus 扩展。",
+    CAPTURING: `扩展正在采集：${pages} 页、${offers} 件已传回。`,
+    PAUSED: `采集已暂停并保存当前证据：${pages} 页、${offers} 件。处理页面提示后，再点击扩展继续。`,
+    COMPLETED: `店铺快照已封存：${pages} 页、${offers} 件。现在可以开始市场筛选。`,
+    EXPIRED: "采集任务已过期；已观察的部分证据会保留，请重新创建任务。",
+  };
+  return descriptions[capture?.status] || "正在读取采集状态。";
+}
+
+function renderCaptureStatus(capture, snapshot = null) {
+  const element = $("#captureStatus");
+  if (!capture && !snapshot) {
+    captureBusy = false;
+    element.dataset.state = "idle";
+    element.innerHTML = "<strong>尚未创建采集任务</strong><span>选择已保存供应商后即可开始。</span>";
+    return;
+  }
+  if (capture) {
+    captureBusy = ["PENDING", "CAPTURING"].includes(capture.status);
+    const tones = { PENDING: "review", CAPTURING: "review", PAUSED: "review", COMPLETED: "ready", EXPIRED: "error" };
+    element.dataset.state = tones[capture.status] || "review";
+    element.innerHTML = `<strong>${esc(capture.status || "UNKNOWN")}</strong><span>${esc(captureDescription(capture))}</span>`;
+    return;
+  }
+  captureBusy = false;
+  const status = snapshot.acquisition_status || "UNKNOWN";
+  const usable = ["SUCCESS", "EMPTY"].includes(status)
+    || (status === "PARTIAL" && Number(snapshot.observed_offer_count || 0) > 0);
+  element.dataset.state = usable ? "ready" : "error";
+  element.innerHTML = `<strong>最近快照 · ${esc(sourceStatus[status]?.[0] || status)}</strong><span>${Number(snapshot.pages_completed || 0)} 页、${Number(snapshot.observed_offer_count || 0)} 件；${usable ? "可以复用或重新采集。" : "不能用于筛选，请重新采集。"}</span>`;
+}
+
+function useSnapshot(snapshot) {
+  const usable = snapshot && (
+    ["SUCCESS", "EMPTY"].includes(snapshot.acquisition_status)
+    || (snapshot.acquisition_status === "PARTIAL" && Number(snapshot.observed_offer_count || 0) > 0)
+  );
+  activeSnapshotId = usable ? snapshot.snapshot_id : null;
+  if (snapshot) showSourceVerdict(snapshot);
+  renderCaptureStatus(null, snapshot);
+  syncRunAvailability();
+}
+
+async function loadLatestSnapshot() {
+  const supplier = selectedSupplier();
+  const supplierId = supplier?.supplier_id || null;
+  activeSnapshotId = null;
+  if (!supplier) {
+    renderCaptureStatus(null, null);
+    $("#openSupplierStore").hidden = true;
+    syncRunAvailability();
+    return;
+  }
+  const storeLink = $("#openSupplierStore");
+  storeLink.href = supplier.canonical_url;
+  storeLink.hidden = false;
+  try {
+    const payload = await json(`/supplier-scout/suppliers/${encodeURIComponent(supplier.supplier_id)}/snapshots/latest`);
+    if (selectedSupplier()?.supplier_id !== supplierId) return;
+    if (payload.snapshot) useSnapshot(payload.snapshot);
+    else renderCaptureStatus(null, null);
+  } catch (error) {
+    renderCaptureStatus({ status: "ERROR", pages_completed: 0, observed_offer_count: 0 });
+    setStatus(`无法读取最近快照：${error.message}`, "error");
+  }
+  syncRunAvailability();
+}
+
+async function pollCapture(captureId) {
+  const generation = ++capturePollGeneration;
+  while (generation === capturePollGeneration && activeCaptureId === captureId) {
+    try {
+      const capture = await json(`/supplier-scout/captures/${encodeURIComponent(captureId)}`);
+      renderCaptureStatus(capture);
+      syncRunAvailability();
+      if (capture.snapshot_id && (capture.status === "COMPLETED" || Number(capture.observed_offer_count || 0) > 0)) {
+        activeSnapshotId = capture.snapshot_id;
+        syncRunAvailability();
+      }
+      if (["COMPLETED", "EXPIRED", "CANCELLED"].includes(capture.status)) {
+        sessionStorage.removeItem("proteusSupplierCaptureId");
+        activeCaptureId = null;
+        if (capture.snapshot_id) await loadLatestSnapshot();
+        break;
+      }
+    } catch (error) {
+      captureBusy = false;
+      if (error.status === 404) {
+        sessionStorage.removeItem("proteusSupplierCaptureId");
+        if (activeCaptureId === captureId) activeCaptureId = null;
+        await loadLatestSnapshot();
+      }
+      syncRunAvailability();
+      setStatus(`采集状态读取失败：${error.message}`, "error");
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+}
+
+async function createCapture() {
+  const supplier = selectedSupplier();
+  if (!supplier) {
+    setStatus("请先选择一个已保存供应商。", "error");
+    return;
+  }
+  const button = $("#createCaptureButton");
+  captureBusy = true;
+  button.disabled = true;
+  activeSnapshotId = null;
+  syncRunAvailability();
+  try {
+    const capture = await json("/supplier-scout/captures", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        supplier_id: supplier.supplier_id,
+        max_pages: number("max_pages"),
+        max_offers: number("max_offers"),
+      }),
+    });
+    activeCaptureId = capture.capture_id;
+    sessionStorage.setItem("proteusSupplierCaptureId", activeCaptureId);
+    renderCaptureStatus(capture);
+    setStatus("采集任务已创建；请在店铺页正常显示后点击 Edge 工具栏扩展。", "success");
+    window.open(supplier.canonical_url, "_blank", "noopener,noreferrer");
+    pollCapture(activeCaptureId);
+  } catch (error) {
+    captureBusy = false;
+    setStatus(`创建采集任务失败：${error.message}`, "error");
+    await loadLatestSnapshot();
+  } finally {
+    syncRunAvailability();
+  }
+}
+
 function runRequest() {
   return {
     supplier_id: $("#supplier_id").value,
+    inventory_snapshot_id: activeSnapshotId,
     selected_category_ids: selectedCategories(),
     max_pages: number("max_pages"),
     max_offers: number("max_offers"),
-    headed: $("#headed").checked,
+    headed: false,
     challenge_timeout_seconds: 180,
     market_request_budget: number("market_request_budget"),
     max_amazon_queries_per_family: number("max_amazon_queries_per_family"),
@@ -405,8 +521,8 @@ function renderResult(result) {
 async function submitRun(event) {
   event.preventDefault();
   const request = runRequest();
-  if (!request.supplier_id || request.selected_category_ids.length === 0) {
-    setStatus("请选择已保存供应商，并至少保留一个 ACTIVE 小类。", "error");
+  if (!request.supplier_id || !request.inventory_snapshot_id || request.selected_category_ids.length === 0) {
+    setStatus("请选择供应商、完成 Edge 店铺采集，并至少保留一个 ACTIVE 小类。", "error");
     return;
   }
   if (request.grade_a_minus_max_competitors <= request.grade_a_max_competitors) {
@@ -414,11 +530,11 @@ async function submitRun(event) {
     return;
   }
   setBusy(true);
-  setStatus(request.headed ? "运行已开始；若出现验证窗口，请由你亲自完成滑块。" : "正在创建有界店铺快照…");
+  setStatus("正在使用已封存的 Edge 店铺快照开始筛选…");
   $("#emptyState").hidden = true;
   $("#resultContent").hidden = false;
   $("#runNotice").hidden = false;
-  $("#runNotice").textContent = "正在排队读取供应商店铺…";
+  $("#runNotice").textContent = "正在排队复用店铺快照…";
   try {
     const submission = await json("/supplier-scout/runs", {
       method: "POST",
@@ -449,6 +565,12 @@ async function boot() {
     policy = nextPolicy;
     renderCategories();
     await refreshSuppliers();
+    const extensionPath = policy.edge_collector?.extension_path_absolute
+      || policy.edge_collector?.extension_path;
+    if (extensionPath) {
+      $("#extensionPath").textContent = extensionPath;
+    }
+    await loadLatestSnapshot();
     const defaults = policy.default_thresholds || {};
     ["grade_a_max_competitors", "grade_a_minus_max_competitors", "min_family_price_usd", "min_observed_ebay_demand"].forEach((id) => {
       if (defaults[id] != null) $(`#${id}`).value = String(defaults[id]);
@@ -456,6 +578,11 @@ async function boot() {
     status.dataset.state = "ready";
     $(".system-status__label", status).textContent = `v${health.version} · 本地接口已就绪`;
     syncRunAvailability();
+    const recoveredCaptureId = sessionStorage.getItem("proteusSupplierCaptureId");
+    if (recoveredCaptureId) {
+      activeCaptureId = recoveredCaptureId;
+      pollCapture(recoveredCaptureId);
+    }
   } catch (error) {
     status.dataset.state = "error";
     $(".system-status__label", status).textContent = "本地服务不可用";
@@ -463,11 +590,22 @@ async function boot() {
   }
 }
 
-$("#inspectButton").addEventListener("click", inspectSupplier);
 $("#saveSupplierButton").addEventListener("click", saveSupplier);
-$("#supplier_id").addEventListener("change", syncRunAvailability);
-$("#headed").addEventListener("change", (event) => {
-  $("#headedLabel").textContent = event.currentTarget.checked ? "等待人工验证" : "不打开";
+$("#createCaptureButton").addEventListener("click", createCapture);
+$("#copyExtensionPath").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("#extensionPath").textContent);
+    setStatus("扩展文件夹路径已复制。", "success");
+  } catch (_error) {
+    setStatus("无法自动复制，请手动选择项目中的 browser-extension/supplier-collector。", "error");
+  }
+});
+$("#supplier_id").addEventListener("change", async () => {
+  capturePollGeneration += 1;
+  activeCaptureId = null;
+  captureBusy = false;
+  sessionStorage.removeItem("proteusSupplierCaptureId");
+  await loadLatestSnapshot();
 });
 $("#toggleCategories").addEventListener("click", () => {
   const inputs = $$("input[name='supplier_category']");

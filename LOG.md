@@ -10,11 +10,17 @@
   HTTPS 1688 source; a distinct second source, credentials, HTTP, or foreign host is rejected.
   Page/offer bounds produce `PARTIAL`; login, risk control, timeout and parse failure remain
   distinct; `EMPTY` requires an explicit zero count, no next page and complete pagination.
-- Added the version-gated local store bridge for `1688-cli` 0.1.47. It reuses the local
-  persistent browser profile without reading/exporting cookies and only extracts offer links,
-  titles, visible price/MOQ, supplier identity and pagination markers. It imports no inquiry,
-  messaging, favorite, cart, checkout or order command and never solves CAPTCHA. Headed mode
-  only waits for the operator to clear a challenge manually.
+- Replaced the supplier-first UI's hidden-browser path with a project-owned Manifest V3 Edge
+  extension under `browser-extension/supplier-collector`. A user-created bounded task is bound
+  to one saved shop host and a short-lived opaque token; the extension runs only after a toolbar
+  click in ordinary Edge, scrolls and paginates deterministic rendered DOM, and posts normalized
+  offers plus hashed page evidence only to the loopback API. It has no cookie, debugger, proxy,
+  webRequest, remote-code, messaging, cart, checkout or CAPTCHA-solving capability.
+- Added thread-safe capture lifecycle endpoints for pending discovery, claim, idempotent sequential
+  page ingest, pause/resume and status, plus a packaged non-executable selector profile. Unknown
+  pagination, unproven empty pages, authentication and risk control pause without consuming a page
+  number or inventing an empty store; partial evidence is sealed into an immutable snapshot and can
+  be resumed by another explicit extension click.
 - Added `%LOCALAPPDATA%/Proteus/supplier_scout.sqlite3` for saved sources, inspection audits and
   immutable inventory snapshots. It is independent from the category catalog. Run submission freezes selected
   category versions; unmatched, ambiguous, supplier-mismatched, identity-incomplete and
@@ -32,8 +38,18 @@
 - Browser replay verified two-way navigation, read-only `PARTIAL` inspection, four observed
   offers with A=1, A-=1, unmatched=1 and identity-incomplete=1, evidence expansion, filters,
   both JSON exports, a 390px no-overflow layout and zero console warnings/errors. Both export
-  endpoints returned HTTP 200 with attachment filenames. All 377 tests passed; the known
-  warning is Starlette's `TestClient` httpx deprecation notice.
+  endpoints returned HTTP 200 with attachment filenames. A fresh in-app-browser acceptance against
+  the restarted real local API verified the new ordinary-Edge collector card, saved-supplier state,
+  unusable failed-snapshot gating, disabled run action and zero console warnings/errors. Offline
+  Playwright DOM acceptance exercises real content-script extraction; Node tests cover URL,
+  challenge and pagination semantics. All 397 tests passed; Python compilation, dependency checks,
+  six JavaScript syntax checks, four Node contract tests and 14 JSON parses also passed. The
+  isolated 0.2.6 wheel contains and imports the installed capture module plus selector profile
+  (`SHA-256 26D3CE6A63A8131291085036E0A89940000F42EE7E6CAA7A8CAC6DF21D2ACD9D`).
+  The only test warning is Starlette's `TestClient` httpx deprecation notice. Loading the unpacked
+  extension and exercising a live 1688 store remains a one-time user-assisted acceptance because
+  extension installation and CAPTCHA
+  interaction cannot be performed silently by the Agent.
 
 ## 2026-08-29 — V0.2.5 two-level category catalog and Amazon competition grades
 

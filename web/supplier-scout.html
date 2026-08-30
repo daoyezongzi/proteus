@@ -76,7 +76,7 @@
           </a>
         </div>
         <button class="button button--primary" id="runButton" type="submit" form="runForm" disabled>
-          <span class="button__label">读取并筛选</span><span class="button__arrow" aria-hidden="true">↗</span>
+          <span class="button__label">使用快照筛选</span><span class="button__arrow" aria-hidden="true">↗</span>
         </button>
       </header>
 
@@ -119,10 +119,36 @@
                 <small>会移除 spm 等跟踪参数；不同店铺的多个 URL 会被拒绝</small>
               </label>
               <div class="supplier-actions">
-                <button class="button button--quiet" id="inspectButton" type="button">只读检查</button>
                 <button class="button button--secondary" id="saveSupplierButton" type="button">保存供应商</button>
               </div>
               <div class="source-verdict" id="sourceVerdict" role="status" aria-live="polite" hidden></div>
+            </div>
+          </section>
+
+          <section class="surface supplier-capture-card" aria-labelledby="captureTitle">
+            <div class="section-head section-head--tight">
+              <div><p class="eyebrow">普通 Edge 采集</p><h2 id="captureTitle">在已登录页面自动读取</h2></div>
+              <span class="section-tag">USER TRIGGERED</span>
+            </div>
+            <div class="capture-layout">
+              <div class="capture-copy">
+                <ol class="capture-steps">
+                  <li><strong>首次安装扩展</strong><span>在 <code>edge://extensions</code> 开启开发人员模式，加载项目内的扩展文件夹。</span></li>
+                  <li><strong>创建有界任务</strong><span>Proteus 会打开当前供应商店铺；登录和验证码仍由你处理。</span></li>
+                  <li><strong>点击工具栏扩展</strong><span>页面正常显示后，扩展自动滚动、翻页并把商品传回本机。</span></li>
+                </ol>
+                <div class="extension-path"><span>扩展文件夹</span><code id="extensionPath">browser-extension/supplier-collector</code><button class="text-button" id="copyExtensionPath" type="button">复制路径</button></div>
+              </div>
+              <div class="capture-control">
+                <div class="capture-status" id="captureStatus" data-state="idle" role="status" aria-live="polite">
+                  <strong>尚未创建采集任务</strong>
+                  <span>选择已保存供应商后即可开始。</span>
+                </div>
+                <div class="capture-actions">
+                  <button class="button button--primary" id="createCaptureButton" type="button" disabled>创建 Edge 采集任务</button>
+                  <a class="button button--quiet" id="openSupplierStore" href="#" target="_blank" rel="noopener noreferrer" hidden>打开供应商店铺</a>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -140,11 +166,6 @@
               <label class="field"><span>A- 级竞争上限</span><input id="grade_a_minus_max_competitors" type="number" min="1" value="8" required><small>6–8 为 A-，9+ 淘汰</small></label>
               <label class="field"><span>平替最低价高于</span><span class="input-with-prefix"><span aria-hidden="true">$</span><input id="min_family_price_usd" type="number" min="0" step="0.01" value="20" required></span><small>独立于供应商售价</small></label>
               <label class="field"><span>最低可见 eBay 销量</span><input id="min_observed_ebay_demand" type="number" min="0" value="1" required><small>是可见下界，不冒充 365 天销量</small></label>
-              <label class="field field--toggle field--wide">
-                <span>遇到滑块时打开窗口等待</span>
-                <span class="toggle-control"><input id="headed" type="checkbox"><strong id="headedLabel">不打开</strong></span>
-                <small>启用后仍由你亲自完成验证；系统不会识别、拖动或绕过 CAPTCHA。</small>
-              </label>
               <p class="form-status field--wide" id="formStatus" role="status" aria-live="polite"></p>
             </form>
           </section>
@@ -173,7 +194,7 @@
           <div class="empty-state" id="emptyState">
             <div class="empty-state__diagram" aria-hidden="true"><span></span><span></span><span></span><i></i></div>
             <h3>还没有店铺快照</h3>
-            <p>先保存并选择一家供应商，再点击右上角「读取并筛选」。若 1688 要求登录或滑块，页面会保留真实阻断状态。</p>
+            <p>先保存并选择一家供应商，创建 Edge 采集任务；页面正常显示后点击浏览器工具栏扩展。快照封存后才会启用筛选。</p>
           </div>
 
           <div id="resultContent" hidden>
