@@ -1,5 +1,33 @@
 # Proteus Development Log
 
+## 2026-08-30 — V0.2.7 Edge collector reconnection
+
+- User acceptance exposed `Could not establish connection. Receiving end does not exist.` after a
+  capture had already been claimed. The first divergent step was the popup's direct
+  `tabs.sendMessage`: a 1688 tab opened before an unpacked extension install/reload did not yet have
+  the declarative content script that receives `collector:start`. The raw browser error was not a
+  1688 verification failure and did not mean the store was empty.
+- The popup now recognizes only the missing-content-script connection error, reloads that one active
+  store tab, and relies on the collector's existing page-load auto-resume path. Chrome documents that
+  tab reload itself needs no extra permission, so the manifest remains limited to `activeTab`,
+  `storage`, the 1688 host and the loopback API; extension version is 0.2.7.
+- Pending discovery and claim are idempotently recoverable from `CAPTURING` as well as `PENDING` or
+  `PAUSED`. This lets an extension reload recover the same unexpired, host-bound, token-authorized
+  session instead of leaving it stranded; completed and expired sessions remain non-claimable.
+- Regression tests reproduced both the absent receiver and lost extension-session state before the
+  fix, then verified automatic tab reload, no reload for unrelated errors and same-session
+  reattachment. All 399 pytest tests passed; Python compilation, dependency checks, eight JavaScript
+  syntax checks, six Node contract tests, 21 JSON parses and `git diff --check` also passed. The only
+  warning remains Starlette's existing `TestClient` httpx deprecation notice.
+- A restarted real loopback API reported 0.2.7 and completed
+  `PENDING → CAPTURING → pending discovery of that same CAPTURING id → idempotent CAPTURING claim`
+  against the saved example shop. The smoke task was then cleared by restarting the in-memory API;
+  the service remains healthy on port 8765. A PEP 517 wheel built as
+  `proteus_opportunity_finder-0.2.7-py3-none-any.whl` with SHA-256
+  `63935605853E3947941ECEA53D74F212A69AF4BD84872540C5028D5149C8CA14`. Live ordinary-Edge
+  confirmation still requires the user to reload the unpacked extension and click it on the real
+  store tab; the Agent does not silently install an extension or bypass 1688 verification.
+
 ## 2026-08-30 — V0.2.6 bounded supplier-first store scout
 
 - Added “供应商反向选品” as a separate navigation workspace. One run fixes one saved 1688

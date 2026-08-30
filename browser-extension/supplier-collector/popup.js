@@ -25,6 +25,24 @@ function show(message, tone = "") {
   else delete statusElement.dataset.tone;
 }
 
+function isMissingContentScript(error) {
+  const message = error?.message || String(error || "");
+  return (
+    message.includes("Receiving end does not exist")
+    || message.includes("Could not establish connection")
+  );
+}
+
+async function startCollector(tab) {
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: "collector:start" });
+  } catch (error) {
+    if (!isMissingContentScript(error)) throw error;
+    show("当前店铺页打开早于扩展，正在自动刷新并继续采集…", "ready");
+    await chrome.tabs.reload(tab.id);
+  }
+}
+
 async function boot() {
   try {
     const [tab, state] = await Promise.all([activeTab(), send({ type: "popup:state" })]);
@@ -51,7 +69,7 @@ startButton.addEventListener("click", async () => {
     const tab = await activeTab();
     const state = await send({ type: "popup:claim", tabUrl: tab.url });
     show(`已连接「${state.supplier_label || state.shop_host}」，正在读取第 ${state.next_page_number} 页。`, "ready");
-    await chrome.tabs.sendMessage(tab.id, { type: "collector:start" });
+    await startCollector(tab);
     window.close();
   } catch (error) {
     show(error.message, "error");

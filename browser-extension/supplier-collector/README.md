@@ -15,6 +15,11 @@ loopback Proteus API.
 After an Agent updates the extension files, click **Reload** on the same Edge
 extensions page. Do not move the directory after loading it.
 
+If the store tab was already open before installation or reload, the first
+collector click reloads that store tab once. The content script then resumes
+the same unexpired Proteus capture automatically. A lost extension-session
+state can reattach to the matching in-progress capture instead of stranding it.
+
 ## Boundary
 
 - The user creates a bounded capture in Proteus and explicitly clicks the

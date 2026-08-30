@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Proteus 1688 店铺采集器",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "从用户正常打开的 1688 供应商页面有界采集可见商品，并发送到本机 Proteus。",
   "permissions": [
     "activeTab",

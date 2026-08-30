@@ -360,7 +360,7 @@ class SupplierCaptureManager:
             candidates: list[dict[str, Any]] = []
             for capture in self._captures.values():
                 self._expire_locked(capture)
-                if capture["status"] not in {"PENDING", "PAUSED"}:
+                if capture["status"] not in {"PENDING", "PAUSED", "CAPTURING"}:
                     continue
                 if capture["shop_host"] != requested_host:
                     continue
@@ -385,7 +385,7 @@ class SupplierCaptureManager:
             if self._expire_locked(capture):
                 raise CaptureConflictError("capture session expired")
             _page_url_for_source(page_url, capture)
-            if capture["status"] not in {"PENDING", "PAUSED"}:
+            if capture["status"] not in {"PENDING", "PAUSED", "CAPTURING"}:
                 raise CaptureConflictError(
                     f"capture cannot be claimed from {capture['status']}"
                 )

@@ -87,6 +87,25 @@ def test_supplier_collector_core_node_contract() -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
+def test_supplier_collector_popup_node_contract() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is not installed")
+
+    completed = subprocess.run(
+        [node, "--test", str(ROOT / "tests" / "js" / "test_supplier_popup.mjs")],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 def test_supplier_collector_core_in_a_real_browser_dom() -> None:
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import sync_playwright

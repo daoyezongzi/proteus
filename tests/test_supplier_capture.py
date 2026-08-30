@@ -66,6 +66,37 @@ def test_capture_requires_token_and_exact_saved_store_host(tmp_path: Path) -> No
     assert claimed["collector_version"] == "0.2.6"
 
 
+def test_capturing_session_can_be_reattached_after_extension_state_loss(
+    tmp_path: Path,
+) -> None:
+    captures, supplier = manager(tmp_path)
+    created = captures.create_capture(
+        supplier["supplier_id"], max_pages=3, max_offers=100
+    )
+    token = created["capture_token"]
+    captures.claim_capture(
+        created["capture_id"],
+        token,
+        page_url=STORE_URL,
+        extension_version="0.2.6",
+    )
+
+    recoverable = captures.pending_capture(shop_host=SHOP_HOST)
+    assert recoverable is not None
+    assert recoverable["capture_id"] == created["capture_id"]
+    assert recoverable["capture_token"] == token
+    assert recoverable["status"] == "CAPTURING"
+
+    reclaimed = captures.claim_capture(
+        created["capture_id"],
+        token,
+        page_url=STORE_URL,
+        extension_version="0.2.7",
+    )
+    assert reclaimed["status"] == "CAPTURING"
+    assert reclaimed["collector_version"] == "0.2.7"
+
+
 def test_capture_ingests_sequential_pages_idempotently_and_seals_snapshot(
     tmp_path: Path,
 ) -> None:
