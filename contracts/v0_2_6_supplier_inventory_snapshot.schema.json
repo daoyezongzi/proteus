@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proteus.local/contracts/v0_2_6_supplier_inventory_snapshot.schema.json",
+  "title": "Proteus V0.2.6 bounded 1688 supplier inventory snapshot",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "provider",
+    "source_method",
+    "canonical_url",
+    "supplier",
+    "retrieved_at",
+    "acquisition_status",
+    "pages_attempted",
+    "pages_completed",
+    "observed_offer_count",
+    "available_offer_count",
+    "has_next_page",
+    "inventory_complete",
+    "offers",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.2.6"},
+    "provider": {"type": "string", "minLength": 1},
+    "source_method": {"type": "string", "minLength": 1},
+    "submitted_target": {"type": "string", "minLength": 1},
+    "canonical_url": {"type": "string", "format": "uri", "pattern": "^https://(?:[^/]+\\.)?1688\\.com/"},
+    "supplier": {
+      "type": "object",
+      "required": ["shop_host"],
+      "properties": {
+        "shop_host": {"type": "string", "pattern": "(^|\\.)1688\\.com$"},
+        "member_id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "retrieved_at": {"type": "string", "format": "date-time"},
+    "acquisition_status": {
+      "enum": ["SUCCESS", "EMPTY", "PARTIAL", "AUTH_REQUIRED", "RISK_CONTROL", "TIMEOUT", "PARSER_FAILED", "CLI_ERROR", "NOT_CONFIGURED"]
+    },
+    "pages_attempted": {"type": "integer", "minimum": 0},
+    "pages_completed": {"type": "integer", "minimum": 0},
+    "observed_offer_count": {"type": "integer", "minimum": 0},
+    "available_offer_count": {"type": ["integer", "null"], "minimum": 0},
+    "has_next_page": {"type": ["boolean", "null"]},
+    "inventory_complete": {"type": "boolean"},
+    "offers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["offer_id", "title", "offer_url", "supplier"],
+        "properties": {
+          "offer_id": {"type": "string", "pattern": "^[0-9]+$"},
+          "title": {"type": "string", "minLength": 1},
+          "offer_url": {"type": "string", "format": "uri", "pattern": "^https://detail\\.1688\\.com/offer/"},
+          "supplier": {"type": "object"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "diagnostics": {"type": "array", "items": {"type": "object"}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"inventory_complete": {"const": true}}},
+      "then": {
+        "properties": {
+          "acquisition_status": {"enum": ["SUCCESS", "EMPTY"]},
+          "has_next_page": {"const": false}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"acquisition_status": {"const": "EMPTY"}}},
+      "then": {
+        "properties": {
+          "inventory_complete": {"const": true},
+          "observed_offer_count": {"const": 0},
+          "available_offer_count": {"const": 0},
+          "offers": {"maxItems": 0}
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

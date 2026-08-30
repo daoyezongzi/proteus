@@ -1,7 +1,7 @@
-# Proteus V0.2.5
+# Proteus V0.2.6
 
-> 当前执行版本：**数据库驱动的两级分类 + 单分类配额优先扫描 + Amazon 竞争分级**。
-> 旧的九类统一扫描仍保留在历史实现说明中，不是本次默认入口。
+> 当前执行版本提供两个并列入口：**分类/eBay 正向初筛**与**固定 1688 供应商反向选品**。
+> 两者共用 ACTIVE 分类版本和 Amazon A / A- 竞争语义，但候选来源、读取边界和结果快照互不混淆。
 
 Proteus 是按可售产品家族筛选低竞争汽车零件的本地操作台。当前 Northway MVP 以
 northwayautoparts 的车型专用小饰件和机械拉索为产品形态参考。公开入口从本机 SQLite
@@ -26,6 +26,32 @@ northwayautoparts 的车型专用小饰件和机械拉索为产品形态参考�
 本版是初筛器，不是自动采购决策器。1688 的通过条件是“存在匹配 offer 和明确供应商”，
 不等于库存、MOQ、利润或可下单；供应商阶段失败、风控和未查询会分别保留为可解释状态。
 V0.2.3 精确 OEM 链路和 HioBuy 1688 兼容路径继续保留，但不再是默认页面。
+
+## V0.2.6 供应商反向选品
+
+导航栏中的“供应商反向选品”固定一家本机保存的 1688 店铺，以有边界的店铺快照替代
+eBay 发现作为候选来源：
+
+```text
+保存一个规范化 1688 店铺 URL
+→ 在显式页数/商品数上限内读取可见 offer
+→ 每个 offer 回绑同一 supplier identity，并将快照写入独立 SQLite
+→ 用本次提交时的 ACTIVE 叶子版本匹配商品标题
+→ 未匹配 / 分类冲突 / 料号或车型不足的商品原样保留，不消耗市场请求
+→ 对身份足够明确的产品先查精确 eBay 需求，再聚合 Amazon 产品家族竞争
+→ 完整证据 0–5 为 A、6–8 为 A-、9+ 淘汰；不完整低下界保持 PENDING
+→ 导出全部已观察商品及其去向
+```
+
+店铺读取和市场判断是两条独立证据轴。触及页数/商品数上限会得到 `PARTIAL`；登录跳转、
+滑块、超时和解析失败分别得到 `AUTH_REQUIRED`、`RISK_CONTROL`、`TIMEOUT`、
+`PARSER_FAILED`，都不会被解释成空店。只有页面明确报告 0 件、没有下一页且完整度成立时，
+才会输出 `EMPTY`。未观察到的店铺商品不参与淘汰。
+
+本功能使用独立的 `%LOCALAPPDATA%\Proteus\supplier_scout.sqlite3` 保存供应商来源、只读
+检查审计与不可变店铺快照，不迁移分类数据库。遇到滑块时默认停止；用户可按次勾选“打开窗口等待”，然后
+亲自完成验证。Proteus 不识别、拖动或绕过 CAPTCHA，也不进行询价、消息、收藏、购物车、
+结算或下单。A / A- 只表示 Amazon 平替产品族竞争数量，不是供应商评分或采购建议。
 
 ## V0.2.5 当前可以做什么
 
@@ -73,7 +99,7 @@ AND 适配车型在美国的保有量 >= 本次运行显式阈值
 | eBay 近 365 天销量 | [eBay Product Research](https://www.ebay.com/help/selling/selling-tools/product-research?id=4853)（Terapeak）导出/规范化证据 | eBay 官方 Seller Hub 数据覆盖三年，能满足完整 365 天窗口 | 严格证据 API 已预留；导入器和真实样本待接入 |
 | 美国适配车辆保有量 | [TecAlliance TecDoc VIO](https://www.tecalliance.net/products?highlight=vio-data&solution=data-insights) | 同时覆盖车辆/适配语义与 VIO，避免再拼一个车型映射服务 | provider-neutral contract 已预留；商业开通和真实 adapter 待完成 |
 | VIO 备选 | [Experian Automotive VIO](https://www.experian.com/automotive/vehicles-in-operation-vio-data) | 美国 VIO 数据的替代来源 | 仅列为替换方案 |
-| 1688 供应商预筛 | 本地 `1688-cli`（首选）+ HioBuy（兼容） | 在 Amazon 前确认供应商存在，减少昂贵市场核验 | 只读适配已接入；不做询价、结算或下单 |
+| 1688 供应商预筛 / 固定店铺快照 | 本地 `1688-cli`（首选）+ HioBuy（仅旧兼容链路） | 正向入口确认供应商存在；反向入口从一家店的有界货盘产生候选 | 只读适配与 0.1.47 版本门已接入；不自动处理 CAPTCHA，不做消息、购物或下单 |
 
 自动 MVP 默认只需要 SerpApi 一枚 Key。严格 Product Research/VIO 证据只在真正执行
 严格筛选时需要。MarketCheck 可选，不再阻塞自动 MVP；NY DMV/NHTSA 实验 adapter 也不
@@ -113,11 +139,16 @@ py -3.12 -m venv .venv
 1. 运行 `.\.venv\Scripts\python.exe -m proteus setup`，按提示保存 SerpApi Key。
 2. 双击 `start-web.bat`；也可运行
    `.\.venv\Scripts\python.exe -m proteus api --port 8765`。
-3. 打开 `http://127.0.0.1:8765/`，保留默认参数，点击“开始选品扫描”。
+3. 打开 `http://127.0.0.1:8765/`。使用“产品族初筛”走原有正向漏斗，或从导航进入
+   `supplier-scout.html` 使用固定供应商反向入口。
 4. 选择一个末级零件类型；系统先做本地范围/家族过滤，再进行 1688 供应商预筛和 Amazon 核验。
    如果 1688 暂时风控，可取消“1688 供应商前置筛选”；本次不访问 1688，但候选最终只能是待复核。
 5. 右侧默认显示有供应商且市场证据完整的候选，其他状态可通过筛选查看。
 6. 下载精简或完整 JSON 做最终复核；JSON 始终包含全部候选、规则读数、来源、缺口、失败原因和排名。
+
+供应商反向入口先保存店铺名称与商品列表 URL，再设置店铺页数、商品观察上限和市场请求预算。
+“只读检查”只做一个小 canary；正式运行会重新读取并冻结快照。若状态为 `PARTIAL`，结果只
+覆盖已观察商品；若状态为 `RISK_CONTROL`，可在下一次运行显式启用人工验证窗口。
 
 `eBay 扫描页数`只按当前选择的零件类型计算。因此总 SerpApi 请求预算最低为
 `1 × 扫描页数`；1688 检查使用独立的 `max_1688_checks`，不会占用 SerpApi 预算。
@@ -164,7 +195,7 @@ Invoke-WebRequest `
 如果使用首选的本地 1688 CLI，需要单独安装并登录一次（Node 20+）：
 
 ```powershell
-npm i -g 1688-cli
+npm i -g 1688-cli@0.1.47
 1688 doctor --no-launch
 1688 login
 ```
@@ -172,8 +203,10 @@ npm i -g 1688-cli
 `1688-cli` 是 Node CLI，不安装进 Proteus 的 Python `.venv`；Proteus 通过系统 `PATH`
 调用 `1688`，而 Python `.venv` 继续只负责后端服务和依赖隔离。
 
-Proteus 只调用 `search --max`，必要时读取一个 `offer` 详情；本项目不会调用询价、购物车、
-结算或下单命令。
+Northway 正向入口只调用 `search --max`，必要时读取一个 `offer` 详情。供应商反向入口在
+当前 `1688-cli` 0.1.47 未提供店铺目录命令时，使用版本锁定的只读 bridge 复用其持久浏览器
+profile；bridge 不读取或导出 cookie，只提取当前店铺页面的 offer、分页和完整度标记。CLI
+版本或内部布局变化时会 fail closed。本项目不会调用询价、消息、收藏、购物车、结算或下单命令。
 
 如果启动时提示 Windows `10048` 或“端口 8765 已被占用”，先查看占用进程：
 
@@ -219,6 +252,13 @@ Stop-Process -Id <PID>
 | `GET` | `/api/v1/northway/runs/{run_id}` | 查询任务状态、候选和排序 |
 | `GET` | `/api/v1/northway/runs/{run_id}/export/compact` | 下载精简 JSON（默认） |
 | `GET` | `/api/v1/northway/runs/{run_id}/export` | 下载完整证据 JSON |
+| `GET` | `/api/v1/supplier-scout/policy` | 供应商反向入口的 ACTIVE 分类、阈值和双重预算边界 |
+| `GET/POST` | `/api/v1/supplier-scout/suppliers` | 列出或保存本机供应商来源 |
+| `POST` | `/api/v1/supplier-scout/suppliers/inspect` | 对一个店铺做小型只读检查，不把阻断当空店 |
+| `POST` | `/api/v1/supplier-scout/runs` | 读取并冻结店铺快照，异步执行供应商反向筛选 |
+| `GET` | `/api/v1/supplier-scout/runs/{run_id}` | 查询进度与全部已观察商品去向 |
+| `GET` | `/api/v1/supplier-scout/runs/{run_id}/export/compact` | 下载供应商反向精简 JSON |
+| `GET` | `/api/v1/supplier-scout/runs/{run_id}/export` | 下载供应商反向完整证据 JSON |
 | `GET/POST` | `/api/v1/mvp/*` | V0.2.3 精确 OEM 兼容链路 |
 | `GET` | `/api/v1/screening/policy` | 三项阈值、市场和服务选择 |
 | `POST` | `/api/v1/screening/evaluate` | 对规范化证据执行严格筛选 |
@@ -270,6 +310,31 @@ Invoke-RestMethod `
 `python web/_dev_server.py` 的本地回放 harness，它使用 stub 数据、不访问 provider，但不代表
 实时市场结果。后续如需正式复用历史结果，应增加带时间戳和明确 `REPLAY` 标记的本地缓存，
 不能把过期数据伪装成新鲜扫描。
+
+供应商反向 API 的最小示例：
+
+```powershell
+$supplier = Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8765/api/v1/supplier-scout/suppliers" `
+  -ContentType "application/json" `
+  -Body (@{
+    label = "示例供应商"
+    target = "https://shop3w093345o1043.1688.com/page/offerlist.htm"
+  } | ConvertTo-Json)
+
+$job = Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8765/api/v1/supplier-scout/runs" `
+  -ContentType "application/json" `
+  -Body (@{
+    supplier_id = $supplier.supplier_id
+    max_pages = 3
+    max_offers = 100
+    market_request_budget = 20
+  } | ConvertTo-Json)
+```
+
+运行 envelope 仍在内存中，服务重启后不能继续轮询旧 `run_id`；已经采集的店铺快照保留在
+独立 SQLite 中。市场预算耗尽只会把后续商品标为 `NOT_RUN_BUDGET`，不会从结果删除。
 
 ## 分类目录维护
 

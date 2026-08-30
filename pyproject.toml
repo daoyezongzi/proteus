@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proteus-opportunity-finder"
-version = "0.2.5"
+version = "0.2.6"
 description = "Evidence-first automotive parts opportunity finder"
 requires-python = ">=3.12"
 dependencies = [
@@ -47,10 +47,12 @@ where = ["src"]
   "contracts/v0_2_4_northway_mvp_result.schema.json",
   "contracts/v0_2_5_category_definition.schema.json",
   "contracts/v0_2_5_northway_mvp_result.schema.json",
+  "contracts/v0_2_6_supplier_inventory_snapshot.schema.json",
+  "contracts/v0_2_6_supplier_scout_result.schema.json",
 ]
 
 [tool.setuptools.package-data]
-proteus = ["data/*.json"]
+proteus = ["data/*.json", "data/*.mjs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,5 +1,40 @@
 # Proteus Development Log
 
+## 2026-08-30 — V0.2.6 bounded supplier-first store scout
+
+- Added “供应商反向选品” as a separate navigation workspace. One run fixes one saved 1688
+  supplier, captures an immutable bounded store snapshot, preserves every normalized observed
+  offer, matches the current ACTIVE leaf catalog, then spends the separate market budget only
+  on offers with a conservatively resolved product family.
+- Added strict source semantics and contracts. Duplicate/tracked pasted URLs normalize to one
+  HTTPS 1688 source; a distinct second source, credentials, HTTP, or foreign host is rejected.
+  Page/offer bounds produce `PARTIAL`; login, risk control, timeout and parse failure remain
+  distinct; `EMPTY` requires an explicit zero count, no next page and complete pagination.
+- Added the version-gated local store bridge for `1688-cli` 0.1.47. It reuses the local
+  persistent browser profile without reading/exporting cookies and only extracts offer links,
+  titles, visible price/MOQ, supplier identity and pagination markers. It imports no inquiry,
+  messaging, favorite, cart, checkout or order command and never solves CAPTCHA. Headed mode
+  only waits for the operator to clear a challenge manually.
+- Added `%LOCALAPPDATA%/Proteus/supplier_scout.sqlite3` for saved sources, inspection audits and
+  immutable inventory snapshots. It is independent from the category catalog. Run submission freezes selected
+  category versions; unmatched, ambiguous, supplier-mismatched, identity-incomplete and
+  budget-not-run offers stay visible in full and compact exports.
+- Reused exact eBay demand, sellable-family resolution, Amazon query packs and family
+  aggregation. An explicit zero-demand result stops Amazon spending. Complete Amazon evidence
+  grades 0–5 clusters A, 6–8 A-, and 9+ rejected; incomplete low counts remain `PENDING`.
+  These grades remain separate from supplier quality, price and purchase eligibility; the
+  independent price stage can reject or hold back the final shortlist without rewriting A/A-.
+- The supplied example URL normalized to
+  `https://shop3w093345o1043.1688.com/page/offerlist.htm`. A live headless read-only canary
+  returned `RISK_CONTROL`, one attempted/zero completed pages, zero observed offers and
+  `inventory_complete=false` with `MANUAL_CHALLENGE_REQUIRED`; the authenticated local profile
+  remained logged in afterward. No empty-inventory claim was emitted.
+- Browser replay verified two-way navigation, read-only `PARTIAL` inspection, four observed
+  offers with A=1, A-=1, unmatched=1 and identity-incomplete=1, evidence expansion, filters,
+  both JSON exports, a 390px no-overflow layout and zero console warnings/errors. Both export
+  endpoints returned HTTP 200 with attachment filenames. All 377 tests passed; the known
+  warning is Starlette's `TestClient` httpx deprecation notice.
+
 ## 2026-08-29 — V0.2.5 two-level category catalog and Amazon competition grades
 
 - Replaced the frontend/runtime hard-coded choice list with a local single-user SQLite catalog.

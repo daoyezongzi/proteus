@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#faf9f5">
+  <title>Proteus — 供应商反向选品</title>
+  <link rel="stylesheet" href="northway.css">
+</head>
+<body class="supplier-scout-page">
+  <a class="skip-link" href="#mainContent">跳到主要内容</a>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Proteus 导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span class="brand__titles">
+          <span class="brand__title">Proteus</span>
+          <span class="brand__subtitle">Northway 选品工作台</span>
+        </span>
+      </div>
+
+      <div class="side-nav-group">
+        <p class="side-label">工作台</p>
+        <nav class="side-nav" aria-label="工作台视图">
+          <a class="side-nav__item" href="index.html">
+            <span class="nav-icon nav-icon--scan" aria-hidden="true"></span>
+            <span>产品族初筛</span>
+          </a>
+          <a class="side-nav__item side-nav__item--active" href="supplier-scout.html" aria-current="page">
+            <span class="nav-icon nav-icon--supplier" aria-hidden="true"></span>
+            <span>供应商反向选品</span>
+          </a>
+          <a class="side-nav__item" href="#boundary">
+            <span class="nav-icon nav-icon--method" aria-hidden="true"></span>
+            <span>读取边界</span>
+          </a>
+        </nav>
+      </div>
+
+      <div class="sidebar__context">
+        <p class="side-label">当前档位</p>
+        <div class="profile-card">
+          <span class="profile-card__mark" aria-hidden="true">S</span>
+          <span>
+            <strong>Supplier Scout V0.2.6</strong>
+            <small>固定供应商 · 有界读取</small>
+          </span>
+        </div>
+      </div>
+
+      <div class="sidebar__foot">
+        <div class="system-status" id="systemStatus" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="system-status__label">正在检查本地服务…</span>
+        </div>
+        <p class="sidebar__note">只读采集 · 不自动处理滑块</p>
+      </div>
+    </aside>
+
+    <div class="main-shell">
+      <header class="app-bar">
+        <div class="app-bar__crumb" aria-label="当前位置">
+          <span>Proteus</span><span class="app-bar__slash" aria-hidden="true">/</span>
+          <strong>供应商反向选品</strong>
+        </div>
+        <span class="app-bar__spacer"></span>
+        <div class="app-bar__meta">SUPPLIER SCOUT <span>·</span> V0.2.6</div>
+        <div class="app-bar__exports" aria-label="导出结果">
+          <a class="button button--quiet" id="compactExport" href="#" hidden>
+            <span>精简 JSON</span><span class="button__arrow" aria-hidden="true">↓</span>
+          </a>
+          <a class="button button--quiet" id="fullExport" href="#" hidden>
+            <span>完整证据</span><span class="button__arrow" aria-hidden="true">↓</span>
+          </a>
+        </div>
+        <button class="button button--primary" id="runButton" type="submit" form="runForm" disabled>
+          <span class="button__label">读取并筛选</span><span class="button__arrow" aria-hidden="true">↗</span>
+        </button>
+      </header>
+
+      <main class="page" id="mainContent">
+        <section class="hero supplier-hero" aria-labelledby="pageTitle">
+          <div class="hero__copy">
+            <p class="eyebrow">01 / Supplier-first store screen</p>
+            <h1 id="pageTitle">先固定一家店，<br><em>再从货盘里找机会</em></h1>
+            <p class="hero__lede">读取一家 1688 供应商在边界内可见的商品，先匹配当前低责任零件目录，再把市场请求留给身份足够明确的产品家族。</p>
+          </div>
+          <div class="hero__principles" aria-label="筛选原则">
+            <div class="principle"><span class="principle__index">01</span><span class="principle__label">供应商固定</span><small>每个商品都回绑同一店铺身份</small></div>
+            <div class="principle"><span class="principle__index">02</span><span class="principle__label">读取有边界</span><small>页数与商品上限单独留证</small></div>
+            <div class="principle"><span class="principle__index">03</span><span class="principle__label">竞争另分级</span><small>A / A- 只描述 Amazon 产品族</small></div>
+          </div>
+        </section>
+
+        <section class="supplier-workspace" aria-label="供应商与筛选设置">
+          <section class="surface supplier-source-card" aria-labelledby="supplierTitle">
+            <div class="section-head section-head--tight">
+              <div><p class="eyebrow">供应商来源</p><h2 id="supplierTitle">固定一家 1688 店铺</h2></div>
+              <span class="section-tag">READ ONLY</span>
+            </div>
+
+            <div class="supplier-picker">
+              <label class="field field--wide">
+                <span>已保存供应商</span>
+                <select id="supplier_id" aria-label="选择已保存供应商"><option value="">尚未保存供应商</option></select>
+                <small>单次运行只读取这里选中的一家店</small>
+              </label>
+              <div class="supplier-divider"><span>或新增</span></div>
+              <label class="field">
+                <span>显示名称</span>
+                <input id="supplier_label" type="text" maxlength="200" placeholder="例如：某某汽配厂">
+                <small>仅保存在本机，便于以后复用</small>
+              </label>
+              <label class="field field--wide">
+                <span>1688 店铺商品列表 URL</span>
+                <input id="supplier_target" type="url" maxlength="6000" placeholder="https://xxxx.1688.com/page/offerlist.htm">
+                <small>会移除 spm 等跟踪参数；不同店铺的多个 URL 会被拒绝</small>
+              </label>
+              <div class="supplier-actions">
+                <button class="button button--quiet" id="inspectButton" type="button">只读检查</button>
+                <button class="button button--secondary" id="saveSupplierButton" type="button">保存供应商</button>
+              </div>
+              <div class="source-verdict" id="sourceVerdict" role="status" aria-live="polite" hidden></div>
+            </div>
+          </section>
+
+          <section class="surface supplier-bounds-card" aria-labelledby="boundsTitle">
+            <div class="section-head section-head--tight">
+              <div><p class="eyebrow">运行边界</p><h2 id="boundsTitle">把完整度说清楚</h2></div>
+              <span class="section-tag">BOUNDED</span>
+            </div>
+            <form id="runForm" class="scan-form supplier-scan-form">
+              <label class="field"><span>店铺页数上限</span><input id="max_pages" type="number" min="1" max="20" value="3" required><small>到达上限会标记 PARTIAL</small></label>
+              <label class="field"><span>商品观察上限</span><input id="max_offers" type="number" min="1" max="1000" value="100" required><small>未观察的商品不会被判为淘汰</small></label>
+              <label class="field"><span>市场请求预算</span><input id="market_request_budget" type="number" min="0" max="1000" value="20" required><small>eBay 与每条 Amazon 查询各计一次</small></label>
+              <label class="field"><span>每家族 Amazon 查询</span><input id="max_amazon_queries_per_family" type="number" min="1" max="5" value="3" required><small>预算不足的商品保留为未运行</small></label>
+              <label class="field"><span>A 级竞争上限</span><input id="grade_a_max_competitors" type="number" min="0" value="5" required><small>完整证据下产品簇 ≤ 5</small></label>
+              <label class="field"><span>A- 级竞争上限</span><input id="grade_a_minus_max_competitors" type="number" min="1" value="8" required><small>6–8 为 A-，9+ 淘汰</small></label>
+              <label class="field"><span>平替最低价高于</span><span class="input-with-prefix"><span aria-hidden="true">$</span><input id="min_family_price_usd" type="number" min="0" step="0.01" value="20" required></span><small>独立于供应商售价</small></label>
+              <label class="field"><span>最低可见 eBay 销量</span><input id="min_observed_ebay_demand" type="number" min="0" value="1" required><small>是可见下界，不冒充 365 天销量</small></label>
+              <label class="field field--toggle field--wide">
+                <span>遇到滑块时打开窗口等待</span>
+                <span class="toggle-control"><input id="headed" type="checkbox"><strong id="headedLabel">不打开</strong></span>
+                <small>启用后仍由你亲自完成验证；系统不会识别、拖动或绕过 CAPTCHA。</small>
+              </label>
+              <p class="form-status field--wide" id="formStatus" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+        </section>
+
+        <section class="surface category-scope-card" aria-labelledby="scopeTitle">
+          <div class="section-head section-head--tight">
+            <div><p class="eyebrow">目录范围</p><h2 id="scopeTitle">用当前已启用小类匹配店铺商品</h2></div>
+            <button class="text-button" id="toggleCategories" type="button">全部取消</button>
+          </div>
+          <div class="supplier-category-grid" id="categoryGrid"><p class="scope-loading">正在加载分类目录…</p></div>
+          <div class="scope-footer"><span>未匹配、匹配冲突和身份不完整都会保留在结果里，不消耗市场请求。</span></div>
+        </section>
+
+        <section class="boundary-note supplier-boundary" id="boundary">
+          <span class="boundary-note__mark" aria-hidden="true">i</span>
+          <p><strong>读取完整度和选品等级是两件事。</strong>“观察到 60 件、仍有下一页”只能标记为部分店铺快照；某个已观察产品的 A / A- 只说明其 Amazon 平替产品族竞争数量，不代表供应商合格或可以采购。</p>
+        </section>
+
+        <section class="results-section" id="results" aria-labelledby="resultTitle">
+          <div class="result-heading">
+            <div><p class="eyebrow">02 / Observed inventory</p><h2 id="resultTitle">店铺筛选结果</h2><p id="resultSubtitle">先读取供应商货盘；每一件可见商品都会留下去向。</p></div>
+            <div class="result-heading__mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          </div>
+
+          <div class="empty-state" id="emptyState">
+            <div class="empty-state__diagram" aria-hidden="true"><span></span><span></span><span></span><i></i></div>
+            <h3>还没有店铺快照</h3>
+            <p>先保存并选择一家供应商，再点击右上角「读取并筛选」。若 1688 要求登录或滑块，页面会保留真实阻断状态。</p>
+          </div>
+
+          <div id="resultContent" hidden>
+            <section class="run-summary" id="runSummary" aria-label="运行摘要"></section>
+            <div class="run-notice" id="runNotice" role="status" aria-live="polite" hidden></div>
+            <div class="queue-heading supplier-queue-heading">
+              <div><h3>已观察商品</h3><p>默认显示全部；被预算跳过的商品仍在列表内。</p></div>
+              <nav class="result-filters" id="resultFilters" aria-label="结果筛选"></nav>
+            </div>
+            <p class="filter-empty" id="filterEmpty" hidden>当前筛选下没有商品。</p>
+            <ol class="candidate-list" id="candidateList"></ol>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="supplier-scout.js" defer></script>
+</body>
+</html>

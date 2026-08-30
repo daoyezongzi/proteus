@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proteus.local/contracts/v0_2_6_supplier_scout_result.schema.json",
+  "title": "Proteus V0.2.6 supplier-first store scout result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "profile",
+    "status",
+    "created_at",
+    "inventory",
+    "policy",
+    "market_budget",
+    "summary",
+    "reports"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.2.6"},
+    "profile": {"const": "supplier-first-store-scout"},
+    "status": {"enum": ["COMPLETED", "PARTIAL_SOURCE", "SOURCE_BLOCKED"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "inventory": {
+      "type": "object",
+      "required": ["acquisition_status", "inventory_complete", "observed_offer_count"],
+      "properties": {
+        "acquisition_status": {"type": "string"},
+        "inventory_complete": {"type": "boolean"},
+        "observed_offer_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "policy": {"type": "object"},
+    "market_budget": {
+      "type": "object",
+      "required": ["limit", "used", "remaining"],
+      "properties": {
+        "limit": {"type": "integer", "minimum": 0},
+        "used": {"type": "integer", "minimum": 0},
+        "remaining": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "summary": {"type": "object"},
+    "reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "offer",
+          "category_match",
+          "competition_grade",
+          "market_status",
+          "decision",
+          "evidence_gaps",
+          "provider_attempts"
+        ],
+        "properties": {
+          "offer": {"type": "object"},
+          "category_match": {"type": "object"},
+          "competition_grade": {"enum": ["A", "A-", "PENDING", "REJECTED", null]},
+          "market_status": {"type": "string"},
+          "decision": {"enum": ["MARKET_SHORTLIST_CANDIDATE", "REVIEW_REQUIRED", "REJECTED"]},
+          "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+          "provider_attempts": {"type": "array", "items": {"type": "object"}}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -9,6 +9,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
 from threading import Lock
 from typing import Any, Literal, Protocol
 from uuid import uuid4
@@ -34,6 +35,10 @@ from proteus.credentials import (
 )
 from proteus.normalization import normalize_part_number
 from proteus.northway_mvp import compact_northway_result, northway_mvp_policy
+from proteus.providers.local_1688_store import (
+    collect_1688_store_offers,
+    normalize_1688_supplier_store_target,
+)
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
     LOCAL_1688_CLI_ID,
@@ -44,6 +49,12 @@ from proteus.providers.adapters import (
 )
 from proteus.providers.base import Capability, DEFAULT_DISCOVERY_KEYWORD
 from proteus.screening import evaluate_strict_market_screening, screening_policy
+from proteus.supplier_scout import (
+    SupplierScoutStore,
+    compact_supplier_scout_result,
+    run_supplier_scout,
+    supplier_scout_policy,
+)
 from proteus.automatic_mvp import automatic_mvp_policy
 
 
@@ -69,6 +80,18 @@ class FrontendService(Protocol):
     def get_northway_run(self, run_id: str) -> dict | None: ...
 
     def northway_policy(self) -> dict: ...
+
+    def supplier_scout_policy(self) -> dict: ...
+
+    def list_supplier_scout_suppliers(self) -> dict: ...
+
+    def inspect_supplier_scout_supplier(self, request: dict) -> dict: ...
+
+    def add_supplier_scout_supplier(self, request: dict) -> dict: ...
+
+    def submit_supplier_scout_run(self, request: dict) -> dict: ...
+
+    def get_supplier_scout_run(self, run_id: str) -> dict | None: ...
 
 
 class ApiRunRequest(BaseModel):
@@ -142,6 +165,82 @@ class NorthwayMvpRunRequest(BaseModel):
             raise ValueError(
                 "grade_a_minus_max_competitors must be greater than "
                 "grade_a_max_competitors"
+            )
+        return self
+
+
+class SupplierScoutInspectRequest(BaseModel):
+    """One small read-only canary for a supplier store target."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: str = Field(min_length=10, max_length=6000)
+    max_pages: int = Field(default=1, ge=1, le=3)
+    max_offers: int = Field(default=20, ge=1, le=100)
+    headed: bool = False
+    challenge_timeout_seconds: int = Field(default=180, ge=10, le=600)
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        normalize_1688_supplier_store_target(value)
+        return value.strip()
+
+
+class SupplierScoutSupplierRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=200)
+    target: str = Field(min_length=10, max_length=6000)
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("label must not be blank")
+        return value.strip()
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        normalize_1688_supplier_store_target(value)
+        return value.strip()
+
+
+class SupplierScoutRunRequest(BaseModel):
+    """One supplier source, one immutable inventory snapshot, bounded market checks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_id: str = Field(min_length=5, max_length=100, pattern=r"^sup_[a-zA-Z0-9_-]+$")
+    selected_category_ids: list[str] = Field(default_factory=list, max_length=100)
+    max_pages: int = Field(default=3, ge=1, le=20)
+    max_offers: int = Field(default=100, ge=1, le=1000)
+    headed: bool = False
+    challenge_timeout_seconds: int = Field(default=180, ge=10, le=600)
+    market_request_budget: int = Field(default=20, ge=0, le=1000)
+    max_amazon_queries_per_family: int = Field(default=3, ge=1, le=5)
+    grade_a_max_competitors: int = Field(default=5, ge=0, le=100000)
+    grade_a_minus_max_competitors: int = Field(default=8, ge=1, le=100000)
+    min_family_price_usd: float = Field(default=20.0, ge=0, le=1000000)
+    min_observed_ebay_demand: int = Field(default=1, ge=0, le=1000000)
+
+    @field_validator("selected_category_ids")
+    @classmethod
+    def validate_categories(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_]{2,79}", value.strip()):
+                raise ValueError("selected_category_ids must contain category identifiers")
+            if value.strip() not in cleaned:
+                cleaned.append(value.strip())
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_grade_order(self) -> "SupplierScoutRunRequest":
+        if self.grade_a_minus_max_competitors <= self.grade_a_max_competitors:
+            raise ValueError(
+                "grade_a_minus_max_competitors must be greater than grade_a_max_competitors"
             )
         return self
 
@@ -372,9 +471,13 @@ class InMemoryRunManager:
                 else 0,
                 "last_query": None,
                 "provider": None,
-                "budget_used": result.get("request_budget", {}).get("used", 0)
-                if isinstance(result.get("request_budget"), Mapping)
-                else 0,
+                "budget_used": (
+                    result.get("request_budget", {}).get("used", 0)
+                    if isinstance(result.get("request_budget"), Mapping)
+                    else result.get("market_budget", {}).get("used", 0)
+                    if isinstance(result.get("market_budget"), Mapping)
+                    else 0
+                ),
                 "updated_at": _utc_now(),
             }
 
@@ -385,12 +488,26 @@ class InMemoryRunManager:
 
 
 class DefaultFrontendService:
-    def __init__(self, *, category_catalog: CategoryCatalog | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        category_catalog: CategoryCatalog | None = None,
+        supplier_store: SupplierScoutStore | None = None,
+        supplier_store_collector: Callable[..., Mapping[str, Any]] | None = None,
+    ) -> None:
         self._category_catalog = category_catalog or CategoryCatalog()
+        self._supplier_store = supplier_store or SupplierScoutStore()
+        self._supplier_store_collector = (
+            supplier_store_collector or collect_1688_store_offers
+        )
         self._manager = InMemoryRunManager(self._run)
         self._mvp_manager = InMemoryRunManager(self._run_mvp)
         self._northway_manager = InMemoryRunManager(
             self._run_northway,
+            supports_progress=True,
+        )
+        self._supplier_scout_manager = InMemoryRunManager(
+            self._run_supplier_scout,
             supports_progress=True,
         )
 
@@ -531,6 +648,113 @@ class DefaultFrontendService:
     def get_northway_run(self, run_id: str) -> dict | None:
         return self._northway_manager.get(run_id)
 
+    def supplier_scout_policy(self) -> dict:
+        definitions = self._category_catalog.active_runtime_definitions()
+        return supplier_scout_policy(
+            definitions,
+            category_catalog=self._category_catalog.public_active_catalog(),
+        )
+
+    def list_supplier_scout_suppliers(self) -> dict:
+        return self._supplier_store.list_suppliers()
+
+    def inspect_supplier_scout_supplier(self, request: dict) -> dict:
+        outcome = dict(
+            self._supplier_store_collector(
+                request["target"],
+                max_pages=request["max_pages"],
+                max_offers=request["max_offers"],
+                headed=request["headed"],
+                challenge_timeout_seconds=request["challenge_timeout_seconds"],
+            )
+        )
+        normalized = normalize_1688_supplier_store_target(request["target"])
+        supplier_id = next(
+            (
+                source["supplier_id"]
+                for source in self._supplier_store.list_suppliers()["suppliers"]
+                if source["canonical_url"] == normalized["canonical_url"]
+            ),
+            None,
+        )
+        outcome["inspection"] = self._supplier_store.save_inspection(
+            request["target"], outcome, supplier_id=supplier_id
+        )
+        return outcome
+
+    def add_supplier_scout_supplier(self, request: dict) -> dict:
+        return self._supplier_store.add_supplier(request["label"], request["target"])
+
+    def _run_supplier_scout(
+        self,
+        request: dict,
+        *,
+        progress: Callable[[Mapping[str, Any]], None] | None = None,
+    ) -> Mapping[str, Any]:
+        source = request["_supplier_source"]
+        definitions = request["_category_definitions"]
+        if progress is not None:
+            progress(
+                {
+                    "phase": "supplier_inventory",
+                    "current": 0,
+                    "total": 0,
+                    "last_query": source["canonical_url"],
+                    "provider": "LOCAL_1688_STORE_BRIDGE",
+                    "budget_used": 0,
+                }
+            )
+        snapshot = dict(
+            self._supplier_store_collector(
+                source["canonical_url"],
+                max_pages=request["max_pages"],
+                max_offers=request["max_offers"],
+                headed=request["headed"],
+                challenge_timeout_seconds=request["challenge_timeout_seconds"],
+            )
+        )
+        snapshot["supplier_id"] = source["supplier_id"]
+        saved = self._supplier_store.save_snapshot(source["supplier_id"], snapshot)
+        snapshot.update(saved)
+        identity = snapshot.get("supplier")
+        if isinstance(identity, Mapping):
+            self._supplier_store.update_supplier_identity(source["supplier_id"], identity)
+        return run_supplier_scout(
+            snapshot,
+            category_definitions=definitions,
+            selected_category_ids=request["selected_category_ids"],
+            serpapi_key=resolve_secret(SERPAPI_API_KEY),
+            market_request_budget=request["market_request_budget"],
+            max_amazon_queries_per_family=request["max_amazon_queries_per_family"],
+            grade_a_max_competitors=request["grade_a_max_competitors"],
+            grade_a_minus_max_competitors=request["grade_a_minus_max_competitors"],
+            min_family_price_usd=request["min_family_price_usd"],
+            min_observed_ebay_demand=request["min_observed_ebay_demand"],
+            progress_callback=progress,
+        )
+
+    def submit_supplier_scout_run(self, request: dict) -> dict:
+        source = self._supplier_store.get_supplier(str(request.get("supplier_id") or ""))
+        if source["status"] != "ACTIVE":
+            raise ValueError("supplier source is archived")
+        definitions = self._category_catalog.active_runtime_definitions()
+        selected = list(request.get("selected_category_ids") or definitions.keys())
+        unknown = sorted(set(selected) - set(definitions))
+        if unknown:
+            raise CategoryNotFoundError(
+                "selected category is no longer active: " + ", ".join(unknown)
+            )
+        snapshot = dict(request)
+        snapshot["selected_category_ids"] = selected
+        snapshot["_supplier_source"] = source
+        snapshot["_category_definitions"] = {
+            key: definitions[key] for key in selected
+        }
+        return self._supplier_scout_manager.submit(snapshot)
+
+    def get_supplier_scout_run(self, run_id: str) -> dict | None:
+        return self._supplier_scout_manager.get(run_id)
+
 
 def create_app(*, service: FrontendService | None = None) -> FastAPI:
     active_service = service or DefaultFrontendService()
@@ -548,6 +772,7 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
             "version": __version__,
             "profile": "northway-product-family-mvp",
             "compatibility_profiles": [
+                "supplier-first-store-scout",
                 "automatic-mvp",
                 "strict-market-screening",
                 "two-account-managed",
@@ -655,6 +880,119 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="run is not complete")
         return JSONResponse(
             compact_northway_result(value["result"]),
+            headers={
+                "Content-Disposition": f'attachment; filename="proteus-{run_id}-compact.json"'
+            },
+        )
+
+    def resolved_supplier_scout_policy() -> dict:
+        policy_getter = getattr(active_service, "supplier_scout_policy", None)
+        if callable(policy_getter):
+            return dict(policy_getter())
+        return supplier_scout_policy()
+
+    @app.get("/api/v1/supplier-scout/policy")
+    def get_supplier_scout_policy() -> dict:
+        return resolved_supplier_scout_policy()
+
+    @app.get("/api/v1/supplier-scout/suppliers")
+    def list_supplier_scout_suppliers() -> dict:
+        getter = getattr(active_service, "list_supplier_scout_suppliers", None)
+        if not callable(getter):
+            return {"suppliers": []}
+        return dict(getter())
+
+    @app.post("/api/v1/supplier-scout/suppliers/inspect")
+    def inspect_supplier_scout_supplier(
+        request: SupplierScoutInspectRequest,
+    ) -> dict:
+        inspector = getattr(active_service, "inspect_supplier_scout_supplier", None)
+        if not callable(inspector):
+            raise HTTPException(status_code=501, detail="supplier inspection is unavailable")
+        try:
+            return dict(inspector(request.model_dump()))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+
+    @app.post(
+        "/api/v1/supplier-scout/suppliers",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def add_supplier_scout_supplier(
+        request: SupplierScoutSupplierRequest,
+    ) -> dict:
+        creator = getattr(active_service, "add_supplier_scout_supplier", None)
+        if not callable(creator):
+            raise HTTPException(status_code=501, detail="supplier storage is unavailable")
+        try:
+            return dict(creator(request.model_dump()))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+
+    @app.post(
+        "/api/v1/supplier-scout/runs",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_supplier_scout_run(request: SupplierScoutRunRequest) -> dict:
+        policy_categories = resolved_supplier_scout_policy().get("categories", {})
+        selected = request.selected_category_ids or list(policy_categories)
+        unknown = sorted(set(selected) - set(policy_categories))
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="selected_category_ids must contain active leaf categories",
+            )
+        submitter = getattr(active_service, "submit_supplier_scout_run", None)
+        if not callable(submitter):
+            raise HTTPException(status_code=501, detail="supplier scout runs are unavailable")
+        payload = request.model_dump()
+        payload["selected_category_ids"] = selected
+        try:
+            return dict(submitter(payload))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="supplier not found") from exc
+        except (CategoryNotFoundError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+
+    @app.get("/api/v1/supplier-scout/runs/{run_id}")
+    def get_supplier_scout_run(run_id: str) -> dict:
+        getter = getattr(active_service, "get_supplier_scout_run", None)
+        value = getter(run_id) if callable(getter) else None
+        if value is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return dict(value)
+
+    def completed_supplier_scout_result(run_id: str) -> Mapping[str, Any]:
+        getter = getattr(active_service, "get_supplier_scout_run", None)
+        value = getter(run_id) if callable(getter) else None
+        if value is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if value.get("status") != "COMPLETED" or not isinstance(value.get("result"), Mapping):
+            raise HTTPException(status_code=409, detail="run is not complete")
+        return value["result"]
+
+    @app.get("/api/v1/supplier-scout/runs/{run_id}/export")
+    def export_supplier_scout_run(run_id: str) -> JSONResponse:
+        return JSONResponse(
+            completed_supplier_scout_result(run_id),
+            headers={
+                "Content-Disposition": f'attachment; filename="proteus-{run_id}.json"'
+            },
+        )
+
+    @app.get("/api/v1/supplier-scout/runs/{run_id}/export/compact")
+    def export_compact_supplier_scout_run(run_id: str) -> JSONResponse:
+        return JSONResponse(
+            compact_supplier_scout_result(completed_supplier_scout_result(run_id)),
             headers={
                 "Content-Disposition": f'attachment; filename="proteus-{run_id}-compact.json"'
             },
