@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proteus.local/contracts/v0_2_9_supplier_inventory_import.schema.json",
+  "title": "Proteus V0.2.9 user or Agent supplier inventory import",
+  "type": "object",
+  "required": ["format", "version", "supplier", "capture", "offers"],
+  "properties": {
+    "format": {"const": "proteus.supplier_inventory"},
+    "version": {"const": 1},
+    "supplier": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 6000,
+          "format": "uri",
+          "pattern": "^https://(?:[^/]+\\.)?1688\\.com/"
+        },
+        "label": {"type": "string", "maxLength": 200},
+        "member_id": {"type": "string", "minLength": 1, "maxLength": 200}
+      },
+      "additionalProperties": true
+    },
+    "capture": {
+      "type": "object",
+      "required": [
+        "captured_at",
+        "acquisition_status",
+        "inventory_complete",
+        "pages_attempted",
+        "pages_completed",
+        "has_next_page"
+      ],
+      "properties": {
+        "collector": {"type": "string", "maxLength": 200},
+        "captured_at": {"type": "string", "format": "date-time"},
+        "acquisition_status": {
+          "enum": [
+            "SUCCESS",
+            "EMPTY",
+            "PARTIAL",
+            "AUTH_REQUIRED",
+            "RISK_CONTROL",
+            "TIMEOUT",
+            "PARSER_FAILED",
+            "CLI_ERROR",
+            "NOT_CONFIGURED"
+          ]
+        },
+        "inventory_complete": {"type": "boolean"},
+        "pages_attempted": {"type": "integer", "minimum": 0},
+        "pages_completed": {"type": "integer", "minimum": 0},
+        "has_next_page": {"type": ["boolean", "null"]},
+        "reported_total": {"type": ["integer", "null"], "minimum": 0},
+        "warnings": {"type": "array", "items": {"type": "string", "maxLength": 300}, "maxItems": 100}
+      },
+      "additionalProperties": true
+    },
+    "offers": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": ["offer_id", "title", "offer_url"],
+        "properties": {
+          "offer_id": {"type": "string", "pattern": "^[0-9]{1,30}$"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 500},
+          "offer_url": {
+            "type": "string",
+            "minLength": 30,
+            "maxLength": 2000,
+            "format": "uri",
+            "pattern": "^https://detail\\.1688\\.com/offer/[0-9]+\\.html(?:[?#].*)?$"
+          },
+          "image_url": {"type": "string", "maxLength": 2000},
+          "price_cny": {"type": ["number", "null"], "minimum": 0},
+          "moq": {"type": ["integer", "null"], "minimum": 0},
+          "attributes": {"type": ["object", "array", "null"]},
+          "skus": {"type": ["object", "array", "null"]}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {"properties": {"capture": {"properties": {"inventory_complete": {"const": true}}}}},
+      "then": {
+        "properties": {
+          "capture": {
+            "properties": {
+              "acquisition_status": {"enum": ["SUCCESS", "EMPTY"]},
+              "has_next_page": {"const": false}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"capture": {"properties": {"acquisition_status": {"const": "EMPTY"}}}}},
+      "then": {
+        "properties": {
+          "capture": {
+            "properties": {
+              "inventory_complete": {"const": true},
+              "has_next_page": {"const": false},
+              "reported_total": {"const": 0}
+            }
+          },
+          "offers": {"maxItems": 0}
+        }
+      }
+    }
+  ]
+}

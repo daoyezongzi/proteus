@@ -17,6 +17,14 @@ from proteus.automatic_mvp import automatic_mvp_policy  # noqa: E402
 from proteus.category_catalog import builtin_public_catalog, builtin_runtime_categories  # noqa: E402
 from proteus.northway_mvp import run_northway_mvp  # noqa: E402
 from proteus.providers.local_1688_store import normalize_1688_supplier_target  # noqa: E402
+from proteus.supplier_inventory_import import (  # noqa: E402
+    IMPORT_FORMAT,
+    IMPORT_SCHEMA_NAME,
+    IMPORT_VERSION,
+    MAX_IMPORT_DOCUMENT_BYTES,
+    MAX_IMPORT_OFFERS,
+    normalize_supplier_inventory_import,
+)
 from proteus.supplier_scout import run_supplier_scout, supplier_scout_policy  # noqa: E402
 
 
@@ -158,6 +166,7 @@ EARLY_REVIEW = {
 class StubService:
     def __init__(self) -> None:
         self._runs: dict[str, dict] = {}
+        self._snapshots: dict[str, dict] = {}
         self._n = 0
         self._suppliers = [
             {
@@ -374,10 +383,19 @@ class StubService:
         return self._runs.get(run_id)
 
     def supplier_scout_policy(self) -> dict:
-        return supplier_scout_policy(
+        policy = supplier_scout_policy(
             builtin_runtime_categories(),
             category_catalog=builtin_public_catalog(),
         )
+        policy["inventory_import"] = {
+            "format": IMPORT_FORMAT,
+            "version": IMPORT_VERSION,
+            "schema": IMPORT_SCHEMA_NAME,
+            "max_document_bytes": MAX_IMPORT_DOCUMENT_BYTES,
+            "max_offers": MAX_IMPORT_OFFERS,
+            "primary": True,
+        }
+        return policy
 
     def list_supplier_scout_suppliers(self) -> dict:
         return {"suppliers": list(self._suppliers)}
@@ -423,52 +441,94 @@ class StubService:
         self._suppliers.append(supplier)
         return supplier
 
+    def import_supplier_inventory(
+        self, supplier_id: str, document: dict, filename: str | None = None
+    ) -> dict:
+        selected = next(
+            item for item in self._suppliers if item["supplier_id"] == supplier_id
+        )
+        if selected["status"] != "ACTIVE":
+            raise ValueError("supplier source is archived")
+        snapshot, report = normalize_supplier_inventory_import(
+            document, selected, filename=filename
+        )
+        self._n += 1
+        snapshot_id = f"snap_dev_import_{self._n}"
+        snapshot.update(
+            {
+                "snapshot_id": snapshot_id,
+                "supplier_id": supplier_id,
+                "snapshot_sha256": "dev-" + snapshot_id,
+            }
+        )
+        self._snapshots[snapshot_id] = snapshot
+        return {
+            "snapshot": {
+                key: snapshot.get(key)
+                for key in (
+                    "snapshot_id",
+                    "supplier_id",
+                    "snapshot_sha256",
+                    "retrieved_at",
+                    "acquisition_status",
+                    "inventory_complete",
+                    "pages_attempted",
+                    "pages_completed",
+                    "observed_offer_count",
+                    "available_offer_count",
+                    "has_next_page",
+                    "source_method",
+                    "provider",
+                    "warnings",
+                )
+            },
+            "import": report,
+            "can_run": report["can_run"],
+        }
+
+    def latest_supplier_snapshot(self, supplier_id: str) -> dict | None:
+        snapshots = [
+            snapshot
+            for snapshot in self._snapshots.values()
+            if snapshot.get("supplier_id") == supplier_id
+        ]
+        if not snapshots:
+            return None
+        snapshot = snapshots[-1]
+        return {
+            key: snapshot.get(key)
+            for key in (
+                "snapshot_id",
+                "supplier_id",
+                "snapshot_sha256",
+                "retrieved_at",
+                "acquisition_status",
+                "inventory_complete",
+                "pages_attempted",
+                "pages_completed",
+                "observed_offer_count",
+                "available_offer_count",
+                "has_next_page",
+                "source_method",
+                "provider",
+                "import",
+                "warnings",
+                "diagnostics",
+            )
+        }
+
     def submit_supplier_scout_run(self, request: dict) -> dict:
         self._n += 1
         run_id = f"supplier-dev-{self._n}"
         selected_supplier = next(
             item for item in self._suppliers if item["supplier_id"] == request["supplier_id"]
         )
-        supplier = {
-            "member_id": selected_supplier.get("member_id") or "dev-supplier",
-            "name": selected_supplier["label"],
-            "shop_host": selected_supplier["shop_host"],
-        }
-
-        def store_offer(offer_id: str, title: str) -> dict:
-            return {
-                "offer_id": offer_id,
-                "title": title,
-                "offer_url": f"https://detail.1688.com/offer/{offer_id}.html",
-                "price_cny": 18.5,
-                "moq": 20,
-                "supplier": dict(supplier),
-            }
-
-        inventory = {
-            "schema_version": "0.2.6",
-            "snapshot_id": "snap_dev_replay",
-            "supplier_id": selected_supplier["supplier_id"],
-            "provider": "DEV_1688_STORE_REPLAY",
-            "source_method": "TEST_FIXTURE",
-            "canonical_url": selected_supplier["canonical_url"],
-            "supplier": supplier,
-            "retrieved_at": "2026-08-30T00:00:00Z",
-            "acquisition_status": "PARTIAL",
-            "pages_attempted": request["max_pages"],
-            "pages_completed": min(request["max_pages"], 2),
-            "observed_offer_count": 4,
-            "available_offer_count": 86,
-            "has_next_page": True,
-            "inventory_complete": False,
-            "warnings": ["DEV_REPLAY", "PAGE_BOUND_REACHED"],
-            "offers": [
-                store_offer("628196518518", "2007-2013 Chevrolet Silverado 雾灯框 25778388"),
-                store_offer("628196518519", "2008-2013 Cadillac CTS 雾灯框 25778389"),
-                store_offer("628196518520", "丰田 RAV4 雾灯框 无明确料号"),
-                store_offer("628196518521", "通用车载收纳盒"),
-            ],
-        }
+        snapshot_id = request.get("inventory_snapshot_id")
+        if not snapshot_id or snapshot_id not in self._snapshots:
+            raise ValueError("inventory_snapshot_id is required; import JSON first")
+        inventory = dict(self._snapshots[snapshot_id])
+        if inventory.get("supplier_id") != selected_supplier["supplier_id"]:
+            raise ValueError("inventory snapshot belongs to a different supplier")
 
         def ebay_demand(raw_part_number: str, **_kwargs):
             return {

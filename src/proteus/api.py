@@ -1,4 +1,4 @@
-"""Loopback-only HTTP surface reserved for a future Proteus frontend."""
+"""Loopback-only HTTP surface for the Proteus frontend and local Agent tools."""
 
 from __future__ import annotations
 
@@ -36,10 +36,7 @@ from proteus.credentials import (
 )
 from proteus.normalization import normalize_part_number
 from proteus.northway_mvp import compact_northway_result, northway_mvp_policy
-from proteus.providers.local_1688_store import (
-    collect_1688_store_offers,
-    normalize_1688_supplier_store_target,
-)
+from proteus.providers.local_1688_store import normalize_1688_supplier_store_target
 from proteus.providers.adapters import (
     HIOBUY_1688_ID,
     LOCAL_1688_CLI_ID,
@@ -57,12 +54,20 @@ from proteus.supplier_scout import (
     supplier_scout_policy,
 )
 from proteus.supplier_capture import (
-    CAPTURE_PROTOCOL_VERSION,
     CaptureAuthorizationError,
     CaptureConflictError,
     CaptureNotFoundError,
     SupplierCaptureManager,
     supplier_collector_profile as load_supplier_collector_profile,
+)
+from proteus.supplier_inventory_import import (
+    IMPORT_FORMAT,
+    IMPORT_SCHEMA_NAME,
+    IMPORT_VERSION,
+    MAX_IMPORT_DOCUMENT_BYTES,
+    MAX_IMPORT_OFFERS,
+    SupplierInventoryImportError,
+    normalize_supplier_inventory_import,
 )
 from proteus.automatic_mvp import automatic_mvp_policy
 
@@ -99,6 +104,10 @@ class FrontendService(Protocol):
     def add_supplier_scout_supplier(self, request: dict) -> dict: ...
 
     def latest_supplier_snapshot(self, supplier_id: str) -> dict | None: ...
+
+    def import_supplier_inventory(
+        self, supplier_id: str, document: Mapping[str, Any], filename: str | None = None
+    ) -> dict: ...
 
     def create_supplier_capture(self, request: dict) -> dict: ...
 
@@ -236,6 +245,25 @@ class SupplierScoutSupplierRequest(BaseModel):
     def validate_target(cls, value: str) -> str:
         normalize_1688_supplier_store_target(value)
         return value.strip()
+
+
+class SupplierInventoryImportRequest(BaseModel):
+    """User/Agent-produced supplier inventory document to seal locally."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str = Field(
+        default="supplier-inventory.json", min_length=1, max_length=255
+    )
+    document: dict[str, Any]
+
+    @field_validator("filename")
+    @classmethod
+    def validate_filename(cls, value: str) -> str:
+        clean = Path(value.strip()).name
+        if not clean or clean in {".", ".."}:
+            raise ValueError("filename must contain a file name")
+        return clean[:255]
 
 
 class SupplierCaptureCreateRequest(BaseModel):
@@ -481,8 +509,7 @@ class SupplierScoutRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     supplier_id: str = Field(min_length=5, max_length=100, pattern=r"^sup_[a-zA-Z0-9_-]+$")
-    inventory_snapshot_id: str | None = Field(
-        default=None,
+    inventory_snapshot_id: str = Field(
         min_length=6,
         max_length=100,
         pattern=r"^snap_[a-zA-Z0-9_-]+$",
@@ -512,6 +539,10 @@ class SupplierScoutRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_grade_order(self) -> "SupplierScoutRunRequest":
+        if not self.inventory_snapshot_id:
+            raise ValueError(
+                "inventory_snapshot_id is required; import a supplier inventory JSON file first"
+            )
         if self.grade_a_minus_max_competitors <= self.grade_a_max_competitors:
             raise ValueError(
                 "grade_a_minus_max_competitors must be greater than grade_a_max_competitors"
@@ -530,7 +561,8 @@ def _validate_supplier_snapshot_for_run(snapshot: Mapping[str, Any]) -> None:
     )
     if not usable:
         raise ValueError(
-            "inventory snapshot is not usable for screening; capture visible offers first"
+            "inventory snapshot is not usable for screening; import a complete "
+            "or partial JSON file with valid offers first"
         )
 
 
@@ -786,9 +818,10 @@ class DefaultFrontendService:
     ) -> None:
         self._category_catalog = category_catalog or CategoryCatalog()
         self._supplier_store = supplier_store or SupplierScoutStore()
-        self._supplier_store_collector = (
-            supplier_store_collector or collect_1688_store_offers
-        )
+        # Live store acquisition is intentionally no longer the product path.
+        # Keep an explicitly injected collector only for legacy inspection tests
+        # and compatibility callers; new runs require an imported snapshot.
+        self._supplier_store_collector = supplier_store_collector
         self._supplier_capture_manager = SupplierCaptureManager(self._supplier_store)
         self._manager = InMemoryRunManager(self._run)
         self._mvp_manager = InMemoryRunManager(self._run_mvp)
@@ -944,19 +977,13 @@ class DefaultFrontendService:
             definitions,
             category_catalog=self._category_catalog.public_active_catalog(),
         )
-        extension_relative_path = Path("browser-extension") / "supplier-collector"
-        extension_absolute_path = (
-            Path(__file__).resolve().parents[2] / extension_relative_path
-        ).resolve()
-        policy["edge_collector"] = {
-            "protocol_version": CAPTURE_PROTOCOL_VERSION,
-            "extension_path": extension_relative_path.as_posix(),
-            "extension_path_absolute": str(extension_absolute_path)
-            if extension_absolute_path.is_dir()
-            else None,
-            "api_base": "http://127.0.0.1:8765/api/v1",
+        policy["inventory_import"] = {
+            "format": IMPORT_FORMAT,
+            "version": IMPORT_VERSION,
+            "schema": IMPORT_SCHEMA_NAME,
+            "max_document_bytes": MAX_IMPORT_DOCUMENT_BYTES,
+            "max_offers": MAX_IMPORT_OFFERS,
             "primary": True,
-            "handles_captcha": False,
         }
         return policy
 
@@ -964,15 +991,6 @@ class DefaultFrontendService:
         return self._supplier_store.list_suppliers()
 
     def inspect_supplier_scout_supplier(self, request: dict) -> dict:
-        outcome = dict(
-            self._supplier_store_collector(
-                request["target"],
-                max_pages=request["max_pages"],
-                max_offers=request["max_offers"],
-                headed=request["headed"],
-                challenge_timeout_seconds=request["challenge_timeout_seconds"],
-            )
-        )
         normalized = normalize_1688_supplier_store_target(request["target"])
         supplier_id = next(
             (
@@ -982,6 +1000,40 @@ class DefaultFrontendService:
             ),
             None,
         )
+        if self._supplier_store_collector is not None:
+            # Compatibility-only inspection for callers that explicitly inject
+            # the old collector. The default service never performs a network
+            # or browser inspection.
+            outcome = dict(
+                self._supplier_store_collector(
+                    request["target"],
+                    max_pages=request["max_pages"],
+                    max_offers=request["max_offers"],
+                    headed=request["headed"],
+                    challenge_timeout_seconds=request["challenge_timeout_seconds"],
+                )
+            )
+        else:
+            outcome = {
+                "provider": "FILE_JSON_IMPORT",
+                "source_method": "JSON_IMPORT_REQUIRED",
+                "acquisition_status": "NOT_CONFIGURED",
+                "canonical_url": normalized["canonical_url"],
+                "inventory_complete": False,
+                "pages_attempted": 0,
+                "pages_completed": 0,
+                "observed_offer_count": 0,
+                "available_offer_count": None,
+                "has_next_page": None,
+                "offers": [],
+                "warnings": ["JSON_IMPORT_REQUIRED"],
+                "diagnostics": [
+                    {
+                        "code": "JSON_IMPORT_REQUIRED",
+                        "message": "Import a supplier inventory JSON file before screening.",
+                    }
+                ],
+            }
         outcome["inspection"] = self._supplier_store.save_inspection(
             request["target"], outcome, supplier_id=supplier_id
         )
@@ -1010,10 +1062,62 @@ class DefaultFrontendService:
                 "available_offer_count",
                 "has_next_page",
                 "source_method",
+                "provider",
+                "import",
                 "warnings",
                 "diagnostics",
                 "page_evidence",
             )
+        }
+
+    def import_supplier_inventory(
+        self,
+        supplier_id: str,
+        document: Mapping[str, Any],
+        filename: str | None = None,
+    ) -> dict:
+        source = self._supplier_store.get_supplier(str(supplier_id))
+        if source["status"] != "ACTIVE":
+            raise ValueError("supplier source is archived")
+        snapshot, report = normalize_supplier_inventory_import(
+            document,
+            source,
+            filename=filename,
+        )
+        saved = self._supplier_store.save_snapshot(source["supplier_id"], snapshot)
+        snapshot.update(saved)
+        member_id = report.get("identity_member_id")
+        if member_id and not source.get("member_id"):
+            self._supplier_store.update_supplier_identity(
+                source["supplier_id"], {"member_id": member_id}
+            )
+        usable = report["can_run"]
+        try:
+            _validate_supplier_snapshot_for_run(snapshot)
+        except ValueError:
+            usable = False
+        return {
+            "snapshot": {
+                key: deepcopy(snapshot.get(key))
+                for key in (
+                    "snapshot_id",
+                    "supplier_id",
+                    "snapshot_sha256",
+                    "retrieved_at",
+                    "acquisition_status",
+                    "inventory_complete",
+                    "pages_attempted",
+                    "pages_completed",
+                    "observed_offer_count",
+                    "available_offer_count",
+                    "has_next_page",
+                    "source_method",
+                    "provider",
+                    "warnings",
+                )
+            },
+            "import": report,
+            "can_run": usable,
         }
 
     def create_supplier_capture(self, request: dict) -> dict:
@@ -1087,25 +1191,14 @@ class DefaultFrontendService:
                     if snapshot
                     else 0,
                     "last_query": source["canonical_url"],
-                    "provider": "PROTEUS_EDGE_EXTENSION"
-                    if snapshot
-                    else "LOCAL_1688_STORE_BRIDGE",
+                    "provider": snapshot.get("provider") if snapshot else "FILE_JSON_IMPORT",
                     "budget_used": 0,
                 }
             )
         if snapshot is None:
-            snapshot = dict(
-                self._supplier_store_collector(
-                    source["canonical_url"],
-                    max_pages=request["max_pages"],
-                    max_offers=request["max_offers"],
-                    headed=request["headed"],
-                    challenge_timeout_seconds=request["challenge_timeout_seconds"],
-                )
+            raise ValueError(
+                "inventory_snapshot_id is required; import a supplier inventory JSON file first"
             )
-            snapshot["supplier_id"] = source["supplier_id"]
-            saved = self._supplier_store.save_snapshot(source["supplier_id"], snapshot)
-            snapshot.update(saved)
         identity = snapshot.get("supplier")
         if isinstance(identity, Mapping):
             self._supplier_store.update_supplier_identity(source["supplier_id"], identity)
@@ -1136,12 +1229,15 @@ class DefaultFrontendService:
             )
         snapshot = dict(request)
         captured_snapshot_id = request.get("inventory_snapshot_id")
-        if captured_snapshot_id:
-            captured = self._supplier_store.get_snapshot(str(captured_snapshot_id))
-            if captured.get("supplier_id") != source["supplier_id"]:
-                raise ValueError("inventory snapshot belongs to a different supplier")
-            _validate_supplier_snapshot_for_run(captured)
-            snapshot["_inventory_snapshot_id"] = str(captured_snapshot_id)
+        if not captured_snapshot_id:
+            raise ValueError(
+                "inventory_snapshot_id is required; import a supplier inventory JSON file first"
+            )
+        captured = self._supplier_store.get_snapshot(str(captured_snapshot_id))
+        if captured.get("supplier_id") != source["supplier_id"]:
+            raise ValueError("inventory snapshot belongs to a different supplier")
+        _validate_supplier_snapshot_for_run(captured)
+        snapshot["_inventory_snapshot_id"] = str(captured_snapshot_id)
         snapshot["selected_category_ids"] = selected
         snapshot["_supplier_source"] = source
         snapshot["_category_definitions"] = {
@@ -1327,6 +1423,33 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         try:
             return dict(creator(request.model_dump()))
         except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+
+    @app.post(
+        "/api/v1/supplier-scout/suppliers/{supplier_id}/snapshots/import",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def import_supplier_inventory(
+        supplier_id: str,
+        request: SupplierInventoryImportRequest,
+    ) -> dict:
+        importer = getattr(active_service, "import_supplier_inventory", None)
+        if not callable(importer):
+            raise HTTPException(status_code=501, detail="supplier JSON import is unavailable")
+        try:
+            return dict(
+                importer(
+                    supplier_id,
+                    request.document,
+                    request.filename,
+                )
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="supplier not found") from exc
+        except (SupplierInventoryImportError, ValueError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),

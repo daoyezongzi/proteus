@@ -356,7 +356,7 @@ class SupplierScoutStore:
             row = connection.execute(
                 """
                 SELECT snapshot_id FROM inventory_snapshots
-                WHERE supplier_id = ? ORDER BY created_at DESC LIMIT 1
+                WHERE supplier_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1
                 """,
                 (supplier_id,),
             ).fetchone()
@@ -433,9 +433,8 @@ def supplier_scout_policy(
         "schema_version": SCHEMA_VERSION,
         "profile": PROFILE,
         "source_bounds": {
-            "max_pages": {"minimum": 1, "maximum": 20, "default": 3},
-            "max_offers": {"minimum": 1, "maximum": 1000, "default": 100},
-            "manual_challenge_wait": {"default": False, "maximum_seconds": 600},
+            "max_offers": {"minimum": 1, "maximum": 1000, "default": 1000},
+            "max_json_bytes": {"minimum": 1, "maximum": 10 * 1024 * 1024},
         },
         "market_bounds": {
             "request_budget": {"minimum": 0, "maximum": 1000, "default": 20},

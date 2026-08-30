@@ -1,0 +1,31 @@
+{
+  "format": "proteus.supplier_inventory",
+  "version": 1,
+  "supplier": {
+    "label": "示例 1688 供应商",
+    "url": "https://shop3w093345o1043.1688.com/page/offerlist.htm"
+  },
+  "capture": {
+    "collector": "my-agent",
+    "captured_at": "2026-08-30T00:00:00Z",
+    "acquisition_status": "SUCCESS",
+    "inventory_complete": true,
+    "pages_attempted": 1,
+    "pages_completed": 1,
+    "has_next_page": false,
+    "reported_total": 1,
+    "warnings": []
+  },
+  "offers": [
+    {
+      "offer_id": "10001",
+      "title": "2007-2013 Chevrolet Silverado 雾灯框 25778388",
+      "offer_url": "https://detail.1688.com/offer/10001.html",
+      "price_cny": 12.8,
+      "moq": 2,
+      "attributes": {
+        "左右": "左件"
+      }
+    }
+  ]
+}

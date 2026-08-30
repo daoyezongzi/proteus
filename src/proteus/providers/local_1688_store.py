@@ -1,10 +1,13 @@
-"""Bounded, read-only collection of one 1688 supplier's store offers.
+"""Legacy bounded, read-only collection of one 1688 supplier's store offers.
 
 The installed ``1688-cli`` does not currently expose a store-catalog command.
 This adapter therefore launches a small, version-gated Node bridge that reuses
 the CLI's persistent browser profile without reading or exporting cookies.  A
 challenge, login redirect, parser failure, or page/offer bound is evidence in
 its own right and is never converted into a genuine empty-store result.
+
+The V0.2.9 product workflow does not call this adapter; it remains available
+only for explicit compatibility callers and historical evidence.
 """
 
 from __future__ import annotations

@@ -1,5 +1,26 @@
 # Proteus Development Log
 
+## 2026-08-30 — V0.2.9 supplier inventory JSON import (implemented)
+
+- Based on the repeated real-store evidence (`PARSER_FAILED`, layered verification and zero
+  trustworthy offers), the automatic Edge/Playwright store acquisition path was withdrawn from the
+  product workflow. The supplier-scout page now has no capture-task or automatic-pagination action.
+- Added the versioned `proteus.supplier_inventory` v1 contract and example. The importer enforces the
+  selected supplier URL/member identity, numeric offer ID/detail URL agreement, HTTPS image URLs,
+  10 MB/1000-offer limits, duplicate accounting, invalid-row diagnostics and a canonical document
+  SHA-256 before sealing an immutable SQLite snapshot.
+- Added the local import API and Agent CLI. New supplier-scout runs require an explicit same-supplier
+  `inventory_snapshot_id`; a missing snapshot cannot trigger the legacy collector. Existing capture
+  routes and the extension remain only as compatibility code for historical local evidence.
+- Rebuilt the reverse-selection page around JSON file selection, validation status, partial/empty
+  semantics and the existing market-analysis API. README now documents the page workflow, contract,
+  API payload and CLI command.
+- Verification passed: full pytest suite, Python compileall, `pip check`, supplier JSON schema/example
+  validation, `node --check`, six Node extension contract tests, `git diff --check`, default-service
+  API smoke (import → explicit snapshot-bound run) and a PEP 517-compatible wheel build
+  `proteus_opportunity_finder-0.2.9-py3-none-any.whl` (SHA-256
+  `5b77b68c5ed0a90a19a79712b3021602ca61032047c7cb408e39a90e6981fc70`).
+
 ## 2026-08-30 — V0.2.8 页面状态/资源计数探针（等待真实 Edge 复验）
 
 - 新一轮证据为 readyState=complete、35 张可见图片、212 个资源，其中 30 个资源

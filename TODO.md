@@ -1,5 +1,24 @@
 # Proteus Current Work
 
+## 2026-08-30 V0.2.9 供应商 JSON 导入回退（已实现）
+
+- [x] 将供应商反向选品的主来源改为用户/Agent 生成的版本化 JSON；页面不再创建 Edge 采集
+  任务、打开店铺、自动翻页或恢复旧 capture 会话。
+- [x] 增加 `proteus.supplier_inventory` v1 合约、示例文件、10 MB/1000 条边界、供应商
+  URL/member ID 绑定、offer ID/详情 URL 校验、去重、规范化文档哈希和无效行诊断。
+- [x] 通过 `/api/v1/supplier-scout/suppliers/{supplier_id}/snapshots/import` 和
+  `proteus supplier-scout --database <path> import-json ...` 封存不可变快照；运行接口必须
+  显式携带同供应商 `inventory_snapshot_id`，禁止无快照隐式采集。
+- [x] 复用现有分类、产品家族、eBay/Amazon 分析和 A/A-/PENDING 语义；`PARTIAL` 只分析
+  已导入有效商品，`EMPTY` 保留为明确空清单，失败/风控状态不能冒充空店。
+- [x] 重做供应商反向页面为本地 JSON 选择、预览和分析入口，并在 README 写明页面、API、CLI
+  和 JSON 字段用法。
+- [x] 完成全量 pytest、Node/JavaScript、构建安装和本地 API/回放验收；不再等待真实 Edge
+  店铺采集验收。
+
+V0.2.8/V0.2.7 下方的 Edge 诊断、扩展重接管和真实店铺复验条目保留为历史记录；它们不再是
+V0.2.9 当前交付阻塞项。
+
 ## 2026-08-30 V0.2.8 Shadow Root 结构探针（真实 Edge 复验待触发）
 
 - [x] 为开放 Shadow Root 增加有界结构探针；只记录计数和宿主元数据，不把未确认内容当作商品。

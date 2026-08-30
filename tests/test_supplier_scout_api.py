@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -44,6 +45,12 @@ class SupplierScoutApiService:
             "schema_version": "0.2.6",
             "profile": "supplier-first-store-scout",
             "categories": {"fog_light_bezel": {"category_id": "fog_light_bezel"}},
+            "inventory_import": {
+                "format": "proteus.supplier_inventory",
+                "version": 1,
+                "max_document_bytes": 10 * 1024 * 1024,
+                "max_offers": 1000,
+            },
         }
 
     def list_supplier_scout_suppliers(self) -> dict:
@@ -90,6 +97,28 @@ class SupplierScoutApiService:
             "acquisition_status": "PARTIAL",
             "observed_offer_count": 1,
             "inventory_complete": False,
+        }
+
+    def import_supplier_inventory(
+        self, supplier_id: str, document: dict, filename: str | None = None
+    ) -> dict:
+        assert supplier_id == "sup_123"
+        assert document["format"] == "proteus.supplier_inventory"
+        assert filename == "offers.json"
+        return {
+            "snapshot": {
+                "snapshot_id": "snap_124",
+                "supplier_id": supplier_id,
+                "acquisition_status": "SUCCESS",
+                "inventory_complete": True,
+                "observed_offer_count": 1,
+            },
+            "import": {
+                "valid_offer_count": 1,
+                "invalid_offer_count": 0,
+                "duplicate_offer_count": 0,
+            },
+            "can_run": True,
         }
 
     def create_supplier_capture(self, request: dict) -> dict:
@@ -193,6 +222,7 @@ def test_supplier_scout_api_exposes_sources_inspection_runs_and_exports() -> Non
         "/api/v1/supplier-scout/runs",
         json={
             "supplier_id": "sup_123",
+            "inventory_snapshot_id": "snap_123",
             "selected_category_ids": ["fog_light_bezel"],
             "market_request_budget": 2,
         },
@@ -203,6 +233,7 @@ def test_supplier_scout_api_exposes_sources_inspection_runs_and_exports() -> Non
     running = client.get("/api/v1/supplier-scout/runs/supplier-run-running/export")
 
     assert policy.json()["profile"] == "supplier-first-store-scout"
+    assert policy.json()["inventory_import"]["format"] == "proteus.supplier_inventory"
     assert suppliers.json()["suppliers"][0]["supplier_id"] == "sup_123"
     assert inspected.json()["acquisition_status"] == "RISK_CONTROL"
     assert inspected.json()["inventory_complete"] is False
@@ -214,6 +245,35 @@ def test_supplier_scout_api_exposes_sources_inspection_runs_and_exports() -> Non
     assert compact.status_code == 200
     assert compact.json()["profile"] == "supplier-first-store-scout"
     assert running.status_code == 409
+
+
+def test_supplier_scout_api_exposes_json_inventory_import() -> None:
+    client = TestClient(create_app(service=SupplierScoutApiService()))
+
+    response = client.post(
+        "/api/v1/supplier-scout/suppliers/sup_123/snapshots/import",
+        json={
+            "filename": "offers.json",
+            "document": {
+                "format": "proteus.supplier_inventory",
+                "version": 1,
+                "supplier": {"url": STORE_URL},
+                "capture": {
+                    "captured_at": "2026-08-30T00:00:00Z",
+                    "acquisition_status": "SUCCESS",
+                    "inventory_complete": True,
+                    "pages_attempted": 1,
+                    "pages_completed": 1,
+                    "has_next_page": False,
+                },
+                "offers": [],
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["snapshot"]["snapshot_id"] == "snap_124"
+    assert response.json()["can_run"] is True
 
 
 def test_supplier_scout_api_exposes_user_triggered_edge_capture_lifecycle() -> None:
@@ -392,14 +452,20 @@ def test_supplier_scout_api_validates_bounds_categories_and_grade_order() -> Non
         "/api/v1/supplier-scout/runs",
         json={
             "supplier_id": "sup_123",
+            "inventory_snapshot_id": "snap_123",
             "grade_a_max_competitors": 8,
             "grade_a_minus_max_competitors": 8,
         },
+    )
+    missing_snapshot = client.post(
+        "/api/v1/supplier-scout/runs",
+        json={"supplier_id": "sup_123"},
     )
 
     assert too_many_pages.status_code == 422
     assert unknown_category.status_code == 422
     assert unordered_grades.status_code == 422
+    assert missing_snapshot.status_code == 422
 
 
 def test_default_service_persists_and_binds_supplier_inspection_audit(
@@ -437,6 +503,30 @@ def test_default_service_persists_and_binds_supplier_inspection_audit(
     audit = store.get_inspection(inspected["inspection"]["inspection_id"])
     assert audit["supplier_id"] == supplier["supplier_id"]
     assert audit["diagnostics"] == [{"code": "MANUAL_CHALLENGE_REQUIRED"}]
+
+
+def test_default_service_supplier_inspection_is_local_json_readiness_only(
+    tmp_path: Path,
+) -> None:
+    store = SupplierScoutStore(tmp_path / "supplier-scout.sqlite3")
+    service = DefaultFrontendService(
+        category_catalog=CategoryCatalog(tmp_path / "categories.sqlite3"),
+        supplier_store=store,
+    )
+    outcome = service.inspect_supplier_scout_supplier(
+        {
+            "target": STORE_URL,
+            "max_pages": 1,
+            "max_offers": 20,
+            "headed": False,
+            "challenge_timeout_seconds": 180,
+        }
+    )
+
+    assert outcome["provider"] == "FILE_JSON_IMPORT"
+    assert outcome["source_method"] == "JSON_IMPORT_REQUIRED"
+    assert outcome["acquisition_status"] == "NOT_CONFIGURED"
+    assert outcome["warnings"] == ["JSON_IMPORT_REQUIRED"]
 
 
 def test_default_service_reuses_a_same_supplier_edge_snapshot_without_reacquiring(
@@ -500,6 +590,81 @@ def test_default_service_reuses_a_same_supplier_edge_snapshot_without_reacquirin
     assert record["status"] == "COMPLETED"
     assert record["result"]["inventory"]["snapshot_id"] == saved["snapshot_id"]
     assert record["result"]["inventory"]["acquisition_status"] == "EMPTY"
+
+
+def test_default_service_imports_json_and_seals_an_immutable_snapshot(
+    tmp_path: Path,
+) -> None:
+    example = (
+        Path(__file__).resolve().parents[1]
+        / "examples"
+        / "supplier_inventory_import.example.json"
+    )
+    document = json.loads(example.read_text(encoding="utf-8"))
+    store = SupplierScoutStore(tmp_path / "supplier-scout.sqlite3")
+    service = DefaultFrontendService(
+        category_catalog=CategoryCatalog(tmp_path / "categories.sqlite3"),
+        supplier_store=store,
+    )
+    source = service.add_supplier_scout_supplier(
+        {"label": "示例供应商", "target": STORE_URL}
+    )
+
+    imported = service.import_supplier_inventory(
+        source["supplier_id"], document, "agent-export.json"
+    )
+    snapshot = imported["snapshot"]
+    assert imported["can_run"] is True
+    assert snapshot["provider"] == "FILE_JSON_IMPORT"
+    assert snapshot["source_method"] == "AGENT_JSON_IMPORT"
+    assert snapshot["observed_offer_count"] == 1
+    assert (
+        store.get_snapshot(snapshot["snapshot_id"])["offers"][0]["offer_id"]
+        == "10001"
+    )
+    latest = service.latest_supplier_snapshot(source["supplier_id"])
+    assert latest is not None
+    assert latest["snapshot_id"] == snapshot["snapshot_id"]
+
+    second = service.import_supplier_inventory(
+        source["supplier_id"], document, "agent-export-2.json"
+    )
+    latest_again = service.latest_supplier_snapshot(source["supplier_id"])
+    assert latest_again is not None
+    assert latest_again["snapshot_id"] == second["snapshot"]["snapshot_id"]
+
+
+def test_default_service_without_snapshot_never_invokes_legacy_collector(
+    tmp_path: Path,
+) -> None:
+    store = SupplierScoutStore(tmp_path / "supplier-scout.sqlite3")
+    source = store.add_supplier("测试供应商", STORE_URL)
+    called = False
+
+    def collector(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("legacy collector must not run without an imported snapshot")
+
+    service = DefaultFrontendService(
+        category_catalog=CategoryCatalog(tmp_path / "categories.sqlite3"),
+        supplier_store=store,
+        supplier_store_collector=collector,
+    )
+    with pytest.raises(ValueError, match="inventory_snapshot_id is required"):
+        service.submit_supplier_scout_run(
+            {
+                "supplier_id": source["supplier_id"],
+                "selected_category_ids": [],
+                "market_request_budget": 0,
+                "max_amazon_queries_per_family": 3,
+                "grade_a_max_competitors": 5,
+                "grade_a_minus_max_competitors": 8,
+                "min_family_price_usd": 20,
+                "min_observed_ebay_demand": 1,
+            }
+        )
+    assert called is False
 
 
 def test_default_service_rejects_a_blocked_zero_offer_snapshot(

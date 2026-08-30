@@ -1,34 +1,28 @@
-# Supplier-first Store Scout Working Plan
+# Supplier-first Store Scout Working Plan — JSON import revision
 
 ## Goal
 
-Add a separate “供应商反向选品” workspace that pins one 1688 supplier, takes a
-bounded and auditable snapshot of that supplier's store offers, classifies the
-observed offers against the current ACTIVE low-risk category catalog, and then
-reuses Proteus market evidence to identify A / A- product-family candidates.
+Add a separate “供应商反向选品” workspace that pins one 1688 supplier, imports
+a user/Agent-produced JSON inventory snapshot, classifies the imported offers
+against the current ACTIVE low-risk category catalog, and then reuses Proteus
+market evidence to identify A / A- product-family candidates.
 
 This is a new candidate-source direction. It must not replace or silently alter
 the existing category/eBay-first Northway workflow.
 
-## 2026-08-30 acquisition revision
+## 2026-08-30 acquisition revision — JSON import is the only product path
 
-Live acceptance showed that the dependency-owned Playwright profile can pass an
-initial login but is still placed into layered Alibaba Captcha 2.0 challenges.
-Three bounded runs ended as `TIMEOUT` with zero observed offers and
-`STORE_BRIDGE_FAILED`. The installed CLI session also enables a stealth plugin
-internally, which conflicts with this plan's explicit no-stealth boundary.
+The Edge/Playwright acquisition path is withdrawn from the product workflow.
+The browser extension and capture API are retained only as legacy compatibility
+code for existing local evidence; the UI must not create capture tasks and a new
+run must never acquire a store implicitly.
 
-The primary acquisition path is therefore revised to a user-triggered local
-Manifest V3 Edge extension running inside the user's ordinary signed-in Edge
-tab. The user handles login and any CAPTCHA. After the page is normally visible,
-the extension may deterministically scroll, extract visible offer cards and
-navigate ordinary pagination within explicit limits. It must stop and preserve
-partial evidence whenever authentication, risk control or an unrecognized page
-appears. It never reads or exports cookies and never attempts CAPTCHA solving.
-
-The existing Playwright bridge remains a fail-closed compatibility path at the
-API layer during this revision, but the product UI no longer presents it as the
-normal way to clear verification.
+The supported path is a local JSON file produced by the user or the user's own
+Agent. The Agent may use any permitted 1688 workflow, handle login/CAPTCHA, and
+write the stable import contract below. Proteus only validates the file, binds it
+to the selected saved supplier, seals an immutable snapshot, and runs the
+existing market analysis. No browser credentials, cookies or external collector
+are needed by Proteus.
 
 ## Baseline and current evidence
 
@@ -56,8 +50,8 @@ normal way to clear verification.
   checkout, order, CAPTCHA bypass, proxy rotation or stealth automation.
 - One run pins exactly one canonical supplier identity. Every accepted offer
   must bind back to that supplier identity.
-- Page and offer bounds are explicit. Reaching a bound produces `PARTIAL`, not
-  a false complete-store claim.
+- Import size and offer-count bounds are explicit. An incomplete imported file
+  produces `PARTIAL`, not a false complete-store claim.
 - Provider failure, authentication required, risk control, parser failure,
   partial acquisition and genuine empty inventory remain distinct.
 - All offers observed within the source boundary remain in the result. Market
@@ -86,39 +80,29 @@ The URL boundary must:
 - never trust the shop hostname alone as the final supplier identity when a
   stronger `memberId` can be observed.
 
-### 2. Bounded supplier catalog provider
+### 2. Supplier inventory JSON import
 
-Add a provider-neutral `SupplierCatalogProvider` contract with two read-only
-operations:
+Define a stable public `proteus.supplier_inventory` version-1 contract. The
+top-level document contains the supplier URL/identity, capture metadata and an
+`offers` array. Each offer must have a numeric `offer_id`, non-empty `title`,
+canonical HTTPS 1688 detail URL and may carry image, price, MOQ, attributes or
+other bounded metadata.
 
-1. `inspect_supplier(target)` returns normalized identity/trust evidence.
-2. `collect_store_offers(source, max_pages, max_offers)` returns a normalized
-   inventory snapshot with page-completeness evidence.
+The importer must:
 
-Use a project-owned, locally sideloaded MV3 Edge extension as the primary
-collector. A Proteus capture session binds one saved supplier, one short-lived
-opaque token, one page limit and one offer limit. After an explicit toolbar
-click, the extension claims the newest matching pending session, extracts only
-the normally rendered supplier-list page and posts normalized page evidence to
-the loopback API. The backend validates supplier/page binding, sequential page
-numbers and offer IDs, deduplicates across pages, and alone decides whether the
-snapshot is complete, partial or blocked.
+- validate the format/version and bounded JSON size/offer count;
+- normalize the supplier URL and require it to match the selected saved source;
+- reject a conflicting member ID or offer ID/detail URL;
+- deduplicate by offer ID without silently dropping the duplicate count;
+- preserve valid rows, invalid-row diagnostics and a canonical document hash;
+- derive `SUCCESS`, `PARTIAL` or `EMPTY` only from explicit completeness metadata;
+- never accept `supplier_id` from the file, execute file content, or fetch URLs.
 
-The extension is plain packaged HTML/CSS/JavaScript under
-`browser-extension/supplier-collector/` with no remote code and narrowly scoped
-permissions for `https://*.1688.com/*` and the loopback Proteus API. Selector
-profiles are non-executable JSON served by Proteus so an Agent can update page
-structure matching without changing evidence semantics.
-
-Retain explicit JSON/CSV or saved-page import as a later fallback; do not label
-an imported or bounded observation as a complete store unless end-of-pagination
-evidence proves it.
-
-Normalized snapshot fields include supplier identity, submitted/canonical URL,
-retrieval time, pages attempted/completed, observed/available offer counts,
-next-page evidence, acquisition status, completeness, warnings, and offers with
-offer ID, title, URL, image, price/MOQ when observed, attributes/SKUs when
-observed, and supplier identity.
+The public import document is converted to the existing internal immutable
+snapshot schema. This keeps the current classifier, family resolver, eBay/Amazon
+providers and exports unchanged. An imported partial snapshot can be analyzed
+when it contains offers, but it must remain visibly partial; an empty or blocked
+file cannot be interpreted as a successful empty store.
 
 ### 3. Local persistence and immutable run snapshot
 
@@ -170,12 +154,7 @@ GET  /api/v1/supplier-scout/policy
 GET  /api/v1/supplier-scout/suppliers
 POST /api/v1/supplier-scout/suppliers/inspect
 POST /api/v1/supplier-scout/suppliers
-POST /api/v1/supplier-scout/captures
-GET  /api/v1/supplier-scout/captures/pending
-GET  /api/v1/supplier-scout/captures/{capture_id}
-POST /api/v1/supplier-scout/captures/{capture_id}/claim
-POST /api/v1/supplier-scout/captures/{capture_id}/pages
-POST /api/v1/supplier-scout/captures/{capture_id}/pause
+POST /api/v1/supplier-scout/suppliers/{supplier_id}/snapshots/import
 POST /api/v1/supplier-scout/runs
 GET  /api/v1/supplier-scout/runs/{run_id}
 GET  /api/v1/supplier-scout/runs/{run_id}/export/compact
@@ -184,19 +163,18 @@ GET  /api/v1/supplier-scout/runs/{run_id}/export
 
 Add “供应商反向选品” to the sidebar as a separate static page/module rather
 than further coupling the existing Northway form. The view includes supplier
-verification, an Edge-collector setup/status panel, source/page/offer and market
-budgets, ACTIVE category scope, progress, inventory completeness, evidence
-warnings, result filters and JSON exports. It must state observations such as
-“60 observed / source still has a next page: PARTIAL” plainly. A market run may
-reference a same-supplier immutable captured snapshot and must not reacquire the
-store when that snapshot is supplied.
+selection, a JSON file picker, validation/preview status, imported coverage,
+ACTIVE category scope, market budgets, progress, evidence warnings, result
+filters and JSON exports. It must state observations such as “60 imported / the
+source declared PARTIAL” plainly. A market run must reference a same-supplier
+immutable imported snapshot and must never reacquire the store.
 
 ## Scope
 
 ### In scope
 
 - one saved/selected supplier per run;
-- bounded store inventory capture or explicit import fallback;
+- explicit user/Agent JSON inventory import;
 - all currently executable ACTIVE low-risk automotive leaf categories;
 - deterministic identity/scope triage before provider spending;
 - existing eBay/Amazon evidence and A/A- semantics;
@@ -213,19 +191,19 @@ store when that snapshot is supplied.
 
 ## Execution steps
 
-1. Freeze URL, supplier, inventory snapshot and result contracts with fixtures
+1. Freeze URL, supplier, import document and snapshot contracts with fixtures
    and failing tests.
-2. Implement and test short-lived capture sessions, sequential page ingestion,
-   supplier binding, deduplication and immutable snapshot sealing.
-3. Implement the local MV3 Edge extension and selector-profile contract.
-4. Connect captured snapshots to the existing supplier-first market runner.
+2. Implement and test JSON validation, supplier binding, deduplication, file
+   hashing and immutable snapshot sealing.
+3. Require an imported snapshot before supplier-first runs and remove implicit
+   collector acquisition from the service path.
+4. Connect imported snapshots to the existing supplier-first market runner.
 5. Implement supplier-first classification and market runner using reusable
    Northway/provider helpers.
 6. Add API models, async manager integration and bounded exports.
-7. Add the separate navigation workspace and dynamic result states.
-8. Run unit/contract/full-suite tests, package checks, static extension checks
-   and a local browser fixture acceptance; real 1688 acceptance still requires
-   the user's ordinary signed-in Edge session.
+7. Add the separate navigation workspace and dynamic JSON import/result states.
+8. Run unit/contract/full-suite tests, package checks and local API/browser
+   acceptance; no real 1688 browser acceptance is required for this path.
 9. Update `README.md`, `LOG.md` and `TODO.md`, inspect the complete diff, then
    commit task-owned changes without pushing.
 
@@ -233,34 +211,35 @@ store when that snapshot is supplied.
 
 - URL tests cover the duplicated user input, tracking removal, allowed hosts,
   credentials, schemes and multiple-URL ambiguity.
-- Catalog fixtures cover complete, partial, empty, authentication, risk-control,
-  timeout, malformed payload, duplicate offer and supplier-mismatch outcomes.
-- Capture tests cover token rejection, expiry, same-host claim, sequential and
-  idempotent pages, duplicate offers, explicit empty evidence, page/offer bounds,
-  blocked-page pause and same-supplier snapshot reuse.
+- Import fixtures cover complete, partial, empty, malformed payload, duplicate
+  offer, supplier mismatch, URL/ID mismatch, invalid rows and oversized files.
+- Import tests prove file hashing, immutable snapshots, explicit completeness and
+  same-supplier snapshot reuse; no run may trigger a collector without a snapshot.
 - Persistence tests prove immutable snapshots and no category-database impact.
 - Runner tests prove category unmatched/ambiguous, identity incomplete,
   market-budget preservation, A/A-/pending/rejected semantics and complete
   evidence export.
 - API tests cover request bounds, inactive categories, source snapshot binding,
   status polling and both exports.
-- A live read-only canary must make no write command and must not claim
-  completeness unless pagination evidence proves it.
-- Browser acceptance covers navigation, supplier verification, partial coverage,
-  extension setup, capture creation/progress, filters, errors, exports and zero
-  console errors. The extension fixture verifies offer extraction, risk-control
-  detection and next-page discovery without contacting 1688.
+- Import API/CLI acceptance must make no network request, seal only after
+  contract validation, and must not claim completeness unless the JSON metadata
+  proves it.
+- Browser acceptance covers navigation, supplier verification, JSON picker,
+  validation preview, partial coverage, filters, errors, exports and zero console
+  errors.
 - Final gates: full pytest suite, Python compilation, dependency check,
   JavaScript syntax, JSON parse/schema checks, `git diff --check`, build/install
   smoke and staged-diff self-review.
 
 ## Risks and rollback
 
-- 1688 store payloads and login/risk-control behavior may drift. Isolate the
-  collector, version-gate fragile integration and retain raw bounded evidence.
+- User/Agent export formats may drift. Version the import contract, validate it
+  before persistence and retain the original file hash and bounded diagnostics.
 - A store card may represent variants or several product families. Never infer
   one family per offer when SKU/fitment evidence conflicts.
 - Market cost can grow with store size. Separate source bounds from market
   request budgets and preserve resumable not-run items.
-- The feature is additive. Rollback removes the supplier-scout routes/page and
-  provider while leaving existing Northway and its category database untouched.
+- The feature is additive. Rollback removes only the JSON import route/page and
+  provider while leaving existing Northway, category data and historical
+  snapshots untouched. Legacy Edge capture code may remain unreachable for
+  compatibility, but it must not be advertised or invoked by new runs.

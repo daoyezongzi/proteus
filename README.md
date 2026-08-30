@@ -1,4 +1,4 @@
-# Proteus V0.2.8
+# Proteus V0.2.9
 
 > 当前执行版本提供两个并列入口：**分类/eBay 正向初筛**与**固定 1688 供应商反向选品**。
 > 两者共用 ACTIVE 分类版本和 Amazon A / A- 竞争语义，但候选来源、读取边界和结果快照互不混淆。
@@ -27,7 +27,112 @@ northwayautoparts 的车型专用小饰件和机械拉索为产品形态参考�
 不等于库存、MOQ、利润或可下单；供应商阶段失败、风控和未查询会分别保留为可解释状态。
 V0.2.3 精确 OEM 链路和 HioBuy 1688 兼容路径继续保留，但不再是默认页面。
 
-## V0.2.8 Edge 解析诊断与续采修复
+## V0.2.9 供应商反向选品：JSON 导入（当前主流程）
+
+当前版本不再让 Proteus 自动打开 Edge、翻页或处理 1688 验证。用户或自己的 Agent
+可以在获准的浏览器/工具流程中完成登录、滑块、翻页和商品整理，再把结果写成项目约定的
+JSON。Proteus 只做本地校验、供应商绑定、去重、不可变快照封存，然后调用现有 eBay/Amazon
+分析接口；不会读取 Cookie，也不会主动访问 JSON 里的 URL。
+
+### 页面操作
+
+1. 运行 `start-web.bat`，或执行
+   `.\.venv\Scripts\python.exe -m proteus api --port 8765`，打开
+   `http://127.0.0.1:8765/supplier-scout.html`。
+2. 在“固定一家 1688 店铺”中填写显示名称和商品列表 URL，点击“保存供应商”。URL 会被
+   规范化为单一 HTTPS 1688 店铺来源。
+3. 让用户/Agent 采集商品并生成 JSON。可复制
+   [`examples/supplier_inventory_import.example.json`](examples/supplier_inventory_import.example.json)
+   作为模板；不要把密码、Cookie、验证码 token 或 `supplier_id` 写进文件。
+4. 选择保存的供应商，点击“选择 JSON 文件”→“导入商品清单”。页面会显示有效、无效、
+   重复记录数和清单完整度；校验不通过的文件不会封存。
+5. 保留需要分析的 ACTIVE 叶子小类，调整市场预算和 A/A- 阈值，点击“使用快照筛选”。
+   运行只引用刚导入的 `inventory_snapshot_id`，不会再次采集店铺；完成后可下载精简或完整
+   JSON。
+
+### 导入 JSON 最小格式
+
+文件顶层必须是一个 `proteus.supplier_inventory`、版本 `1` 对象，完整字段定义见
+[`contracts/v0_2_9_supplier_inventory_import.schema.json`](contracts/v0_2_9_supplier_inventory_import.schema.json)。
+`capture.inventory_complete=true` 只能和 `SUCCESS`/`EMPTY`、`has_next_page=false` 一起使用；
+不完整清单应明确写 `PARTIAL`。`EMPTY` 必须报告 0 件且没有下一页。每个商品至少提供数字
+`offer_id`、标题和匹配的 HTTPS `detail.1688.com/offer/<id>.html`；图片、价格、MOQ、属性
+和 SKU 是可选字段。
+
+```json
+{
+  "format": "proteus.supplier_inventory",
+  "version": 1,
+  "supplier": {"url": "https://shop3w093345o1043.1688.com/page/offerlist.htm"},
+  "capture": {
+    "captured_at": "2026-08-30T00:00:00Z",
+    "acquisition_status": "PARTIAL",
+    "inventory_complete": false,
+    "pages_attempted": 2,
+    "pages_completed": 2,
+    "has_next_page": true
+  },
+  "offers": [{
+    "offer_id": "10001",
+    "title": "车型专用雾灯框",
+    "offer_url": "https://detail.1688.com/offer/10001.html"
+  }]
+}
+```
+
+导入器会以页面已选择的供应商为准，不接受文件中的 `supplier_id`；供应商 URL 不匹配、
+商品 ID 与详情 URL 不匹配、非 HTTPS 图片或超出 10 MB/1000 件上限都会被拒绝。重复商品
+按 `offer_id` 去重但会在报告中保留重复计数；通过整体结构校验、但混有语义无效行的成功文件
+会降级为 `PARTIAL`，有效行仍可分析。`SUCCESS` 完整清单、含有效商品的 `PARTIAL` 清单和明确 `EMPTY` 清单都会
+生成独立快照；风控/登录/解析失败状态不能冒充空店。
+
+### Agent/脚本调用接口
+
+保存供应商后，可以直接调用导入接口；接口返回的快照 ID 再传给运行接口：
+
+```powershell
+$document = Get-Content .\offers.json -Raw | ConvertFrom-Json
+$importBody = @{
+  filename = "offers.json"
+  document = $document
+} | ConvertTo-Json -Depth 20
+
+$sealed = Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8765/api/v1/supplier-scout/suppliers/$($supplier.supplier_id)/snapshots/import" `
+  -ContentType "application/json" -Body $importBody
+
+$job = Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8765/api/v1/supplier-scout/runs" `
+  -ContentType "application/json" `
+  -Body (@{
+    supplier_id = $supplier.supplier_id
+    inventory_snapshot_id = $sealed.snapshot.snapshot_id
+    selected_category_ids = @("fog_light_bezel")
+    market_request_budget = 20
+    max_amazon_queries_per_family = 3
+    grade_a_max_competitors = 5
+    grade_a_minus_max_competitors = 8
+    min_family_price_usd = 20
+    min_observed_ebay_demand = 1
+  } | ConvertTo-Json -Depth 10)
+```
+
+不使用页面时，也可以让 Agent 通过本地 CLI 完成同一件事（`--database` 放在子命令前）：
+
+```powershell
+.\.venv\Scripts\python.exe -m proteus supplier-scout `
+  --database .\supplier-scout.sqlite3 import-json `
+  --supplier-id $supplier.supplier_id --file .\offers.json
+```
+
+CLI/API 都只写本机 `%LOCALAPPDATA%\Proteus\supplier_scout.sqlite3`（除非显式指定数据库），
+导入成功后再使用页面或运行接口分析。市场请求预算耗尽只会把后续商品保留为
+`NOT_RUN_BUDGET`，不会从结果中删除。
+
+## 历史兼容：V0.2.8 Edge 解析诊断与续采修复
+
+以下内容记录旧版 Edge 采集证据，**不是 V0.2.9 的操作步骤**。当前页面不会创建采集任务，
+也不会隐式调用旧采集器；旧扩展和 capture API 仅为已有本地数据/兼容调用保留。
 
 如果 1688 店铺标签页早于扩展安装或“重新加载”就已打开，首次点击采集按钮会自动刷新
 该店铺页，再由内容脚本续接已经认领的任务；不再显示底层的 `Receiving end does not exist`
@@ -41,7 +146,10 @@ V0.2.3 精确 OEM 链路和 HioBuy 1688 兼容路径继续保留，但不再是�
 按钮；诊断摘要会显示在本页采集状态和最近快照卡片中。探针 URL 只允许 HTTPS 1688 域名及
 数字页码/offer ID 参数，不保存登录或验证令牌。
 
-## V0.2.6 供应商反向选品
+## 历史兼容：V0.2.6 供应商反向选品（Edge 采集）
+
+本节只保留旧版设计和已封存证据，供迁移旧快照或排查历史任务。V0.2.9 的页面、CLI 和新
+运行不会创建或调用这些 Edge 采集任务；新商品请按上面的 JSON 导入流程处理。
 
 导航栏中的“供应商反向选品”固定一家本机保存的 1688 店铺，以有边界的店铺快照替代
 eBay 发现作为候选来源：
@@ -118,7 +226,7 @@ AND 适配车型在美国的保有量 >= 本次运行显式阈值
 | eBay 近 365 天销量 | [eBay Product Research](https://www.ebay.com/help/selling/selling-tools/product-research?id=4853)（Terapeak）导出/规范化证据 | eBay 官方 Seller Hub 数据覆盖三年，能满足完整 365 天窗口 | 严格证据 API 已预留；导入器和真实样本待接入 |
 | 美国适配车辆保有量 | [TecAlliance TecDoc VIO](https://www.tecalliance.net/products?highlight=vio-data&solution=data-insights) | 同时覆盖车辆/适配语义与 VIO，避免再拼一个车型映射服务 | provider-neutral contract 已预留；商业开通和真实 adapter 待完成 |
 | VIO 备选 | [Experian Automotive VIO](https://www.experian.com/automotive/vehicles-in-operation-vio-data) | 美国 VIO 数据的替代来源 | 仅列为替换方案 |
-| 1688 供应商预筛 / 固定店铺快照 | 正向入口：本地 `1688-cli`；反向入口：项目内 Edge 扩展 | 正向入口确认供应商存在；反向入口从一家店的有界货盘产生候选 | 扩展只读普通 Edge 已渲染页面并回传 loopback；不自动处理 CAPTCHA，不做消息、购物或下单 |
+| 1688 供应商预筛 / 固定店铺导入快照 | 正向入口：本地 `1688-cli`；反向入口：用户/Agent JSON 导入 | 正向入口确认供应商存在；反向入口从一家店的导入货盘产生候选 | 反向入口只校验本地 JSON 并封存快照；不自动打开 Edge、不处理 CAPTCHA、不做消息、购物或下单 |
 
 自动 MVP 默认只需要 SerpApi 一枚 Key。严格 Product Research/VIO 证据只在真正执行
 严格筛选时需要。MarketCheck 可选，不再阻塞自动 MVP；NY DMV/NHTSA 实验 adapter 也不
@@ -160,18 +268,13 @@ py -3.12 -m venv .venv
    `.\.venv\Scripts\python.exe -m proteus api --port 8765`。
 3. 打开 `http://127.0.0.1:8765/`。使用“产品族初筛”走原有正向漏斗，或从导航进入
    `supplier-scout.html` 使用固定供应商反向入口。
-4. 选择一个末级零件类型；系统先做本地范围/家族过滤，再进行 1688 供应商预筛和 Amazon 核验。
-   如果 1688 暂时风控，可取消“1688 供应商前置筛选”；本次不访问 1688，但候选最终只能是待复核。
-5. 右侧默认显示有供应商且市场证据完整的候选，其他状态可通过筛选查看。
-6. 下载精简或完整 JSON 做最终复核；JSON 始终包含全部候选、规则读数、来源、缺口、失败原因和排名。
-
-供应商反向入口先保存店铺名称与商品列表 URL，再设置店铺页数、商品观察上限和市场请求预算。
-首次使用按页面提示从 `edge://extensions` 加载项目内扩展；“复制路径”会给出当前项目中可直接
-粘贴到文件选择器的绝对目录。之后点击“创建 Edge 采集任务”，在打开的已登录店铺页点击工具栏
-扩展即可。采集完成后页面自动启用“使用快照筛选”。若状态为
-`PARTIAL`，只能筛选已经观察到的商品；若状态为 `RISK_CONTROL` 或 `AUTH_REQUIRED`，用户完成
-对应页面操作后再次点击扩展继续，失败或阻断不会被当成空店。若店铺标签页是在加载或重载扩展
-之前打开，首次点击会自动刷新一次并继续，不需要手动重建任务。
+4. 正向入口选择一个末级零件类型；系统先做本地范围/家族过滤，再进行 1688 供应商预筛和
+   Amazon 核验。如果 1688 暂时风控，可取消“1688 供应商前置筛选”；本次不访问 1688，但候选
+   最终只能是待复核。
+5. 反向入口按上面的“JSON 导入”步骤保存供应商、导入清单，再点击“使用快照筛选”；页面不会
+   创建 Edge 采集任务或自动翻页。
+6. 右侧默认显示有供应商且市场证据完整的候选，其他状态可通过筛选查看；下载精简或完整 JSON
+   做最终复核，导出始终包含全部候选、规则读数、来源、缺口、失败原因和排名。
 
 `eBay 扫描页数`只按当前选择的零件类型计算。因此总 SerpApi 请求预算最低为
 `1 × 扫描页数`；1688 检查使用独立的 `max_1688_checks`，不会占用 SerpApi 预算。
@@ -224,15 +327,10 @@ npm i -g 1688-cli@0.1.47
 ```
 
 `1688-cli` 是 Node CLI，不安装进 Proteus 的 Python `.venv`；Proteus 通过系统 `PATH`
-调用 `1688`，而 Python `.venv` 继续只负责后端服务和依赖隔离。
-
-Northway 正向入口只调用 `search --max`，必要时读取一个 `offer` 详情。供应商反向入口不依赖
-CLI 的隐藏浏览器 profile，而是由用户在普通 Edge 中加载项目扩展一次：打开 `edge://extensions`，
-开启“开发人员模式”，选择“加载解压缩的扩展”，再选中 `browser-extension/supplier-collector`。
-以后 Agent 更新扩展文件时只需在同一页面点“重新加载”。旧的版本锁定只读 bridge 仅保留为
-兼容 API；更新后的首次采集若发现店铺页仍运行旧内容脚本，会自动刷新当前店铺页并重接管
-未过期任务。bridge 版本或内部布局变化时会 fail closed；当前页面不会调用它。本项目不会调用询价、
-消息、收藏、购物车、结算或下单命令。
+调用 `1688`，而 Python `.venv` 继续只负责后端服务和依赖隔离。Northway 正向入口才会调用
+`search --max`，供应商反向入口不依赖 1688-cli 或隐藏浏览器 profile，而是导入上面约定的本地
+JSON。旧 Edge 扩展和 capture API 仅保留为兼容接口，不是当前页面的采集依赖。本项目不会调用
+询价、消息、收藏、购物车、结算或下单命令。
 
 如果启动时提示 Windows `10048` 或“端口 8765 已被占用”，先查看占用进程：
 
@@ -280,13 +378,9 @@ Stop-Process -Id <PID>
 | `GET` | `/api/v1/northway/runs/{run_id}/export` | 下载完整证据 JSON |
 | `GET` | `/api/v1/supplier-scout/policy` | 供应商反向入口的 ACTIVE 分类、阈值和双重预算边界 |
 | `GET/POST` | `/api/v1/supplier-scout/suppliers` | 列出或保存本机供应商来源 |
-| `GET` | `/api/v1/supplier-scout/collector/profile` | 下发版本化、非可执行的 1688 DOM 选择器和滚动边界 |
-| `POST` | `/api/v1/supplier-scout/captures` | 为一家已保存店铺创建短期有界 Edge 采集任务 |
-| `GET` | `/api/v1/supplier-scout/captures/pending` | 让扩展按当前店铺域名发现待领取任务 |
-| `GET` | `/api/v1/supplier-scout/captures/{capture_id}` | 查询采集页数、商品数、暂停原因和快照 ID |
-| `POST` | `/api/v1/supplier-scout/captures/{capture_id}/claim`<br>`/api/v1/supplier-scout/captures/{capture_id}/pages`<br>`/api/v1/supplier-scout/captures/{capture_id}/pause` | 扩展用短期令牌领取、提交页面或暂停任务 |
+| `POST` | `/api/v1/supplier-scout/suppliers/{supplier_id}/snapshots/import` | 校验 JSON、绑定供应商并封存不可变快照 |
 | `GET` | `/api/v1/supplier-scout/suppliers/{supplier_id}/snapshots/latest` | 查询该供应商最近的不可变快照摘要 |
-| `POST` | `/api/v1/supplier-scout/suppliers/inspect` | 旧只读 bridge 兼容入口；不把阻断当空店 |
+| `POST` | `/api/v1/supplier-scout/suppliers/inspect` | 返回“需要 JSON 导入”的本地检查状态（旧 bridge 注入调用仅兼容） |
 | `POST` | `/api/v1/supplier-scout/runs` | 绑定已封存快照，异步执行供应商反向筛选 |
 | `GET` | `/api/v1/supplier-scout/runs/{run_id}` | 查询进度与全部已观察商品去向 |
 | `GET` | `/api/v1/supplier-scout/runs/{run_id}/export/compact` | 下载供应商反向精简 JSON |
@@ -296,6 +390,10 @@ Stop-Process -Id <PID>
 | `POST` | `/api/v1/screening/evaluate` | 对规范化证据执行严格筛选 |
 | `POST` | `/api/v1/runs` | 旧两账号自动供货链路：异步提交 |
 | `GET` | `/api/v1/runs/{run_id}` | 旧链路：查询状态和结果 |
+
+旧版 `/captures/*` 和 `/collector/profile` 路由仍可能存在于本地服务中，用于读取已有历史
+数据或兼容调用；它们不在当前页面流程中，新的 `/supplier-scout/runs` 请求必须带有导入快照
+ID，服务不会在缺少快照时自动采集店铺。
 
 Northway MVP 使用示例：
 
@@ -343,7 +441,7 @@ Invoke-RestMethod `
 实时市场结果。后续如需正式复用历史结果，应增加带时间戳和明确 `REPLAY` 标记的本地缓存，
 不能把过期数据伪装成新鲜扫描。
 
-供应商反向 API 的最小示例：
+供应商反向 API 的最小示例（先保存供应商，再导入 JSON）：
 
 ```powershell
 $supplier = Invoke-RestMethod -Method Post `
@@ -354,34 +452,34 @@ $supplier = Invoke-RestMethod -Method Post `
     target = "https://shop3w093345o1043.1688.com/page/offerlist.htm"
   } | ConvertTo-Json)
 
-$capture = Invoke-RestMethod -Method Post `
-  -Uri "http://127.0.0.1:8765/api/v1/supplier-scout/captures" `
+$document = Get-Content .\offers.json -Raw | ConvertFrom-Json
+$sealed = Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8765/api/v1/supplier-scout/suppliers/$($supplier.supplier_id)/snapshots/import" `
   -ContentType "application/json" `
   -Body (@{
-    supplier_id = $supplier.supplier_id
-    max_pages = 3
-    max_offers = 100
-  } | ConvertTo-Json)
-
-# 在该供应商的普通 Edge 店铺页点击项目扩展；等页面显示完成或已有可用的部分快照后继续。
-$captureState = Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8765/api/v1/supplier-scout/captures/$($capture.capture_id)"
-if (-not $captureState.snapshot_id) { throw "店铺快照尚不可用" }
+    filename = "offers.json"
+    document = $document
+  } | ConvertTo-Json -Depth 20)
+if (-not $sealed.can_run) { throw "导入快照不可用于筛选，请检查清单状态" }
 
 $job = Invoke-RestMethod -Method Post `
   -Uri "http://127.0.0.1:8765/api/v1/supplier-scout/runs" `
   -ContentType "application/json" `
   -Body (@{
     supplier_id = $supplier.supplier_id
-    inventory_snapshot_id = $captureState.snapshot_id
-    max_pages = 3
-    max_offers = 100
+    inventory_snapshot_id = $sealed.snapshot.snapshot_id
+    selected_category_ids = @("fog_light_bezel")
     market_request_budget = 20
-  } | ConvertTo-Json)
+    max_amazon_queries_per_family = 3
+    grade_a_max_competitors = 5
+    grade_a_minus_max_competitors = 8
+    min_family_price_usd = 20
+    min_observed_ebay_demand = 1
+  } | ConvertTo-Json -Depth 10)
 ```
 
-运行 envelope 仍在内存中，服务重启后不能继续轮询旧 `run_id`；已经采集的店铺快照保留在
-独立 SQLite 中。市场预算耗尽只会把后续商品标为 `NOT_RUN_BUDGET`，不会从结果删除。
+运行 envelope 仍在内存中，服务重启后不能继续轮询旧 `run_id`；已经导入的快照保留在独立
+SQLite 中。市场预算耗尽只会把后续商品标为 `NOT_RUN_BUDGET`，不会从结果删除。
 
 ## 分类目录维护
 

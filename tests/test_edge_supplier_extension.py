@@ -45,29 +45,35 @@ def test_packaged_selector_profile_is_non_executable_and_bounded() -> None:
     assert not any("javascript:" in value.lower() for value in profile["offer_link_selectors"])
 
 
-def test_policy_exposes_the_real_project_extension_directory(tmp_path: Path) -> None:
+def test_policy_exposes_json_import_as_the_primary_supplier_source(tmp_path: Path) -> None:
     service = DefaultFrontendService(
         category_catalog=CategoryCatalog(tmp_path / "categories.sqlite3"),
         supplier_store=SupplierScoutStore(tmp_path / "supplier-scout.sqlite3"),
     )
 
-    edge_policy = service.supplier_scout_policy()["edge_collector"]
+    policy = service.supplier_scout_policy()
 
-    assert edge_policy["extension_path"] == "browser-extension/supplier-collector"
-    assert Path(edge_policy["extension_path_absolute"]).resolve() == EXTENSION.resolve()
+    import_policy = policy["inventory_import"]
+    assert import_policy["format"] == "proteus.supplier_inventory"
+    assert import_policy["version"] == 1
+    assert import_policy["max_document_bytes"] == 10 * 1024 * 1024
+    assert import_policy["max_offers"] == 1000
+    assert "edge_collector" not in policy
 
 
-def test_supplier_scout_frontend_uses_captured_snapshot_instead_of_headed_bridge() -> None:
+def test_supplier_scout_frontend_uses_json_snapshot_instead_of_edge_capture() -> None:
     html = (ROOT / "web" / "supplier-scout.html").read_text(encoding="utf-8")
     javascript = (ROOT / "web" / "supplier-scout.js").read_text(encoding="utf-8")
 
-    assert 'id="createCaptureButton"' in html
-    assert "browser-extension/supplier-collector" in html
+    assert 'id="importInventoryButton"' in html
+    assert "examples/supplier_inventory_import.example.json" in html
+    assert "browser-extension/supplier-collector" not in html
     assert 'id="headed"' not in html
     assert "inventory_snapshot_id: activeSnapshotId" in javascript
     assert "#headed" not in javascript
-    assert "parserProbeDescription" in javascript
-    assert "未识别到商品" in javascript
+    assert "createCapture" not in javascript
+    assert "snapshots/import" in javascript
+    assert "已导入" in javascript
 
 
 def test_supplier_collector_core_node_contract() -> None:

@@ -8,16 +8,18 @@
 
 ---
 
-## 2026-08-30 当前修订：固定 1688 供应商反向选品（与 Northway 正向入口并列）
+## 2026-08-30 当前修订：固定 1688 供应商反向选品（JSON 导入，与 Northway 正向入口并列）
 
-Proteus 新增一个独立候选来源：用户先固定一家 1688 供应商，系统在显式页数和商品数
-边界内读取该店可见 offer，再复用当前 ACTIVE 低责任零件目录、产品家族身份、eBay 需求
-和 Amazon A / A- 竞争语义进行筛选。它不替代原有“选一个叶子小类 → eBay 发现”的
-Northway 入口。
+Proteus 新增一个独立候选来源：用户先固定一家 1688 供应商，再由用户或 Agent 在获准的
+浏览器/工具流程中整理商品并导入版本化 JSON。Proteus 在本地校验供应商绑定、商品身份、
+去重和清单完整度，封存不可变快照，再复用当前 ACTIVE 低责任零件目录、产品家族身份、
+eBay 需求和 Amazon A / A- 竞争语义进行筛选。它不替代原有“选一个叶子小类 → eBay 发现”
+的 Northway 入口，也不会自动打开 Edge、翻页或处理 1688 验证。
 
 ```text
 one saved supplier
-→ bounded immutable store snapshot
+→ user/Agent JSON inventory import
+→ bounded immutable inventory snapshot
 → exact supplier binding and offer deduplication
 → ACTIVE category match
 → product-family identity
@@ -26,20 +28,21 @@ one saved supplier
 → complete observed-offer review/export
 ```
 
-店铺快照必须同时记录 `pages_attempted / pages_completed`、观察商品数、页面报告总数、
-是否仍有下一页和 `inventory_complete`。触及任一上限为 `PARTIAL`；登录、滑块、超时和
-解析失败分别保留，只有明确 0 件且无下一页才是 `EMPTY`。所有边界内已观察 offer 都要
-保留去向；未匹配分类、分类冲突、身份不足和市场预算耗尽分别标记，不得静默删除。
+导入快照必须同时记录 `pages_attempted / pages_completed`、有效商品数、报告总数、是否
+仍有下一页和 `inventory_complete`。不完整清单必须是 `PARTIAL`；登录、滑块、超时和解析
+失败由生成 JSON 的 Agent 明确保留，不能冒充 `EMPTY`。只有明确 0 件且无下一页才是
+`EMPTY`。所有导入的有效 offer 都要保留去向；无效行、重复行、未匹配分类、分类冲突、
+身份不足和市场预算耗尽分别标记，不得静默删除。
 
 供应商来源与快照使用独立本机 SQLite；分类仍通过既有 `validate → DRAFT → activate →
 archive` 流程维护，运行提交时冻结 ACTIVE 版本。A / A- 继续只表示 Amazon 可互换产品族
 竞争数量，与供应商质量、MOQ、采购可行性和最终商机资格分离。
 
-当前店铺 provider 仅进行只读页面导航和 DOM 提取。它不读取或导出 cookie，不调用询价、
-消息、收藏、购物车、结算或订单能力，不自动识别或拖动 CAPTCHA。Headless 遇到滑块必须
-返回 `RISK_CONTROL`；仅在用户按次启用 headed 模式时等待用户亲自完成验证。
+当前供应商反向入口仅进行本地 JSON 校验、规范化和市场分析。它不读取或导出 cookie，不
+调用询价、消息、收藏、购物车、结算或订单能力，不自动识别或拖动 CAPTCHA；生成商品 JSON
+的外部工具由用户自行授权和管理，Proteus 不执行文件内容或访问文件里的 URL。
 
-### Edge 首页解析诊断（V0.2.8）
+### 历史 Edge 首页解析诊断（V0.2.8，当前入口不再使用）
 
 普通 Edge 扩展在第一页没有识别到 offer 或无法确认下一页时，会提交受限的 `parser_probe`
 （DOM 链接与选择器命中数、疑似商品/分页摘要、iframe/开放 Shadow Root、嵌入数据标记）。
