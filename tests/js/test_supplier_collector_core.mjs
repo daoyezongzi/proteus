@@ -20,6 +20,20 @@ test("canonicalizes only real 1688 offer links", () => {
   );
   assert.equal(core.offerIdFromUrl("https://example.com/offer/123456.html"), "");
   assert.equal(core.offerIdFromUrl("javascript:alert(1)"), "");
+  assert.equal(
+    core.canonicalOfferUrl(
+      "/offer/654321.html?spm=test",
+      "https://shop.example.1688.com/page/offerlist.htm",
+    ),
+    "https://detail.1688.com/offer/654321.html",
+  );
+  assert.equal(
+    core.canonicalOfferUrl(
+      "https://shop.example.1688.com/item/view.htm?offerId=777888&token=secret",
+      "https://shop.example.1688.com/",
+    ),
+    "https://detail.1688.com/offer/777888.html",
+  );
 });
 
 test("distinguishes authentication and risk-control text", () => {

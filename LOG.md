@@ -1,5 +1,23 @@
 # Proteus Development Log
 
+## 2026-08-30 — V0.2.8 Edge 首页解析诊断与保守续采
+
+- 上一份真实证据显示任务停在 `PARSER_FAILED`、`pages_completed=0`，但没有保存第一页
+  的结构线索；因此无法区分 DOM 选择器过时、iframe/Shadow DOM、嵌入数据或页面仍在验证。
+  根因不是“没有下一页”：第一页未证明商品清单时，保守策略本来就不应翻页。
+- 扩展解析器现在支持店铺相对 offer 链接、offerId 查询参数和常见 `data-*` 商品身份字段，
+  统一去跟踪参数后生成 detail URL；下一页额外探测中文/英文标签和常见箭头控件，但仍只
+  在已渲染控件明确可用时推进。
+- 无商品或分页未知时提交有界 `parser_probe`，包含链接/匹配数、候选摘要、iframe/开放
+  Shadow Root 和少量嵌入数据标记。服务端校验并保存 `page_evidence` 与诊断，重复失败不
+  无限追加；前端在任务状态和最近快照中显示诊断，明确“尚未进入自动翻页”。探针只接受
+  HTTPS 1688 域名及数字页码/offer ID 查询参数。
+- 本地验证：全量 Python 回归通过；Python 编译、Node 合约与 JavaScript 语法、`pip check`、
+  `git diff --check` 均通过；PEP 517 构建出 `proteus_opportunity_finder-0.2.8-py3-none-any.whl`
+  （SHA-256 `e709abacadf0dcbdc13a0c3d0cd7ba0222758d2efd28cc71392890becbf44bd6`）。真实
+  ordinary-Edge 复验仍需用户在 `edge://extensions` Reload 后点击工具栏扩展；本次服务重启
+  后尚未收到新的 capture POST，因此不宣称自动翻页已在真实店铺验收。
+
 ## 2026-08-30 — V0.2.7 Edge collector reconnection
 
 - User acceptance exposed `Could not establish connection. Receiving end does not exist.` after a

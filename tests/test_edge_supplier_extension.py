@@ -66,6 +66,8 @@ def test_supplier_scout_frontend_uses_captured_snapshot_instead_of_headed_bridge
     assert 'id="headed"' not in html
     assert "inventory_snapshot_id: activeSnapshotId" in javascript
     assert "#headed" not in javascript
+    assert "parserProbeDescription" in javascript
+    assert "未识别到商品" in javascript
 
 
 def test_supplier_collector_core_node_contract() -> None:
@@ -161,6 +163,28 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
                 "profile => globalThis.Proteus1688CollectorCore.detectBlock(document, location.href, profile)",
                 profile,
             )
+            page.set_content(
+                """
+                <div class="modern-item" data-offer-id="90001"
+                     data-href="/offer/90001.html" data-title="现代店铺商品 90001">
+                  <img alt="现代店铺商品 90001" src="https://cbu01.alicdn.com/90001.jpg">
+                </div>
+                <div class="query-item" data-href="/item/view.htm?offerId=90002"
+                     data-title="查询参数商品 90002"></div>
+                <a href="https://example.com/private?token=must-not-leak">外站</a>
+                <div class="wp-paging-unit"><button class="next-page">下一页</button></div>
+                <iframe src="https://show.1688.com/page/offers.html?token=must-not-leak"></iframe>
+                """
+            )
+            page.add_script_tag(path=EXTENSION / "collector-core.js")
+            fallback = page.evaluate(
+                """profile => ({
+                  offers: globalThis.Proteus1688CollectorCore.extractOffers(document, profile, "https://shop.example.1688.com/page/offerlist.htm"),
+                  pagination: globalThis.Proteus1688CollectorCore.paginationState(document, profile).has_next_page,
+                  probe: globalThis.Proteus1688CollectorCore.parserProbe(document, profile, "https://shop.example.1688.com/page/offerlist.htm")
+                })""",
+                profile,
+            )
         finally:
             browser.close()
 
@@ -178,3 +202,21 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
     assert result["hasNext"] is True
     assert blocked == "RISK_CONTROL"
     assert hidden_block is None
+    assert fallback["offers"] == [
+        {
+            "offer_id": "90001",
+            "title": "现代店铺商品 90001",
+            "offer_url": "https://detail.1688.com/offer/90001.html",
+            "image_url": "https://cbu01.alicdn.com/90001.jpg",
+        },
+        {
+            "offer_id": "90002",
+            "title": "查询参数商品 90002",
+            "offer_url": "https://detail.1688.com/offer/90002.html",
+        },
+    ]
+    assert fallback["pagination"] is True
+    assert fallback["probe"]["configured_offer_match_count"] == 1
+    assert fallback["probe"]["offer_candidates"][0]["data_offer_id"] == "90001"
+    assert "token=" not in json.dumps(fallback["probe"], ensure_ascii=False)
+    assert "example.com" not in json.dumps(fallback["probe"], ensure_ascii=False)

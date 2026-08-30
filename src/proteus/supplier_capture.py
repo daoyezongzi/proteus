@@ -211,6 +211,20 @@ class SupplierCaptureManager:
             if capture.get(key) is not None
         }
         result["next_page_number"] = int(capture["pages_completed"]) + 1
+        diagnostics = capture.get("diagnostics") or []
+        if diagnostics:
+            specific = next(
+                (
+                    item
+                    for item in reversed(diagnostics)
+                    if item.get("code") != capture.get("last_pause_reason")
+                ),
+                diagnostics[-1],
+            )
+            result["last_diagnostic"] = deepcopy(specific)
+        page_evidence = capture.get("page_evidence") or []
+        if page_evidence:
+            result["last_page_evidence"] = deepcopy(page_evidence[-1])
         if include_token:
             result["capture_token"] = str(capture["_capture_token"])
         return result
@@ -337,6 +351,7 @@ class SupplierCaptureManager:
             "_offer_ids": set(),
             "page_evidence": [],
             "_page_hashes": {},
+            "_diagnostic_hashes": set(),
             "_invalid_offer_count": 0,
             "created_at": _iso(now),
             "updated_at": _iso(now),
@@ -408,13 +423,13 @@ class SupplierCaptureManager:
         capture["last_pause_reason"] = reason
         capture["status"] = "PAUSED"
         capture["warnings"] = list(dict.fromkeys([*capture["warnings"], reason]))
-        capture["diagnostics"].append(
-            {
-                "code": reason,
-                "message": "The ordinary Edge page requires user attention before capture can continue.",
-                "page_url": page_url,
-            }
-        )
+        diagnostic = {
+            "code": reason,
+            "message": "The ordinary Edge page requires user attention before capture can continue.",
+            "page_url": page_url,
+        }
+        if not capture["diagnostics"] or capture["diagnostics"][-1] != diagnostic:
+            capture["diagnostics"].append(diagnostic)
         self._persist_snapshot_locked(
             capture,
             acquisition_status="PARTIAL" if capture["offers"] else reason,
@@ -557,18 +572,6 @@ class SupplierCaptureManager:
             if truncated:
                 capture["warnings"].append("OFFER_BOUND_REACHED")
 
-            if accepted == 0 and truncated == 0 and not empty_state:
-                capture["diagnostics"].append(
-                    {
-                        "code": "PAGE_OFFERS_NOT_CONFIRMED",
-                        "message": "The rendered page did not prove a new offer list or an explicit empty state.",
-                        "page_url": page_url,
-                    }
-                )
-                return self._pause_locked(
-                    capture, reason="PARSER_FAILED", page_url=page_url
-                )
-
             evidence = page.get("evidence")
             evidence_copy = deepcopy(dict(evidence)) if isinstance(evidence, Mapping) else {}
             evidence_copy.update(
@@ -586,6 +589,28 @@ class SupplierCaptureManager:
                     "empty_state": empty_state,
                 }
             )
+
+            if accepted == 0 and truncated == 0 and not empty_state:
+                capture["pages_attempted"] = max(
+                    int(capture["pages_attempted"]), page_number
+                )
+                capture["available_offer_count"] = available
+                capture["has_next_page"] = has_next
+                diagnostic_hash = _text(evidence_copy.get("dom_sha256")) or page_hash
+                if diagnostic_hash not in capture["_diagnostic_hashes"]:
+                    capture["_diagnostic_hashes"].add(diagnostic_hash)
+                    capture["page_evidence"].append(evidence_copy)
+                    capture["diagnostics"].append(
+                        {
+                            "code": "PAGE_OFFERS_NOT_CONFIRMED",
+                            "message": "The rendered page did not prove a new offer list or an explicit empty state.",
+                            "page_url": page_url,
+                        }
+                    )
+                return self._pause_locked(
+                    capture, reason="PARSER_FAILED", page_url=page_url
+                )
+
             capture["page_evidence"].append(evidence_copy)
             capture["_page_hashes"][page_number] = page_hash
             capture["pages_attempted"] = page_number

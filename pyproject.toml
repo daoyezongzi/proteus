@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proteus-opportunity-finder"
-version = "0.2.7"
+version = "0.2.8"
 description = "Evidence-first automotive parts opportunity finder"
 requires-python = ">=3.12"
 dependencies = [

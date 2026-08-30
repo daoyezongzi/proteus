@@ -20,6 +20,12 @@ collector click reloads that store tab once. The content script then resumes
 the same unexpired Proteus capture automatically. A lost extension-session
 state can reattach to the matching in-progress capture instead of stranding it.
 
+The collector also records a bounded parser probe when no offer is recognized
+or pagination is ambiguous. Proteus shows the probe in the capture status and
+keeps the page at `PARSER_FAILED` until a user reloads/repairs the normal page;
+it never treats an unproven page as an empty store. Probe URLs are sanitized to
+HTTPS 1688 paths with numeric paging or offer-ID parameters only.
+
 ## Boundary
 
 - The user creates a bounded capture in Proteus and explicitly clicks the

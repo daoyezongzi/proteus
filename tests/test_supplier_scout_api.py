@@ -249,7 +249,20 @@ def test_supplier_scout_api_exposes_user_triggered_edge_capture_lifecycle() -> N
                     "offer_url": "https://detail.1688.com/offer/10001.html",
                 }
             ],
-            "evidence": {"dom_sha256": "a" * 64},
+            "evidence": {
+                "dom_sha256": "a" * 64,
+                "parser_probe": {
+                    "anchor_count": 10,
+                    "iframe_count": 0,
+                    "shadow_host_count": 0,
+                    "configured_offer_match_count": 1,
+                    "configured_next_match_count": 0,
+                    "offer_candidates": [],
+                    "pagination_candidates": [],
+                    "frame_candidates": [],
+                    "embedded_data_markers": [],
+                },
+            },
         },
     )
     status_response = client.get("/api/v1/supplier-scout/captures/cap_123")
@@ -277,6 +290,44 @@ def test_supplier_capture_mutations_require_the_opaque_token() -> None:
     response = client.post(
         "/api/v1/supplier-scout/captures/cap_123/claim",
         json={"page_url": STORE_URL},
+    )
+
+    assert response.status_code == 422
+
+
+def test_supplier_capture_parser_probe_rejects_unsanitized_diagnostic_values() -> None:
+    client = TestClient(create_app(service=SupplierScoutApiService()))
+
+    response = client.post(
+        "/api/v1/supplier-scout/captures/cap_123/pages",
+        headers={"X-Proteus-Capture-Token": "capture-secret"},
+        json={
+            "page_number": 1,
+            "page_url": STORE_URL,
+            "has_next_page": None,
+            "available_offer_count": None,
+            "empty_state": False,
+            "offers": [],
+            "evidence": {
+                "dom_sha256": "b" * 64,
+                "parser_probe": {
+                    "anchor_count": 1,
+                    "iframe_count": 0,
+                    "shadow_host_count": 0,
+                    "configured_offer_match_count": 0,
+                    "configured_next_match_count": 0,
+                    "offer_candidates": [
+                        {
+                            "tag": "a",
+                            "url": f"{STORE_URL}?token=secret",
+                        }
+                    ],
+                    "pagination_candidates": [],
+                    "frame_candidates": [],
+                    "embedded_data_markers": [],
+                },
+            },
+        },
     )
 
     assert response.status_code == 422

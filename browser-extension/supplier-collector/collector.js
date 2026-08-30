@@ -130,6 +130,9 @@
         priorObservedCount: state.observed_offer_count,
         currentOfferCount: offers.length,
       });
+      const parserProbe = offers.length === 0 || hasNext === null
+        ? core.parserProbe(document, profile, location.href)
+        : null;
       const evidenceText = [
         location.href,
         document.title,
@@ -148,6 +151,7 @@
             dom_sha256: await sha256(evidenceText),
             document_title: document.title.slice(0, 300),
             profile_id: profile.profile_id,
+            ...(parserProbe ? { parser_probe: parserProbe } : {}),
           },
         },
       });

@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 from threading import Lock
 from typing import Any, Literal, Protocol
+from urllib.parse import parse_qsl, urlparse
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, status
@@ -277,12 +278,75 @@ class SupplierCaptureOfferRequest(BaseModel):
         return value
 
 
+class SupplierCaptureElementHintRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tag: str = Field(min_length=1, max_length=20, pattern=r"^[a-z][a-z0-9-]*$")
+    url: str | None = Field(
+        default=None,
+        max_length=700,
+        pattern=r"^https://(?:[a-zA-Z0-9-]+\.)*1688\.com(?:/[^\s#]*)?$",
+    )
+    text: str | None = Field(default=None, max_length=160)
+    class_name: str | None = Field(default=None, max_length=240)
+    aria_label: str | None = Field(default=None, max_length=120)
+    data_offer_id: str | None = Field(default=None, max_length=30, pattern=r"^[0-9]+$")
+
+    @field_validator("url")
+    @classmethod
+    def validate_diagnostic_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlparse(value)
+        if (
+            parsed.scheme != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.fragment
+            or not re.fullmatch(r"(?:[a-zA-Z0-9-]+\.)*1688\.com", parsed.hostname or "")
+        ):
+            raise ValueError("diagnostic URLs must be sanitized HTTPS 1688 URLs")
+        allowed_keys = {"pageNum", "pageNo", "page", "beginPage", "offerId", "offer_id", "offerid"}
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+        if any(key not in allowed_keys or not re.fullmatch(r"\d{1,30}", value) for key, value in query):
+            raise ValueError("diagnostic URL query parameters must be bounded numeric fields")
+        return value
+
+
+class SupplierCaptureParserProbeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_count: int = Field(ge=0, le=1_000_000)
+    iframe_count: int = Field(ge=0, le=10_000)
+    shadow_host_count: int = Field(ge=0, le=10_000)
+    configured_offer_match_count: int = Field(ge=0, le=100_000)
+    configured_next_match_count: int = Field(ge=0, le=10_000)
+    offer_candidates: list[SupplierCaptureElementHintRequest] = Field(
+        default_factory=list, max_length=24
+    )
+    pagination_candidates: list[SupplierCaptureElementHintRequest] = Field(
+        default_factory=list, max_length=12
+    )
+    frame_candidates: list[SupplierCaptureElementHintRequest] = Field(
+        default_factory=list, max_length=12
+    )
+    embedded_data_markers: list[str] = Field(default_factory=list, max_length=12)
+
+    @field_validator("embedded_data_markers")
+    @classmethod
+    def validate_embedded_markers(cls, value: list[str]) -> list[str]:
+        if any(not re.fullmatch(r"[A-Za-z0-9_.-]{1,50}", item) for item in value):
+            raise ValueError("embedded data markers must contain 1-50 characters")
+        return value
+
+
 class SupplierCaptureEvidenceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dom_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     document_title: str | None = Field(default=None, max_length=300)
     profile_id: str | None = Field(default=None, min_length=1, max_length=100)
+    parser_probe: SupplierCaptureParserProbeRequest | None = None
 
 
 class SupplierCapturePageRequest(BaseModel):
@@ -840,6 +904,8 @@ class DefaultFrontendService:
                 "has_next_page",
                 "source_method",
                 "warnings",
+                "diagnostics",
+                "page_evidence",
             )
         }
 

@@ -293,25 +293,69 @@ def test_unproven_empty_page_pauses_without_consuming_the_page_number(
     token = created["capture_token"]
     captures.claim_capture(created["capture_id"], token, page_url=STORE_URL)
 
+    page = {
+        "page_number": 1,
+        "page_url": STORE_URL,
+        "has_next_page": None,
+        "available_offer_count": None,
+        "empty_state": False,
+        "offers": [],
+        "evidence": {
+            "dom_sha256": "0" * 64,
+            "document_title": "供应商全部商品",
+            "profile_id": "1688-store-offer-list-v1",
+            "parser_probe": {
+                "anchor_count": 20,
+                "iframe_count": 1,
+                "shadow_host_count": 0,
+                "configured_offer_match_count": 0,
+                "configured_next_match_count": 0,
+                "offer_candidates": [
+                    {
+                        "tag": "div",
+                        "url": "https://shop3w093345o1043.1688.com/offer/90001.html",
+                        "text": "测试商品 90001",
+                        "class_name": "modern-item",
+                        "data_offer_id": "90001",
+                    }
+                ],
+                "pagination_candidates": [],
+                "frame_candidates": [
+                    {
+                        "tag": "iframe",
+                        "url": "https://show.1688.com/page/offers.html",
+                    }
+                ],
+                "embedded_data_markers": [],
+            },
+        },
+    }
     paused = captures.ingest_page(
         created["capture_id"],
         token,
-        {
-            "page_number": 1,
-            "page_url": STORE_URL,
-            "has_next_page": False,
-            "available_offer_count": None,
-            "empty_state": False,
-            "offers": [],
-            "evidence": {"dom_sha256": "0" * 64},
-        },
+        page,
     )
 
     assert paused["status"] == "PAUSED"
+    assert paused["pages_attempted"] == 1
     assert paused["pages_completed"] == 0
     assert paused["next_page_number"] == 1
+    assert paused["last_diagnostic"]["code"] == "PAGE_OFFERS_NOT_CONFIRMED"
+    assert paused["last_page_evidence"]["parser_probe"]["anchor_count"] == 20
     blocked = captures.store.get_snapshot(paused["snapshot_id"])
     assert blocked["acquisition_status"] == "PARSER_FAILED"
+    assert blocked["pages_attempted"] == 1
+    assert blocked["page_evidence"][0]["parser_probe"]["offer_candidates"][0][
+        "data_offer_id"
+    ] == "90001"
+
+    captures.claim_capture(created["capture_id"], token, page_url=STORE_URL)
+    repeated = captures.ingest_page(created["capture_id"], token, page)
+    repeated_snapshot = captures.store.get_snapshot(repeated["snapshot_id"])
+    assert len(repeated_snapshot["page_evidence"]) == 1
+    assert [item["code"] for item in repeated_snapshot["diagnostics"]].count(
+        "PAGE_OFFERS_NOT_CONFIRMED"
+    ) == 1
     assert blocked["inventory_complete"] is False
 
 

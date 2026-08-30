@@ -216,7 +216,53 @@ function captureDescription(capture) {
     COMPLETED: `店铺快照已封存：${pages} 页、${offers} 件。现在可以开始市场筛选。`,
     EXPIRED: "采集任务已过期；已观察的部分证据会保留，请重新创建任务。",
   };
-  return descriptions[capture?.status] || "正在读取采集状态。";
+  const base = descriptions[capture?.status] || "正在读取采集状态。";
+  const diagnostic = captureDiagnosticDescription(capture);
+  return diagnostic ? `${base} ${diagnostic}` : base;
+}
+
+function parserProbeDescription(probe, pageNumber = 1) {
+  if (!probe) return "";
+  const offers = Array.isArray(probe.offer_candidates) ? probe.offer_candidates : [];
+  const pages = Array.isArray(probe.pagination_candidates) ? probe.pagination_candidates : [];
+  const frames = Array.isArray(probe.frame_candidates) ? probe.frame_candidates : [];
+  const markers = Array.isArray(probe.embedded_data_markers) ? probe.embedded_data_markers : [];
+  const parts = [
+    `第 ${Number(pageNumber || 1)} 页 DOM 有 ${Number(probe.anchor_count || 0)} 个链接`,
+    `既有商品选择器命中 ${Number(probe.configured_offer_match_count || 0)} 个`,
+  ];
+  if (offers.length) {
+    const examples = offers.slice(0, 3).map((item) => item.data_offer_id || item.url || item.tag).join("、");
+    parts.push(`发现 ${offers.length} 个疑似商品结构（${examples}）`);
+  } else {
+    parts.push("未发现可识别的 offer 链接或 ID");
+  }
+  if (pages.length || Number(probe.configured_next_match_count || 0)) {
+    parts.push(`发现 ${Math.max(pages.length, Number(probe.configured_next_match_count || 0))} 个下一页候选`);
+  }
+  if (frames.length || Number(probe.iframe_count || 0)) {
+    parts.push(`页面含 ${Number(probe.iframe_count || frames.length)} 个 iframe`);
+  }
+  if (Number(probe.shadow_host_count || 0)) parts.push(`页面含 ${Number(probe.shadow_host_count)} 个开放 Shadow Root`);
+  if (markers.length) parts.push(`嵌入数据标记：${markers.join("、")}`);
+  return `${parts.join("；")}。`;
+}
+
+function captureDiagnosticDescription(value) {
+  const diagnostics = Array.isArray(value?.diagnostics) ? value.diagnostics : [];
+  const diagnostic = [...diagnostics].reverse().find((item) => item?.code === "PAGE_OFFERS_NOT_CONFIRMED")
+    || value?.last_diagnostic
+    || diagnostics.at(-1);
+  const pageEvidence = Array.isArray(value?.page_evidence) ? value.page_evidence : [];
+  const evidence = value?.last_page_evidence || pageEvidence.at(-1);
+  const reasons = {
+    PAGE_OFFERS_NOT_CONFIRMED: "第一页未识别到商品，因此尚未进入自动翻页。",
+    PARSER_FAILED: "页面结构无法确认，未把失败误判为空店。",
+    TIMEOUT: "页面或下一页未在等待窗口内完成变化。",
+  };
+  const reason = reasons[diagnostic?.code] || "";
+  const probe = parserProbeDescription(evidence?.parser_probe, evidence?.page_number);
+  return [reason, probe].filter(Boolean).join(" ");
 }
 
 function renderCaptureStatus(capture, snapshot = null) {
@@ -239,7 +285,8 @@ function renderCaptureStatus(capture, snapshot = null) {
   const usable = ["SUCCESS", "EMPTY"].includes(status)
     || (status === "PARTIAL" && Number(snapshot.observed_offer_count || 0) > 0);
   element.dataset.state = usable ? "ready" : "error";
-  element.innerHTML = `<strong>最近快照 · ${esc(sourceStatus[status]?.[0] || status)}</strong><span>${Number(snapshot.pages_completed || 0)} 页、${Number(snapshot.observed_offer_count || 0)} 件；${usable ? "可以复用或重新采集。" : "不能用于筛选，请重新采集。"}</span>`;
+  const diagnostic = captureDiagnosticDescription(snapshot);
+  element.innerHTML = `<strong>最近快照 · ${esc(sourceStatus[status]?.[0] || status)}</strong><span>${Number(snapshot.pages_completed || 0)} 页、${Number(snapshot.observed_offer_count || 0)} 件；${usable ? "可以复用或重新采集。" : "不能用于筛选，请重新采集。"}${diagnostic ? ` ${esc(diagnostic)}` : ""}</span>`;
 }
 
 function useSnapshot(snapshot) {
