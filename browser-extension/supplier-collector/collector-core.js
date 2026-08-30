@@ -464,7 +464,44 @@
     });
   }
 
-  function pageStateHints(documentRoot) {
+  function resourceRouteHint(value, pageUrl) {
+    let url = null;
+    try {
+      url = new URL(value, pageUrl);
+    } catch (_error) {
+      return "";
+    }
+    if (url.protocol !== "https:" || !is1688Host(url.hostname)) return "";
+    const segments = url.pathname
+      .split("/")
+      .filter(Boolean)
+      .slice(0, 16)
+      .map((segment) => {
+        if (/^[0-9]{1,30}$/.test(segment)) return ":id";
+        if (segment.length > 80 || /^[A-Za-z0-9_-]{24,}$/.test(segment)) return ":segment";
+        return /^[A-Za-z0-9._~:-]+$/.test(segment) ? segment : ":segment";
+      });
+    return [url.hostname, ...segments].join("/").slice(0, 700);
+  }
+
+  function resourceOfferId(value, pageUrl) {
+    let url = null;
+    try {
+      url = new URL(value, pageUrl);
+    } catch (_error) {
+      return "";
+    }
+    if (url.protocol !== "https:" || !is1688Host(url.hostname)) return "";
+    const pathMatch = url.pathname.match(/(?:^|\/)offer\/([0-9]{1,30})(?:\.html)?(?:\/|$)/i);
+    if (pathMatch) return pathMatch[1];
+    for (const key of ["offerId", "offer_id", "offerid"]) {
+      const candidate = url.searchParams.get(key) || "";
+      if (/^[0-9]{1,30}$/.test(candidate)) return candidate;
+    }
+    return "";
+  }
+
+  function pageStateHints(documentRoot, pageUrl) {
     let documentReadyState = "unknown";
     try {
       if (["loading", "interactive", "complete"].includes(documentRoot.readyState)) {
@@ -503,14 +540,24 @@
     let resourceCount = 0;
     let offerishResourceCount = 0;
     let apiishResourceCount = 0;
+    const resourceRouteHints = new Set();
+    const resourceOfferIds = new Set();
     try {
       const performance = documentRoot.defaultView?.performance;
       const entries = performance?.getEntriesByType?.("resource") || [];
       resourceCount = Math.min(100_000, entries.length);
       for (const entry of entries) {
         const name = String(entry?.name || "");
-        if (/(offer|product|goods|item|sku|detail|商品|货品)/i.test(name)) offerishResourceCount += 1;
-        if (/(\/api(?:\/|[?])|ajax|search|query|data|graphql|jsonp)/i.test(name)) apiishResourceCount += 1;
+        const offerish = /(offer|product|goods|item|sku|detail|商品|货品)/i.test(name);
+        const apiish = /(\/api(?:\/|[?])|ajax|search|query|data|graphql|jsonp)/i.test(name);
+        if (offerish) offerishResourceCount += 1;
+        if (apiish) apiishResourceCount += 1;
+        if (offerish || apiish) {
+          const route = resourceRouteHint(name, pageUrl);
+          if (route && resourceRouteHints.size < 24) resourceRouteHints.add(route);
+        }
+        const offerId = resourceOfferId(name, pageUrl);
+        if (offerId && resourceOfferIds.size < 100) resourceOfferIds.add(offerId);
       }
       offerishResourceCount = Math.min(100_000, offerishResourceCount);
       apiishResourceCount = Math.min(100_000, apiishResourceCount);
@@ -526,6 +573,8 @@
       apiish_resource_count: apiishResourceCount,
       light_dom_data_attribute_names: [...dataAttributeNames].sort().slice(0, 24),
       onclick_count: Math.min(100_000, onclickCount),
+      resource_route_hints: [...resourceRouteHints].slice(0, 24),
+      resource_offer_ids: [...resourceOfferIds].slice(0, 100),
     };
   }
 
@@ -587,7 +636,7 @@
       light_dom_structure_hints: lightDomStructureHints(allElements),
       iframe_hints: iframeHints(documentRoot, profile, pageUrl),
       embedded_data_markers: embeddedMarkers.slice(0, 12),
-      ...pageStateHints(documentRoot),
+      ...pageStateHints(documentRoot, pageUrl),
     };
   }
 

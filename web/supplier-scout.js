@@ -281,6 +281,14 @@ function parserProbeDescription(probe, pageNumber = 1) {
     : [];
   if (dataAttributes.length) parts.push(`顶层 data 属性：${dataAttributes.join("、")}`);
   if (Number(probe.onclick_count || 0)) parts.push(`顶层 onclick：${Number(probe.onclick_count)}`);
+  const resourceRoutes = Array.isArray(probe.resource_route_hints)
+    ? probe.resource_route_hints
+    : [];
+  if (resourceRoutes.length) parts.push(`资源路由指纹：${resourceRoutes.slice(0, 4).join("、")}`);
+  const resourceOfferIds = Array.isArray(probe.resource_offer_ids)
+    ? probe.resource_offer_ids
+    : [];
+  if (resourceOfferIds.length) parts.push(`资源中的 offer ID：${resourceOfferIds.slice(0, 8).join("、")}${resourceOfferIds.length > 8 ? "…" : ""}`);
   return `${parts.join("；")}。`;
 }
 

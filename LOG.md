@@ -2,6 +2,9 @@
 
 ## 2026-08-30 — V0.2.8 页面状态/资源计数探针（等待真实 Edge 复验）
 
+- 新一轮证据为 readyState=complete、35 张可见图片、212 个资源，其中 30 个资源
+  名称含商品相关关键词、48 个含接口/查询关键词，但 DOM 仍无商品身份。增加脱敏资源
+  路由指纹和仅数字 offer ID 探针，用于验证商品身份是否只存在于网络响应层。
 - 最新真实 capture `cap_ae57bd060df54879af70f35a2522bc84` 仍是
   `PARSER_FAILED/PAGE_OFFERS_NOT_CONFIRMED`：第一页 35 个链接、0 个商品候选，
   `offerlist` 仅 1 个链接/1 张图片，`newofferlist` 仅 1 个链接，Shadow Root

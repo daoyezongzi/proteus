@@ -408,6 +408,8 @@ class SupplierCaptureParserProbeRequest(BaseModel):
     apiish_resource_count: int = Field(default=0, ge=0, le=100_000)
     light_dom_data_attribute_names: list[str] = Field(default_factory=list, max_length=24)
     onclick_count: int = Field(default=0, ge=0, le=100_000)
+    resource_route_hints: list[str] = Field(default_factory=list, max_length=24)
+    resource_offer_ids: list[str] = Field(default_factory=list, max_length=100)
 
     @field_validator("embedded_data_markers")
     @classmethod
@@ -428,6 +430,20 @@ class SupplierCaptureParserProbeRequest(BaseModel):
     def validate_data_attribute_names(cls, value: list[str]) -> list[str]:
         if any(not re.fullmatch(r"data-[A-Za-z0-9_-]{1,40}", item) for item in value):
             raise ValueError("data attribute names must contain attribute names")
+        return value
+
+    @field_validator("resource_route_hints")
+    @classmethod
+    def validate_resource_route_hints(cls, value: list[str]) -> list[str]:
+        if any(not re.fullmatch(r"[A-Za-z0-9.-]{1,120}(?:/[A-Za-z0-9._~:-]{1,80})*", item) for item in value):
+            raise ValueError("resource route hints must contain sanitized routes")
+        return value
+
+    @field_validator("resource_offer_ids")
+    @classmethod
+    def validate_resource_offer_ids(cls, value: list[str]) -> list[str]:
+        if any(not re.fullmatch(r"[0-9]{1,30}", item) for item in value):
+            raise ValueError("resource offer IDs must contain digits")
         return value
 
 

@@ -36,7 +36,10 @@ It also records bounded top-level product-structure hints and iframe
 accessibility/size metadata; cross-origin iframe content and foreign URLs are
 not persisted. Finally, it records only page-state counters (ready state, body
 text/image counts, resource URL class counts, top-level data-attribute names,
-and inline-handler count); raw resource URLs and page text are not persisted.
+and inline-handler count). For 1688 resource entries it may also record a
+route-shaped host/path fingerprint and numeric offer IDs found in an offer URL;
+query values and opaque path segments are removed. Raw resource URLs and page
+text are not persisted.
 
 ## Boundary
 
