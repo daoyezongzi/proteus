@@ -316,6 +316,41 @@
     return hint;
   }
 
+  function shadowRootHints(documentRoot, profile) {
+    const hints = [];
+    const queue = [documentRoot];
+    const seenRoots = new Set();
+    while (queue.length && hints.length < 8) {
+      const root = queue.shift();
+      for (const host of queryAll(root, ["*"])) {
+        let shadowRoot = null;
+        try {
+          shadowRoot = host.shadowRoot || null;
+        } catch (_error) {
+          shadowRoot = null;
+        }
+        if (!shadowRoot || seenRoots.has(shadowRoot)) continue;
+        seenRoots.add(shadowRoot);
+        const rootElements = queryAll(shadowRoot, ["*"]);
+        const candidateElements = offerElements(shadowRoot, profile);
+        const className = normalizeText(typeof host.className === "string" ? host.className : "").slice(0, 240);
+        hints.push({
+          tag: String(host.tagName || "unknown").toLowerCase().slice(0, 20),
+          ...(className ? { class_name: className } : {}),
+          child_count: Number(shadowRoot.children?.length || 0),
+          anchor_count: queryAll(shadowRoot, ["a"]).length,
+          configured_offer_match_count: queryAll(shadowRoot, profile.offer_link_selectors || []).length,
+          offer_candidate_count: candidateElements.length,
+          nested_shadow_host_count: rootElements.filter((element) => Boolean(element.shadowRoot)).length,
+          text_length: Math.min(1_000_000, normalizeText(shadowRoot.textContent).length),
+        });
+        queue.push(shadowRoot);
+        if (hints.length >= 8) break;
+      }
+    }
+    return hints;
+  }
+
   function parserProbe(documentRoot, profile, pageUrl) {
     const allElements = queryAll(documentRoot, ["*"]);
     const configuredOffers = queryAll(documentRoot, profile.offer_link_selectors || []);
@@ -353,6 +388,7 @@
       offer_candidates: offerCandidates,
       pagination_candidates: paginationCandidates,
       frame_candidates: frameCandidates,
+      shadow_root_hints: shadowRootHints(documentRoot, profile),
       embedded_data_markers: embeddedMarkers.slice(0, 12),
     };
   }

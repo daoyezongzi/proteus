@@ -185,6 +185,23 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
                 })""",
                 profile,
             )
+            page.set_content(
+                """
+                <div id="shadow-host" class="product-shell"></div>
+                <script>
+                  const host = document.querySelector("#shadow-host");
+                  const root = host.attachShadow({ mode: "open" });
+                  root.innerHTML = '<a href="https://detail.1688.com/offer/91001.html">Shadow 商品 91001</a>';
+                </script>
+                """
+            )
+            page.add_script_tag(path=EXTENSION / "collector-core.js")
+            shadow_probe = page.evaluate(
+                """profile => globalThis.Proteus1688CollectorCore.parserProbe(
+                  document, profile, "https://shop.example.1688.com/page/offerlist.htm"
+                )""",
+                profile,
+            )
         finally:
             browser.close()
 
@@ -220,3 +237,16 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
     assert fallback["probe"]["offer_candidates"][0]["data_offer_id"] == "90001"
     assert "token=" not in json.dumps(fallback["probe"], ensure_ascii=False)
     assert "example.com" not in json.dumps(fallback["probe"], ensure_ascii=False)
+    assert shadow_probe["shadow_host_count"] == 1
+    assert shadow_probe["shadow_root_hints"] == [
+        {
+            "tag": "div",
+            "class_name": "product-shell",
+            "child_count": 1,
+            "anchor_count": 1,
+            "configured_offer_match_count": 1,
+            "offer_candidate_count": 1,
+            "nested_shadow_host_count": 0,
+            "text_length": 15,
+        }
+    ]

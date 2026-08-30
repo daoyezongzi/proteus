@@ -26,6 +26,12 @@ keeps the page at `PARSER_FAILED` until a user reloads/repairs the normal page;
 it never treats an unproven page as an empty store. Probe URLs are sanitized to
 HTTPS 1688 paths with numeric paging or offer-ID parameters only.
 
+When an open Shadow Root is present, the probe also records bounded structure
+counters (host tag/class, child and link counts, selector/candidate counts,
+nested-root count and text length). It does not persist Shadow Root text,
+cookies, tokens or cross-origin frame contents; these counters are diagnostic
+evidence, not collected offers.
+
 ## Boundary
 
 - The user creates a bounded capture in Proteus and explicitly clicks the

@@ -1,5 +1,16 @@
 # Proteus Development Log
 
+## 2026-08-30 — V0.2.8 Shadow Root 结构探针（等待真实 Edge 复验）
+
+- 当前真实 capture `cap_a8257cd1a865431cb8c80eb5d9d0bd06` 已确认 API 页面提交链路正常：
+  `collector_version=0.2.8`、`parser_version=1.1.0`，第一页有 35 个链接但 0 个商品候选，
+  `has_next_page=true`，因此暂停为 `PAGE_OFFERS_NOT_CONFIRMED/PARSER_FAILED`，没有把页面误判成空店。
+- 现有证据还显示页面含 1 个开放 Shadow Root 和 2 个 iframe；原探针只能计数，无法区分商品层与验证组件。
+- 增加有界 `shadow_root_hints`：仅保存宿主标签/类名、子节点数、链接数、商品选择器命中数、
+  候选数、嵌套 Shadow Root 数和文本长度，不保存根内文本、Cookie、令牌或跨域 frame 内容，也不改变商品采集语义。
+- 相关 Edge/API 回归通过；下一步需要用户在普通 Edge Reload 扩展并再次点击采集，让真实页面产生该结构证据，
+  再决定是递归 Shadow DOM 采集还是启用受限 `all_frames` 路径。
+
 ## 2026-08-30 — V0.2.8 Edge 首页解析诊断与保守续采
 
 - 上一份真实证据显示任务停在 `PARSER_FAILED`、`pages_completed=0`，但没有保存第一页

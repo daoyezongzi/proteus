@@ -313,6 +313,19 @@ class SupplierCaptureElementHintRequest(BaseModel):
         return value
 
 
+class SupplierCaptureShadowRootHintRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tag: str = Field(min_length=1, max_length=20, pattern=r"^[a-z][a-z0-9-]*$")
+    class_name: str | None = Field(default=None, max_length=240)
+    child_count: int = Field(ge=0, le=1_000_000)
+    anchor_count: int = Field(ge=0, le=1_000_000)
+    configured_offer_match_count: int = Field(ge=0, le=100_000)
+    offer_candidate_count: int = Field(ge=0, le=100_000)
+    nested_shadow_host_count: int = Field(ge=0, le=100_000)
+    text_length: int = Field(ge=0, le=1_000_000)
+
+
 class SupplierCaptureParserProbeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -329,6 +342,9 @@ class SupplierCaptureParserProbeRequest(BaseModel):
     )
     frame_candidates: list[SupplierCaptureElementHintRequest] = Field(
         default_factory=list, max_length=12
+    )
+    shadow_root_hints: list[SupplierCaptureShadowRootHintRequest] = Field(
+        default_factory=list, max_length=8
     )
     embedded_data_markers: list[str] = Field(default_factory=list, max_length=12)
 

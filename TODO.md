@@ -1,5 +1,12 @@
 # Proteus Current Work
 
+## 2026-08-30 V0.2.8 Shadow Root 结构探针（真实 Edge 复验待触发）
+
+- [x] 为开放 Shadow Root 增加有界结构探针；只记录计数和宿主元数据，不把未确认内容当作商品。
+- [x] 增加 API 严格校验和前端诊断摘要，保留原有 `PARSER_FAILED` / `EMPTY` 区分。
+- [ ] 用户在普通 Edge `Reload` 扩展后重新点击采集，观察 `shadow_root_hints` 的宿主类型和内部候选数。
+- [ ] 若 Shadow Root 不是商品层，再单独评估 iframe `all_frames` 方案；在证据前不扩大扩展权限或改用跨域抓取。
+
 ## 2026-08-30 V0.2.8 Edge 首页解析诊断（已实现，真实店铺复验待用户触发）
 
 - [x] 扩大已渲染商品探测：支持店铺相对 `/offer/<id>.html`、offerId 查询参数、

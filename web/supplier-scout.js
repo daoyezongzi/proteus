@@ -226,6 +226,7 @@ function parserProbeDescription(probe, pageNumber = 1) {
   const offers = Array.isArray(probe.offer_candidates) ? probe.offer_candidates : [];
   const pages = Array.isArray(probe.pagination_candidates) ? probe.pagination_candidates : [];
   const frames = Array.isArray(probe.frame_candidates) ? probe.frame_candidates : [];
+  const shadowRoots = Array.isArray(probe.shadow_root_hints) ? probe.shadow_root_hints : [];
   const markers = Array.isArray(probe.embedded_data_markers) ? probe.embedded_data_markers : [];
   const parts = [
     `第 ${Number(pageNumber || 1)} 页 DOM 有 ${Number(probe.anchor_count || 0)} 个链接`,
@@ -244,6 +245,10 @@ function parserProbeDescription(probe, pageNumber = 1) {
     parts.push(`页面含 ${Number(probe.iframe_count || frames.length)} 个 iframe`);
   }
   if (Number(probe.shadow_host_count || 0)) parts.push(`页面含 ${Number(probe.shadow_host_count)} 个开放 Shadow Root`);
+  if (shadowRoots.length) {
+    const details = shadowRoots.slice(0, 3).map((item) => `${item.tag}：${item.anchor_count} 链接/${item.offer_candidate_count} 个商品候选`).join("、");
+    parts.push(`Shadow Root 结构（${details}）`);
+  }
   if (markers.length) parts.push(`嵌入数据标记：${markers.join("、")}`);
   return `${parts.join("；")}。`;
 }

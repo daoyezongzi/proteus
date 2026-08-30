@@ -260,6 +260,17 @@ def test_supplier_scout_api_exposes_user_triggered_edge_capture_lifecycle() -> N
                     "offer_candidates": [],
                     "pagination_candidates": [],
                     "frame_candidates": [],
+                    "shadow_root_hints": [
+                        {
+                            "tag": "x-products",
+                            "child_count": 3,
+                            "anchor_count": 2,
+                            "configured_offer_match_count": 2,
+                            "offer_candidate_count": 2,
+                            "nested_shadow_host_count": 0,
+                            "text_length": 80,
+                        }
+                    ],
                     "embedded_data_markers": [],
                 },
             },
