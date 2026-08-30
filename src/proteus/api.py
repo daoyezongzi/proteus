@@ -346,6 +346,10 @@ class SupplierCaptureParserProbeRequest(BaseModel):
     shadow_root_hints: list[SupplierCaptureShadowRootHintRequest] = Field(
         default_factory=list, max_length=8
     )
+    link_candidates: list[SupplierCaptureElementHintRequest] = Field(
+        default_factory=list, max_length=24
+    )
+    light_dom_identity_markers: list[str] = Field(default_factory=list, max_length=24)
     embedded_data_markers: list[str] = Field(default_factory=list, max_length=12)
 
     @field_validator("embedded_data_markers")
@@ -353,6 +357,13 @@ class SupplierCaptureParserProbeRequest(BaseModel):
     def validate_embedded_markers(cls, value: list[str]) -> list[str]:
         if any(not re.fullmatch(r"[A-Za-z0-9_.-]{1,50}", item) for item in value):
             raise ValueError("embedded data markers must contain 1-50 characters")
+        return value
+
+    @field_validator("light_dom_identity_markers")
+    @classmethod
+    def validate_identity_markers(cls, value: list[str]) -> list[str]:
+        if any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,40}", item) for item in value):
+            raise ValueError("light DOM identity markers must contain attribute names")
         return value
 
 

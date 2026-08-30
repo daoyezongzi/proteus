@@ -271,6 +271,14 @@ def test_supplier_scout_api_exposes_user_triggered_edge_capture_lifecycle() -> N
                             "text_length": 80,
                         }
                     ],
+                    "link_candidates": [
+                        {
+                            "tag": "a",
+                            "url": "https://detail.1688.com/offer/10001.html",
+                            "text": "测试商品",
+                        }
+                    ],
+                    "light_dom_identity_markers": ["data-offer-id"],
                     "embedded_data_markers": [],
                 },
             },

@@ -169,10 +169,11 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
                      data-href="/offer/90001.html" data-title="现代店铺商品 90001">
                   <img alt="现代店铺商品 90001" src="https://cbu01.alicdn.com/90001.jpg">
                 </div>
-                <div class="query-item" data-href="/item/view.htm?offerId=90002"
-                     data-title="查询参数商品 90002"></div>
-                <a href="https://example.com/private?token=must-not-leak">外站</a>
-                <div class="wp-paging-unit"><button class="next-page">下一页</button></div>
+                    <div class="query-item" data-href="/item/view.htm?offerId=90002"
+                         data-title="查询参数商品 90002"></div>
+                    <a href="https://example.com/private?token=must-not-leak">外站</a>
+                    <a href="https://shop.example.1688.com/page/category.htm">分类</a>
+                    <div class="wp-paging-unit"><button class="next-page">下一页</button></div>
                 <iframe src="https://show.1688.com/page/offers.html?token=must-not-leak"></iframe>
                 """
             )
@@ -235,6 +236,13 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
     assert fallback["pagination"] is True
     assert fallback["probe"]["configured_offer_match_count"] == 1
     assert fallback["probe"]["offer_candidates"][0]["data_offer_id"] == "90001"
+    assert fallback["probe"]["link_candidates"] == [
+        {
+            "tag": "a",
+            "url": "https://shop.example.1688.com/page/category.htm",
+            "text": "分类",
+        }
+    ]
     assert "token=" not in json.dumps(fallback["probe"], ensure_ascii=False)
     assert "example.com" not in json.dumps(fallback["probe"], ensure_ascii=False)
     assert shadow_probe["shadow_host_count"] == 1
@@ -250,3 +258,5 @@ def test_supplier_collector_core_in_a_real_browser_dom() -> None:
             "text_length": 15,
         }
     ]
+    assert shadow_probe["link_candidates"] == []
+    assert shadow_probe["light_dom_identity_markers"] == []

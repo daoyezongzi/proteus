@@ -371,6 +371,21 @@
       .map((element) => elementHint(element, pageUrl))
       .filter(Boolean)
       .slice(0, 12);
+    const linkCandidates = queryAll(documentRoot, ["a[href]"])
+      .map((element) => elementHint(element, pageUrl))
+      .filter(Boolean)
+      .slice(0, 24);
+    const identityMarkers = [
+      "data-href",
+      "data-url",
+      "data-link",
+      "data-offer-url",
+      "data-offer-id",
+      "data-offerid",
+      "data-item-id",
+      "data-id",
+      "data-product-id",
+    ].filter((attribute) => queryAll(documentRoot, [`[${attribute}]`]).length > 0);
     const embeddedMarkers = [];
     const markerNames = ["__page__data__", "offerList", "offerId", "offerListData"];
     for (const script of queryAll(documentRoot, ["script:not([src])"]).slice(0, 100)) {
@@ -389,6 +404,8 @@
       pagination_candidates: paginationCandidates,
       frame_candidates: frameCandidates,
       shadow_root_hints: shadowRootHints(documentRoot, profile),
+      link_candidates: linkCandidates,
+      light_dom_identity_markers: identityMarkers,
       embedded_data_markers: embeddedMarkers.slice(0, 12),
     };
   }

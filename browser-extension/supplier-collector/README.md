@@ -30,7 +30,8 @@ When an open Shadow Root is present, the probe also records bounded structure
 counters (host tag/class, child and link counts, selector/candidate counts,
 nested-root count and text length). It does not persist Shadow Root text,
 cookies, tokens or cross-origin frame contents; these counters are diagnostic
-evidence, not collected offers.
+evidence, not collected offers. The same probe records only sanitized HTTPS
+1688 link candidates and identity-attribute names from the top-level DOM.
 
 ## Boundary
 

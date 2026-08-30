@@ -227,6 +227,8 @@ function parserProbeDescription(probe, pageNumber = 1) {
   const pages = Array.isArray(probe.pagination_candidates) ? probe.pagination_candidates : [];
   const frames = Array.isArray(probe.frame_candidates) ? probe.frame_candidates : [];
   const shadowRoots = Array.isArray(probe.shadow_root_hints) ? probe.shadow_root_hints : [];
+  const links = Array.isArray(probe.link_candidates) ? probe.link_candidates : [];
+  const identityMarkers = Array.isArray(probe.light_dom_identity_markers) ? probe.light_dom_identity_markers : [];
   const markers = Array.isArray(probe.embedded_data_markers) ? probe.embedded_data_markers : [];
   const parts = [
     `第 ${Number(pageNumber || 1)} 页 DOM 有 ${Number(probe.anchor_count || 0)} 个链接`,
@@ -249,6 +251,11 @@ function parserProbeDescription(probe, pageNumber = 1) {
     const details = shadowRoots.slice(0, 3).map((item) => `${item.tag}：${item.anchor_count} 链接/${item.offer_candidate_count} 个商品候选`).join("、");
     parts.push(`Shadow Root 结构（${details}）`);
   }
+  if (links.length) {
+    const examples = links.slice(0, 3).map((item) => item.url || item.data_offer_id || item.tag).join("、");
+    parts.push(`发现 ${links.length} 个可追踪 1688 链接（${examples}）`);
+  }
+  if (identityMarkers.length) parts.push(`顶层身份属性：${identityMarkers.join("、")}`);
   if (markers.length) parts.push(`嵌入数据标记：${markers.join("、")}`);
   return `${parts.join("；")}。`;
 }
