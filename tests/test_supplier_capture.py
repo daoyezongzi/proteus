@@ -8,6 +8,7 @@ import pytest
 from proteus.supplier_capture import (
     CaptureAuthorizationError,
     CaptureConflictError,
+    CaptureNotFoundError,
     SupplierCaptureManager,
 )
 from proteus.supplier_scout import SupplierScoutStore
@@ -66,6 +67,35 @@ def test_capture_requires_token_and_exact_saved_store_host(tmp_path: Path) -> No
     assert claimed["collector_version"] == "0.2.6"
 
 
+def test_capture_state_and_token_handoff_are_tenant_scoped(tmp_path: Path) -> None:
+    captures, supplier = manager(tmp_path)
+    tenant_supplier = captures.store.add_supplier(
+        "租户 A",
+        STORE_URL,
+        tenant_id="tenant_a",
+    )
+    created = captures.create_capture(
+        tenant_supplier["supplier_id"],
+        max_pages=3,
+        max_offers=100,
+        tenant_id="tenant_a",
+    )
+
+    assert captures.pending_capture(
+        shop_host=SHOP_HOST,
+        tenant_id="tenant_b",
+    ) is None
+    with pytest.raises(CaptureNotFoundError):
+        captures.get_capture_token(
+            created["capture_id"],
+            tenant_id="tenant_b",
+        )
+    assert captures.get_capture_token(
+        created["capture_id"],
+        tenant_id="tenant_a",
+    )["capture_token"] == created["capture_token"]
+
+
 def test_capturing_session_can_be_reattached_after_extension_state_loss(
     tmp_path: Path,
 ) -> None:
@@ -84,7 +114,9 @@ def test_capturing_session_can_be_reattached_after_extension_state_loss(
     recoverable = captures.pending_capture(shop_host=SHOP_HOST)
     assert recoverable is not None
     assert recoverable["capture_id"] == created["capture_id"]
-    assert recoverable["capture_token"] == token
+    assert "capture_token" not in recoverable
+    handed_off = captures.get_capture_token(created["capture_id"])
+    assert handed_off["capture_token"] == token
     assert recoverable["status"] == "CAPTURING"
 
     reclaimed = captures.claim_capture(

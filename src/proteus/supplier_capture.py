@@ -20,11 +20,17 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 
-from proteus.supplier_scout import SCHEMA_VERSION, SupplierScoutStore
+from proteus.supplier_scout import (
+    DEFAULT_TENANT_ID,
+    SCHEMA_VERSION,
+    SupplierScoutStore,
+    normalize_tenant_id,
+)
 
 
 CAPTURE_PROTOCOL_VERSION = "1"
 DEFAULT_CAPTURE_TTL_SECONDS = 30 * 60
+DEFAULT_MAX_CAPTURE_SESSIONS = 32
 PAUSE_REASONS = {"AUTH_REQUIRED", "RISK_CONTROL", "PARSER_FAILED", "TIMEOUT"}
 
 
@@ -38,6 +44,10 @@ class CaptureConflictError(ValueError):
 
 class CaptureNotFoundError(KeyError):
     """The requested in-memory capture session does not exist."""
+
+
+class CaptureCapacityError(RuntimeError):
+    """The bounded process-local capture store cannot accept another session."""
 
 
 def _text(value: Any) -> str:
@@ -149,12 +159,16 @@ class SupplierCaptureManager:
         store: SupplierScoutStore,
         *,
         ttl_seconds: int = DEFAULT_CAPTURE_TTL_SECONDS,
+        max_captures: int = DEFAULT_MAX_CAPTURE_SESSIONS,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if isinstance(ttl_seconds, bool) or not 60 <= ttl_seconds <= 24 * 60 * 60:
             raise ValueError("ttl_seconds must be between 60 and 86400")
+        if isinstance(max_captures, bool) or not 1 <= max_captures <= 1000:
+            raise ValueError("max_captures must be between 1 and 1000")
         self.store = store
         self._ttl_seconds = ttl_seconds
+        self._max_captures = max_captures
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._captures: dict[str, dict[str, Any]] = {}
         self._lock = Lock()
@@ -165,9 +179,15 @@ class SupplierCaptureManager:
             value = value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
-    def _get_locked(self, capture_id: str) -> dict[str, Any]:
+    def _get_locked(
+        self,
+        capture_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, Any]:
+        tenant = normalize_tenant_id(tenant_id)
         capture = self._captures.get(_text(capture_id))
-        if capture is None:
+        if capture is None or capture.get("tenant_id") != tenant:
             raise CaptureNotFoundError(f"capture not found: {capture_id}")
         return capture
 
@@ -229,6 +249,22 @@ class SupplierCaptureManager:
             result["capture_token"] = str(capture["_capture_token"])
         return result
 
+    def _prune_locked(self) -> None:
+        """Expire sessions and reclaim only terminal in-memory state."""
+
+        for capture in tuple(self._captures.values()):
+            self._expire_locked(capture)
+        terminal = sorted(
+            (
+                capture
+                for capture in self._captures.values()
+                if capture["status"] in {"COMPLETED", "EXPIRED", "CANCELLED"}
+            ),
+            key=lambda item: item["updated_at"],
+        )
+        while len(self._captures) >= self._max_captures and terminal:
+            self._captures.pop(terminal.pop(0)["capture_id"], None)
+
     def _touch_locked(self, capture: dict[str, Any]) -> None:
         now = self._now()
         capture["updated_at"] = _iso(now)
@@ -288,7 +324,11 @@ class SupplierCaptureManager:
             inventory_complete=inventory_complete,
             warnings=warnings,
         )
-        saved = self.store.save_snapshot(capture["supplier_id"], document)
+        saved = self.store.save_snapshot(
+            capture["supplier_id"],
+            document,
+            tenant_id=capture["tenant_id"],
+        )
         capture["snapshot_id"] = saved["snapshot_id"]
         capture["snapshot_sha256"] = saved["snapshot_sha256"]
         return saved
@@ -311,13 +351,19 @@ class SupplierCaptureManager:
         return True
 
     def create_capture(
-        self, supplier_id: str, *, max_pages: int, max_offers: int
+        self,
+        supplier_id: str,
+        *,
+        max_pages: int,
+        max_offers: int,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> dict[str, Any]:
+        tenant = normalize_tenant_id(tenant_id)
         if isinstance(max_pages, bool) or not 1 <= max_pages <= 20:
             raise ValueError("max_pages must be between 1 and 20")
         if isinstance(max_offers, bool) or not 1 <= max_offers <= 1000:
             raise ValueError("max_offers must be between 1 and 1000")
-        source = self.store.get_supplier(supplier_id)
+        source = self.store.get_supplier(supplier_id, tenant_id=tenant)
         if source["status"] != "ACTIVE":
             raise CaptureConflictError("supplier source is archived")
         now = self._now()
@@ -326,6 +372,7 @@ class SupplierCaptureManager:
             "capture_id": capture_id,
             "protocol_version": CAPTURE_PROTOCOL_VERSION,
             "_capture_token": secrets.token_urlsafe(32),
+            "tenant_id": tenant,
             "supplier_id": source["supplier_id"],
             "supplier_label": source["label"],
             "submitted_target": source["submitted_target"],
@@ -358,23 +405,44 @@ class SupplierCaptureManager:
             "expires_at": _iso(now + timedelta(seconds=self._ttl_seconds)),
         }
         with self._lock:
+            self._prune_locked()
+            if len(self._captures) >= self._max_captures:
+                raise CaptureCapacityError(
+                    "the maximum number of active capture sessions has been reached"
+                )
             self._captures[capture_id] = capture
             return self._public_locked(capture, include_token=True)
 
-    def get_capture(self, capture_id: str) -> dict[str, Any]:
+    def get_capture(
+        self,
+        capture_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, Any]:
         with self._lock:
-            capture = self._get_locked(capture_id)
+            capture = self._get_locked(capture_id, tenant_id=tenant_id)
             self._expire_locked(capture)
             return self._public_locked(capture)
 
-    def pending_capture(self, *, shop_host: str) -> dict[str, Any] | None:
+    def pending_capture(
+        self,
+        *,
+        shop_host: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, Any] | None:
+        tenant = normalize_tenant_id(tenant_id)
         requested_host = _text(shop_host).casefold()
-        if not requested_host.endswith(".1688.com"):
+        if (
+            re.fullmatch(r"(?:[a-z0-9-]+\.)+1688\.com", requested_host) is None
+            or requested_host == "detail.1688.com"
+        ):
             return None
         with self._lock:
             candidates: list[dict[str, Any]] = []
             for capture in self._captures.values():
                 self._expire_locked(capture)
+                if capture.get("tenant_id") != tenant:
+                    continue
                 if capture["status"] not in {"PENDING", "PAUSED", "CAPTURING"}:
                     continue
                 if capture["shop_host"] != requested_host:
@@ -383,7 +451,28 @@ class SupplierCaptureManager:
             if not candidates:
                 return None
             newest = max(candidates, key=lambda item: item["updated_at"])
-            return self._public_locked(newest, include_token=True)
+            return self._public_locked(newest)
+
+    def get_capture_token(
+        self,
+        capture_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, str]:
+        """Reveal a capture bearer only through an authenticated API handoff."""
+
+        with self._lock:
+            capture = self._get_locked(capture_id, tenant_id=tenant_id)
+            if self._expire_locked(capture):
+                raise CaptureConflictError("capture session expired")
+            if capture["status"] not in {"PENDING", "PAUSED", "CAPTURING"}:
+                raise CaptureConflictError(
+                    f"capture token is unavailable for {capture['status']}"
+                )
+            return {
+                "capture_id": capture["capture_id"],
+                "capture_token": str(capture["_capture_token"]),
+            }
 
     def claim_capture(
         self,
@@ -393,9 +482,10 @@ class SupplierCaptureManager:
         page_url: str,
         extension_version: str | None = None,
         parser_version: str | None = None,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> dict[str, Any]:
         with self._lock:
-            capture = self._get_locked(capture_id)
+            capture = self._get_locked(capture_id, tenant_id=tenant_id)
             self._authorize_locked(capture, token)
             if self._expire_locked(capture):
                 raise CaptureConflictError("capture session expired")
@@ -446,12 +536,13 @@ class SupplierCaptureManager:
         *,
         reason: str,
         page_url: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> dict[str, Any]:
         normalized_reason = _text(reason).upper()
         if normalized_reason not in PAUSE_REASONS:
             raise ValueError("unsupported capture pause reason")
         with self._lock:
-            capture = self._get_locked(capture_id)
+            capture = self._get_locked(capture_id, tenant_id=tenant_id)
             self._authorize_locked(capture, token)
             if self._expire_locked(capture):
                 raise CaptureConflictError("capture session expired")
@@ -465,12 +556,17 @@ class SupplierCaptureManager:
             )
 
     def ingest_page(
-        self, capture_id: str, token: str, page: Mapping[str, Any]
+        self,
+        capture_id: str,
+        token: str,
+        page: Mapping[str, Any],
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> dict[str, Any]:
         if not isinstance(page, Mapping):
             raise TypeError("page payload must be an object")
         with self._lock:
-            capture = self._get_locked(capture_id)
+            capture = self._get_locked(capture_id, tenant_id=tenant_id)
             self._authorize_locked(capture, token)
             if self._expire_locked(capture):
                 raise CaptureConflictError("capture session expired")
@@ -700,9 +796,11 @@ class SupplierCaptureManager:
 
 __all__ = [
     "CAPTURE_PROTOCOL_VERSION",
+    "CaptureCapacityError",
     "CaptureAuthorizationError",
     "CaptureConflictError",
     "CaptureNotFoundError",
+    "DEFAULT_MAX_CAPTURE_SESSIONS",
     "SupplierCaptureManager",
     "supplier_collector_profile",
 ]

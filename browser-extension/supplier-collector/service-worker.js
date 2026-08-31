@@ -56,13 +56,21 @@ async function claimCapture(tabUrl) {
   if (!capture) {
     throw new Error("Proteus 中没有与当前店铺匹配的待采集任务。");
   }
+  const tokenPayload = await api(
+    `/supplier-scout/captures/${encodeURIComponent(capture.capture_id)}/token`,
+    { method: "POST" },
+  );
+  const captureToken = tokenPayload?.capture_token;
+  if (!captureToken) {
+    throw new Error("Proteus 未返回可用的采集授权，请重新创建任务。");
+  }
   const claimed = await api(
     `/supplier-scout/captures/${encodeURIComponent(capture.capture_id)}/claim`,
     {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "X-Proteus-Capture-Token": capture.capture_token,
+        "X-Proteus-Capture-Token": captureToken,
       },
       body: JSON.stringify({
         page_url: tabUrl,
@@ -73,7 +81,7 @@ async function claimCapture(tabUrl) {
   );
   const state = {
     ...claimed,
-    capture_token: capture.capture_token,
+    capture_token: captureToken,
     profile,
   };
   await setState(state);

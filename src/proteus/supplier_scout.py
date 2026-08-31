@@ -35,6 +35,8 @@ from proteus.providers.serpapi_ebay_discovery import extract_part_number_candida
 SUPPLIER_SCOUT_DB_ENV = "PROTEUS_SUPPLIER_SCOUT_DB"
 SCHEMA_VERSION = "0.2.6"
 PROFILE = "supplier-first-store-scout"
+DEFAULT_TENANT_ID = "default"
+_TENANT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
 Collector = Callable[..., Mapping[str, Any]]
 
@@ -49,6 +51,20 @@ def _text(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return re.sub(r"\s+", " ", value).strip()
+
+
+def normalize_tenant_id(value: Any) -> str:
+    """Return a bounded server-selected tenant identifier.
+
+    Tenant IDs are configuration, not request headers.  Keeping the validation
+    here lets the SQLite and in-memory stores share the same namespace rules
+    without ever interpolating a caller-controlled value into SQL.
+    """
+
+    tenant_id = _text(value) or DEFAULT_TENANT_ID
+    if _TENANT_ID_RE.fullmatch(tenant_id) is None:
+        raise ValueError("tenant_id must contain only bounded identifier characters")
+    return tenant_id
 
 
 def _canonical_json(value: Any) -> str:
@@ -88,6 +104,7 @@ class SupplierScoutStore:
                 """
                 CREATE TABLE IF NOT EXISTS supplier_sources(
                     supplier_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL DEFAULT 'default',
                     label TEXT NOT NULL,
                     submitted_target TEXT NOT NULL,
                     canonical_url TEXT NOT NULL,
@@ -101,6 +118,7 @@ class SupplierScoutStore:
                 ON supplier_sources(canonical_url) WHERE status = 'ACTIVE';
                 CREATE TABLE IF NOT EXISTS supplier_inspections(
                     inspection_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL DEFAULT 'default',
                     supplier_id TEXT REFERENCES supplier_sources(supplier_id),
                     submitted_target TEXT NOT NULL,
                     canonical_url TEXT NOT NULL,
@@ -113,6 +131,7 @@ class SupplierScoutStore:
                 ON supplier_inspections(supplier_id, created_at DESC);
                 CREATE TABLE IF NOT EXISTS inventory_snapshots(
                     snapshot_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL DEFAULT 'default',
                     supplier_id TEXT NOT NULL REFERENCES supplier_sources(supplier_id),
                     retrieved_at TEXT NOT NULL,
                     acquisition_status TEXT NOT NULL,
@@ -123,7 +142,30 @@ class SupplierScoutStore:
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS inventory_snapshots_supplier
-                ON inventory_snapshots(supplier_id, created_at DESC);
+                ON inventory_snapshots(tenant_id, supplier_id, created_at DESC);
+                """
+            )
+            # Existing V0.2.9 databases predate tenant columns.  Add the
+            # columns in place and scope the active URL uniqueness constraint
+            # without deleting or rewriting any user data.
+            for table in (
+                "supplier_sources",
+                "supplier_inspections",
+                "inventory_snapshots",
+            ):
+                columns = {
+                    str(row[1])
+                    for row in connection.execute(f"PRAGMA table_info({table})")
+                }
+                if "tenant_id" not in columns:
+                    connection.execute(
+                        f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'"
+                    )
+            connection.execute("DROP INDEX IF EXISTS supplier_sources_active_url")
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS supplier_sources_active_url
+                ON supplier_sources(tenant_id, canonical_url) WHERE status = 'ACTIVE'
                 """
             )
 
@@ -147,7 +189,9 @@ class SupplierScoutStore:
         target: str,
         *,
         member_id: str | None = None,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> dict[str, Any]:
+        tenant = normalize_tenant_id(tenant_id)
         clean_label = _text(label)
         if not clean_label:
             raise ValueError("supplier label must not be blank")
@@ -159,12 +203,13 @@ class SupplierScoutStore:
                 connection.execute(
                     """
                     INSERT INTO supplier_sources(
-                        supplier_id, label, submitted_target, canonical_url,
+                        supplier_id, tenant_id, label, submitted_target, canonical_url,
                         shop_host, member_id, status, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                     """,
                     (
                         supplier_id,
+                        tenant,
                         clean_label[:200],
                         normalized["submitted_target"],
                         normalized["canonical_url"],
@@ -176,53 +221,80 @@ class SupplierScoutStore:
                 )
         except sqlite3.IntegrityError as exc:
             raise ValueError("an active supplier with this canonical URL already exists") from exc
-        return self.get_supplier(supplier_id)
+        return self.get_supplier(supplier_id, tenant_id=tenant)
 
-    def get_supplier(self, supplier_id: str) -> dict[str, Any]:
+    def get_supplier(
+        self,
+        supplier_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, Any]:
+        tenant = normalize_tenant_id(tenant_id)
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM supplier_sources WHERE supplier_id = ?", (supplier_id,)
+                "SELECT * FROM supplier_sources WHERE supplier_id = ? AND tenant_id = ?",
+                (supplier_id, tenant),
             ).fetchone()
         if row is None:
             raise KeyError(f"supplier not found: {supplier_id}")
         return self._source_payload(row)
 
-    def list_suppliers(self, *, include_archived: bool = False) -> dict[str, Any]:
-        where = "" if include_archived else "WHERE status = 'ACTIVE'"
+    def list_suppliers(
+        self,
+        *,
+        include_archived: bool = False,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, Any]:
+        tenant = normalize_tenant_id(tenant_id)
+        where = "" if include_archived else "AND status = 'ACTIVE'"
         with self._connect() as connection:
             rows = connection.execute(
-                f"SELECT * FROM supplier_sources {where} ORDER BY updated_at DESC"
+                f"SELECT * FROM supplier_sources WHERE tenant_id = ? {where} ORDER BY updated_at DESC",
+                (tenant,),
             ).fetchall()
         return {
             "database": str(self.database_path),
             "suppliers": [self._source_payload(row) for row in rows],
         }
 
-    def archive_supplier(self, supplier_id: str) -> dict[str, Any]:
+    def archive_supplier(
+        self,
+        supplier_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, Any]:
+        tenant = normalize_tenant_id(tenant_id)
         now = _utc_now()
         with self._connect() as connection:
             cursor = connection.execute(
-                "UPDATE supplier_sources SET status = 'ARCHIVED', updated_at = ? WHERE supplier_id = ?",
-                (now, supplier_id),
+                "UPDATE supplier_sources SET status = 'ARCHIVED', updated_at = ? "
+                "WHERE supplier_id = ? AND tenant_id = ?",
+                (now, supplier_id, tenant),
             )
         if cursor.rowcount != 1:
             raise KeyError(f"supplier not found: {supplier_id}")
-        return self.get_supplier(supplier_id)
+        return self.get_supplier(supplier_id, tenant_id=tenant)
 
     def update_supplier_identity(
-        self, supplier_id: str, identity: Mapping[str, Any]
+        self,
+        supplier_id: str,
+        identity: Mapping[str, Any],
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> dict[str, Any]:
+        tenant = normalize_tenant_id(tenant_id)
         member_id = _text(identity.get("member_id"))
         if not member_id:
-            return self.get_supplier(supplier_id)
+            return self.get_supplier(supplier_id, tenant_id=tenant)
         with self._connect() as connection:
             cursor = connection.execute(
-                "UPDATE supplier_sources SET member_id = ?, updated_at = ? WHERE supplier_id = ?",
-                (member_id, _utc_now(), supplier_id),
+                "UPDATE supplier_sources SET member_id = ?, updated_at = ? "
+                "WHERE supplier_id = ? AND tenant_id = ?",
+                (member_id, _utc_now(), supplier_id, tenant),
             )
         if cursor.rowcount != 1:
             raise KeyError(f"supplier not found: {supplier_id}")
-        return self.get_supplier(supplier_id)
+        return self.get_supplier(supplier_id, tenant_id=tenant)
 
     def save_inspection(
         self,
@@ -230,11 +302,13 @@ class SupplierScoutStore:
         outcome: Mapping[str, Any],
         *,
         supplier_id: str | None = None,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> dict[str, Any]:
         """Persist one read-only canary outcome without mutating a snapshot."""
 
+        tenant = normalize_tenant_id(tenant_id)
         if supplier_id is not None:
-            self.get_supplier(supplier_id)
+            self.get_supplier(supplier_id, tenant_id=tenant)
         if not isinstance(outcome, Mapping):
             raise TypeError("inspection outcome must be a mapping")
         normalized = normalize_1688_supplier_store_target(submitted_target)
@@ -249,13 +323,14 @@ class SupplierScoutStore:
             connection.execute(
                 """
                 INSERT INTO supplier_inspections(
-                    inspection_id, supplier_id, submitted_target, canonical_url,
+                    inspection_id, tenant_id, supplier_id, submitted_target, canonical_url,
                     acquisition_status, inspection_sha256,
                     inspection_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     inspection_id,
+                    tenant,
                     supplier_id,
                     normalized["submitted_target"],
                     normalized["canonical_url"],
@@ -272,11 +347,17 @@ class SupplierScoutStore:
             "created_at": now,
         }
 
-    def get_inspection(self, inspection_id: str) -> dict[str, Any]:
+    def get_inspection(
+        self,
+        inspection_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, Any]:
+        tenant = normalize_tenant_id(tenant_id)
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM supplier_inspections WHERE inspection_id = ?",
-                (inspection_id,),
+                "SELECT * FROM supplier_inspections WHERE inspection_id = ? AND tenant_id = ?",
+                (inspection_id, tenant),
             ).fetchone()
         if row is None:
             raise KeyError(f"inspection not found: {inspection_id}")
@@ -293,8 +374,10 @@ class SupplierScoutStore:
         snapshot: Mapping[str, Any],
         *,
         snapshot_id: str | None = None,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> dict[str, Any]:
-        self.get_supplier(supplier_id)
+        tenant = normalize_tenant_id(tenant_id)
+        self.get_supplier(supplier_id, tenant_id=tenant)
         if not isinstance(snapshot, Mapping):
             raise TypeError("snapshot must be a mapping")
         offers = snapshot.get("offers")
@@ -310,16 +393,17 @@ class SupplierScoutStore:
             with self._connect() as connection:
                 connection.execute(
                     """
-                    INSERT INTO inventory_snapshots(
-                        snapshot_id, supplier_id, retrieved_at,
-                        acquisition_status, inventory_complete,
-                        observed_offer_count, snapshot_sha256,
-                        snapshot_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        identifier,
-                        supplier_id,
+                INSERT INTO inventory_snapshots(
+                    snapshot_id, tenant_id, supplier_id, retrieved_at,
+                    acquisition_status, inventory_complete,
+                    observed_offer_count, snapshot_sha256,
+                    snapshot_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    identifier,
+                    tenant,
+                    supplier_id,
                         _text(document.get("retrieved_at")) or now,
                         _text(document.get("acquisition_status")) or "PARSER_FAILED",
                         1 if document.get("inventory_complete") is True else 0,
@@ -338,10 +422,17 @@ class SupplierScoutStore:
             "created_at": now,
         }
 
-    def get_snapshot(self, snapshot_id: str) -> dict[str, Any]:
+    def get_snapshot(
+        self,
+        snapshot_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, Any]:
+        tenant = normalize_tenant_id(tenant_id)
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM inventory_snapshots WHERE snapshot_id = ?", (snapshot_id,)
+                "SELECT * FROM inventory_snapshots WHERE snapshot_id = ? AND tenant_id = ?",
+                (snapshot_id, tenant),
             ).fetchone()
         if row is None:
             raise KeyError(f"snapshot not found: {snapshot_id}")
@@ -351,16 +442,27 @@ class SupplierScoutStore:
         document["snapshot_created_at"] = row["created_at"]
         return document
 
-    def latest_snapshot(self, supplier_id: str) -> dict[str, Any] | None:
+    def latest_snapshot(
+        self,
+        supplier_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict[str, Any] | None:
+        tenant = normalize_tenant_id(tenant_id)
         with self._connect() as connection:
             row = connection.execute(
                 """
                 SELECT snapshot_id FROM inventory_snapshots
-                WHERE supplier_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1
+                WHERE supplier_id = ? AND tenant_id = ?
+                ORDER BY created_at DESC, rowid DESC LIMIT 1
                 """,
-                (supplier_id,),
+                (supplier_id, tenant),
             ).fetchone()
-        return self.get_snapshot(row["snapshot_id"]) if row is not None else None
+        return (
+            self.get_snapshot(row["snapshot_id"], tenant_id=tenant)
+            if row is not None
+            else None
+        )
 
 
 def _category_terms(definition: Mapping[str, Any]) -> list[str]:
@@ -909,6 +1011,7 @@ def compact_supplier_scout_result(result: Mapping[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "DEFAULT_TENANT_ID",
     "PROFILE",
     "SCHEMA_VERSION",
     "SUPPLIER_SCOUT_DB_ENV",
@@ -916,6 +1019,7 @@ __all__ = [
     "classify_supplier_offer",
     "compact_supplier_scout_result",
     "default_supplier_scout_db_path",
+    "normalize_tenant_id",
     "run_supplier_scout",
     "supplier_scout_policy",
 ]

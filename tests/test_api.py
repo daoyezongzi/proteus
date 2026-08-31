@@ -161,6 +161,55 @@ def test_frontend_api_rejects_invalid_run_limits() -> None:
     assert response.status_code == 422
 
 
+def test_frontend_api_requires_configured_bearer_and_ignores_owner_headers() -> None:
+    client = TestClient(
+        create_app(service=FakeFrontendService(), api_token="unit-test-api-token")
+    )
+
+    missing = client.get("/api/v1/health")
+    spoofed = client.get(
+        "/api/v1/health",
+        headers={"X-TradeEye-Owner": "attacker", "X-Proteus-Tenant": "attacker"},
+    )
+    wrong = client.get(
+        "/api/v1/health",
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    authorized = client.get(
+        "/api/v1/health",
+        headers={"Authorization": "Bearer unit-test-api-token"},
+    )
+
+    assert missing.status_code == 401
+    assert spoofed.status_code == 401
+    assert wrong.status_code == 401
+    assert authorized.status_code == 200
+    assert authorized.json()["status"] == "ok"
+
+
+def test_frontend_api_fails_closed_for_non_loopback_without_token() -> None:
+    client = TestClient(
+        create_app(service=FakeFrontendService()),
+        client=("192.0.2.10", 50000),
+    )
+
+    response = client.get("/api/v1/health")
+
+    assert response.status_code == 503
+
+
+def test_frontend_api_rejects_oversized_json_before_model_validation() -> None:
+    client = TestClient(create_app(service=FakeFrontendService()))
+
+    response = client.post(
+        "/api/v1/runs",
+        content=b"{" + b"a" * (512 * 1024) + b"}",
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 413
+
+
 def test_frontend_api_exposes_threshold_driven_automatic_mvp_jobs() -> None:
     client = TestClient(create_app(service=FakeFrontendService()))
 

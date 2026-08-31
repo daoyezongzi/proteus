@@ -143,6 +143,10 @@ class SupplierScoutApiService:
             "status": "PENDING",
         }
 
+    def get_supplier_capture_token(self, capture_id: str) -> dict[str, str]:
+        assert capture_id == "cap_123"
+        return {"capture_id": capture_id, "capture_token": "capture-secret"}
+
     def get_supplier_capture(self, capture_id: str) -> dict | None:
         if capture_id != "cap_123":
             return None
@@ -287,6 +291,9 @@ def test_supplier_scout_api_exposes_user_triggered_edge_capture_lifecycle() -> N
         "/api/v1/supplier-scout/captures/pending",
         params={"shop_host": "shop3w093345o1043.1688.com"},
     )
+    token_handoff = client.post(
+        "/api/v1/supplier-scout/captures/cap_123/token",
+    )
     missing_host = client.get("/api/v1/supplier-scout/captures/pending")
     claimed = client.post(
         "/api/v1/supplier-scout/captures/cap_123/claim",
@@ -380,6 +387,12 @@ def test_supplier_scout_api_exposes_user_triggered_edge_capture_lifecycle() -> N
     assert created.status_code == 201
     assert created.json()["capture_token"] == "capture-secret"
     assert pending.json()["capture"]["capture_id"] == "cap_123"
+    assert "capture_token" not in pending.json()["capture"]
+    assert token_handoff.status_code == 200
+    assert token_handoff.json() == {
+        "capture_id": "cap_123",
+        "capture_token": "capture-secret",
+    }
     assert missing_host.status_code == 422
     assert claimed.json()["status"] == "CAPTURING"
     assert captured.json()["snapshot_id"] == "snap_123"

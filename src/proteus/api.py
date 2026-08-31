@@ -7,15 +7,17 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
+from inspect import Parameter, signature
 import os
 from pathlib import Path
 import re
+import secrets
 from threading import Lock
 from typing import Any, Literal, Protocol
 from urllib.parse import parse_qsl, urlparse
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException, status
+from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -48,12 +50,15 @@ from proteus.providers.adapters import (
 from proteus.providers.base import Capability, DEFAULT_DISCOVERY_KEYWORD
 from proteus.screening import evaluate_strict_market_screening, screening_policy
 from proteus.supplier_scout import (
+    DEFAULT_TENANT_ID,
     SupplierScoutStore,
     compact_supplier_scout_result,
     run_supplier_scout,
     supplier_scout_policy,
+    normalize_tenant_id,
 )
 from proteus.supplier_capture import (
+    CaptureCapacityError,
     CaptureAuthorizationError,
     CaptureConflictError,
     CaptureNotFoundError,
@@ -72,8 +77,70 @@ from proteus.supplier_inventory_import import (
 from proteus.automatic_mvp import automatic_mvp_policy
 
 
+API_TOKEN_ENV = "PROTEUS_API_TOKEN"
+API_TENANT_ENV = "PROTEUS_API_TENANT"
+MAX_API_BODY_BYTES = 10 * 1024 * 1024
+MAX_CAPTURE_PAGE_BODY_BYTES = 2 * 1024 * 1024
+MAX_RUN_BODY_BYTES = 512 * 1024
+DEFAULT_MAX_RUNS = 128
+DEFAULT_MAX_PENDING_RUNS = 16
+_LOOPBACK_CLIENT_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _configured_api_token(value: str | None) -> str | None:
+    raw = value if value is not None else os.environ.get(API_TOKEN_ENV)
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+
+def _configured_tenant_id(value: str | None) -> str:
+    raw = value if value is not None else os.environ.get(API_TENANT_ENV)
+    return normalize_tenant_id(raw)
+
+
+def _header_api_token(request: Request) -> tuple[str | None, bool]:
+    """Extract a bearer/header token without accepting ambiguous credentials."""
+
+    authorization = request.headers.get("authorization")
+    bearer: str | None = None
+    if authorization is not None:
+        scheme, separator, supplied = authorization.partition(" ")
+        if scheme.casefold() != "bearer" or not separator or not supplied.strip():
+            return None, True
+        bearer = supplied.strip()
+    header = request.headers.get("x-proteus-api-token")
+    if header is not None:
+        header = header.strip()
+        if not header:
+            return None, True
+    if bearer is not None and header is not None:
+        if not secrets.compare_digest(bearer, header):
+            return None, True
+        return bearer, False
+    return bearer or header, False
+
+
+def _is_loopback_client(request: Request) -> bool:
+    client = request.client
+    return client is not None and client.host.casefold() in _LOOPBACK_CLIENT_HOSTS
+
+
+def _tenant_call(method: Callable[..., Any], *args: Any, tenant_id: str) -> Any:
+    """Pass tenant context to new services while retaining old test doubles."""
+
+    try:
+        parameters = signature(method).parameters.values()
+    except (TypeError, ValueError):
+        parameters = ()
+    accepts_tenant = any(
+        parameter.name == "tenant_id"
+        or parameter.kind is Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+    return method(*args, tenant_id=tenant_id) if accepts_tenant else method(*args)
 
 
 class FrontendService(Protocol):
@@ -697,6 +764,10 @@ class StrictScreeningResponse(BaseModel):
     supply_verification: Literal["NOT_EVALUATED"]
 
 
+class RunCapacityError(RuntimeError):
+    """The bounded process-local run store cannot accept another job."""
+
+
 class InMemoryRunManager:
     """Single-process async run store; persistence can replace this contract later."""
 
@@ -705,17 +776,44 @@ class InMemoryRunManager:
         runner: Callable[..., Mapping[str, Any]],
         *,
         supports_progress: bool = False,
+        max_runs: int = DEFAULT_MAX_RUNS,
+        max_pending_runs: int = DEFAULT_MAX_PENDING_RUNS,
     ) -> None:
+        if isinstance(max_runs, bool) or not 1 <= max_runs <= 10_000:
+            raise ValueError("max_runs must be between 1 and 10000")
+        if isinstance(max_pending_runs, bool) or not 1 <= max_pending_runs <= max_runs:
+            raise ValueError("max_pending_runs must be between 1 and max_runs")
         self._runner = runner
         self._supports_progress = supports_progress
+        self._max_runs = max_runs
+        self._max_pending_runs = max_pending_runs
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="proteus-run")
         self._lock = Lock()
         self._runs: dict[str, dict[str, Any]] = {}
 
-    def submit(self, request: dict) -> dict:
+    def _prune_locked(self) -> None:
+        terminal = sorted(
+            (
+                record
+                for record in self._runs.values()
+                if record["status"] in {"COMPLETED", "FAILED"}
+            ),
+            key=lambda item: item.get("completed_at") or item["created_at"],
+        )
+        while len(self._runs) >= self._max_runs and terminal:
+            self._runs.pop(terminal.pop(0)["run_id"], None)
+
+    def submit(
+        self,
+        request: dict,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict:
+        tenant = normalize_tenant_id(tenant_id)
         run_id = str(uuid4())
         record = {
             "run_id": run_id,
+            "_tenant_id": tenant,
             "status": "QUEUED",
             "created_at": _utc_now(),
             "started_at": None,
@@ -733,6 +831,19 @@ class InMemoryRunManager:
             },
         }
         with self._lock:
+            self._prune_locked()
+            pending = sum(
+                record["status"] in {"QUEUED", "RUNNING"}
+                for record in self._runs.values()
+            )
+            if pending >= self._max_pending_runs:
+                raise RunCapacityError(
+                    "the maximum number of queued or running jobs has been reached"
+                )
+            if len(self._runs) >= self._max_runs:
+                raise RunCapacityError(
+                    "the maximum number of retained jobs has been reached"
+                )
             self._runs[run_id] = record
         self._executor.submit(self._execute, run_id, deepcopy(request))
         return {"run_id": run_id, "status": "QUEUED"}
@@ -802,10 +913,20 @@ class InMemoryRunManager:
                 "updated_at": _utc_now(),
             }
 
-    def get(self, run_id: str) -> dict | None:
+    def get(
+        self,
+        run_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> dict | None:
+        tenant = normalize_tenant_id(tenant_id)
         with self._lock:
             value = self._runs.get(run_id)
-            return deepcopy(value) if value is not None else None
+            if value is None or value.get("_tenant_id") != tenant:
+                return None
+            result = deepcopy(value)
+            result.pop("_tenant_id", None)
+            return result
 
 
 class DefaultFrontendService:
@@ -815,7 +936,9 @@ class DefaultFrontendService:
         category_catalog: CategoryCatalog | None = None,
         supplier_store: SupplierScoutStore | None = None,
         supplier_store_collector: Callable[..., Mapping[str, Any]] | None = None,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> None:
+        self._tenant_id = normalize_tenant_id(tenant_id)
         self._category_catalog = category_catalog or CategoryCatalog()
         self._supplier_store = supplier_store or SupplierScoutStore()
         # Live store acquisition is intentionally no longer the product path.
@@ -833,6 +956,20 @@ class DefaultFrontendService:
             self._run_supplier_scout,
             supports_progress=True,
         )
+
+    def _tenant(self, tenant_id: str | None = None) -> str:
+        return normalize_tenant_id(
+            self._tenant_id if tenant_id is None else tenant_id
+        )
+
+    @staticmethod
+    def _submit_manager(
+        manager: InMemoryRunManager,
+        request: dict,
+        *,
+        tenant_id: str,
+    ) -> dict:
+        return _tenant_call(manager.submit, request, tenant_id=tenant_id)
 
     def configuration_status(self) -> dict:
         return configuration_status()
@@ -915,11 +1052,25 @@ class DefaultFrontendService:
             **request,
         )
 
-    def submit_run(self, request: dict) -> dict:
-        return self._manager.submit(request)
+    def submit_run(
+        self,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict:
+        return self._submit_manager(
+            self._manager,
+            request,
+            tenant_id=self._tenant(tenant_id),
+        )
 
-    def get_run(self, run_id: str) -> dict | None:
-        return self._manager.get(run_id)
+    def get_run(
+        self,
+        run_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict | None:
+        return self._manager.get(run_id, tenant_id=self._tenant(tenant_id))
 
     def _run_mvp(self, request: dict) -> Mapping[str, Any]:
         from proteus.automatic_mvp import run_automatic_mvp
@@ -929,11 +1080,25 @@ class DefaultFrontendService:
             **request,
         )
 
-    def submit_mvp_run(self, request: dict) -> dict:
-        return self._mvp_manager.submit(request)
+    def submit_mvp_run(
+        self,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict:
+        return self._submit_manager(
+            self._mvp_manager,
+            request,
+            tenant_id=self._tenant(tenant_id),
+        )
 
-    def get_mvp_run(self, run_id: str) -> dict | None:
-        return self._mvp_manager.get(run_id)
+    def get_mvp_run(
+        self,
+        run_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict | None:
+        return self._mvp_manager.get(run_id, tenant_id=self._tenant(tenant_id))
 
     def northway_policy(self) -> dict:
         definitions = self._category_catalog.active_runtime_definitions()
@@ -956,7 +1121,12 @@ class DefaultFrontendService:
             **request,
         )
 
-    def submit_northway_run(self, request: dict) -> dict:
+    def submit_northway_run(
+        self,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict:
         category_id = str(request.get("archetype") or "")
         active = self._category_catalog.get_active_definition(category_id)
         snapshot = dict(request)
@@ -966,10 +1136,22 @@ class DefaultFrontendService:
             version_number=active["version_number"],
             status=active["status"],
         )
-        return self._northway_manager.submit(snapshot)
+        return self._submit_manager(
+            self._northway_manager,
+            snapshot,
+            tenant_id=self._tenant(tenant_id),
+        )
 
-    def get_northway_run(self, run_id: str) -> dict | None:
-        return self._northway_manager.get(run_id)
+    def get_northway_run(
+        self,
+        run_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict | None:
+        return self._northway_manager.get(
+            run_id,
+            tenant_id=self._tenant(tenant_id),
+        )
 
     def supplier_scout_policy(self) -> dict:
         definitions = self._category_catalog.active_runtime_definitions()
@@ -987,15 +1169,28 @@ class DefaultFrontendService:
         }
         return policy
 
-    def list_supplier_scout_suppliers(self) -> dict:
-        return self._supplier_store.list_suppliers()
+    def list_supplier_scout_suppliers(
+        self,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict:
+        result = self._supplier_store.list_suppliers(tenant_id=self._tenant(tenant_id))
+        # The database path is an operator diagnostic, not a frontend field.
+        result.pop("database", None)
+        return result
 
-    def inspect_supplier_scout_supplier(self, request: dict) -> dict:
+    def inspect_supplier_scout_supplier(
+        self,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict:
+        tenant = self._tenant(tenant_id)
         normalized = normalize_1688_supplier_store_target(request["target"])
         supplier_id = next(
             (
                 source["supplier_id"]
-                for source in self._supplier_store.list_suppliers()["suppliers"]
+                for source in self._supplier_store.list_suppliers(tenant_id=tenant)["suppliers"]
                 if source["canonical_url"] == normalized["canonical_url"]
             ),
             None,
@@ -1033,18 +1228,36 @@ class DefaultFrontendService:
                         "message": "Import a supplier inventory JSON file before screening.",
                     }
                 ],
-            }
+        }
         outcome["inspection"] = self._supplier_store.save_inspection(
-            request["target"], outcome, supplier_id=supplier_id
+            request["target"],
+            outcome,
+            supplier_id=supplier_id,
+            tenant_id=tenant,
         )
         return outcome
 
-    def add_supplier_scout_supplier(self, request: dict) -> dict:
-        return self._supplier_store.add_supplier(request["label"], request["target"])
+    def add_supplier_scout_supplier(
+        self,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict:
+        return self._supplier_store.add_supplier(
+            request["label"],
+            request["target"],
+            tenant_id=self._tenant(tenant_id),
+        )
 
-    def latest_supplier_snapshot(self, supplier_id: str) -> dict | None:
-        self._supplier_store.get_supplier(supplier_id)
-        snapshot = self._supplier_store.latest_snapshot(supplier_id)
+    def latest_supplier_snapshot(
+        self,
+        supplier_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict | None:
+        tenant = self._tenant(tenant_id)
+        self._supplier_store.get_supplier(supplier_id, tenant_id=tenant)
+        snapshot = self._supplier_store.latest_snapshot(supplier_id, tenant_id=tenant)
         if snapshot is None:
             return None
         return {
@@ -1075,8 +1288,11 @@ class DefaultFrontendService:
         supplier_id: str,
         document: Mapping[str, Any],
         filename: str | None = None,
+        *,
+        tenant_id: str | None = None,
     ) -> dict:
-        source = self._supplier_store.get_supplier(str(supplier_id))
+        tenant = self._tenant(tenant_id)
+        source = self._supplier_store.get_supplier(str(supplier_id), tenant_id=tenant)
         if source["status"] != "ACTIVE":
             raise ValueError("supplier source is archived")
         snapshot, report = normalize_supplier_inventory_import(
@@ -1084,12 +1300,18 @@ class DefaultFrontendService:
             source,
             filename=filename,
         )
-        saved = self._supplier_store.save_snapshot(source["supplier_id"], snapshot)
+        saved = self._supplier_store.save_snapshot(
+            source["supplier_id"],
+            snapshot,
+            tenant_id=tenant,
+        )
         snapshot.update(saved)
         member_id = report.get("identity_member_id")
         if member_id and not source.get("member_id"):
             self._supplier_store.update_supplier_identity(
-                source["supplier_id"], {"member_id": member_id}
+                source["supplier_id"],
+                {"member_id": member_id},
+                tenant_id=tenant,
             )
         usable = report["can_run"]
         try:
@@ -1120,27 +1342,54 @@ class DefaultFrontendService:
             "can_run": usable,
         }
 
-    def create_supplier_capture(self, request: dict) -> dict:
+    def create_supplier_capture(
+        self,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict:
         return self._supplier_capture_manager.create_capture(
             request["supplier_id"],
             max_pages=request["max_pages"],
             max_offers=request["max_offers"],
+            tenant_id=self._tenant(tenant_id),
         )
 
     def supplier_collector_profile(self) -> dict:
         return load_supplier_collector_profile()
 
-    def pending_supplier_capture(self, shop_host: str) -> dict | None:
-        return self._supplier_capture_manager.pending_capture(shop_host=shop_host)
+    def pending_supplier_capture(
+        self,
+        shop_host: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict | None:
+        return self._supplier_capture_manager.pending_capture(
+            shop_host=shop_host,
+            tenant_id=self._tenant(tenant_id),
+        )
 
-    def get_supplier_capture(self, capture_id: str) -> dict | None:
+    def get_supplier_capture(
+        self,
+        capture_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict | None:
         try:
-            return self._supplier_capture_manager.get_capture(capture_id)
+            return self._supplier_capture_manager.get_capture(
+                capture_id,
+                tenant_id=self._tenant(tenant_id),
+            )
         except CaptureNotFoundError:
             return None
 
     def claim_supplier_capture(
-        self, capture_id: str, token: str, request: dict
+        self,
+        capture_id: str,
+        token: str,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
     ) -> dict:
         return self._supplier_capture_manager.claim_capture(
             capture_id,
@@ -1148,21 +1397,49 @@ class DefaultFrontendService:
             page_url=request["page_url"],
             extension_version=request.get("extension_version"),
             parser_version=request.get("parser_version"),
+            tenant_id=self._tenant(tenant_id),
+        )
+
+    def get_supplier_capture_token(
+        self,
+        capture_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict[str, str]:
+        return self._supplier_capture_manager.get_capture_token(
+            capture_id,
+            tenant_id=self._tenant(tenant_id),
         )
 
     def ingest_supplier_capture_page(
-        self, capture_id: str, token: str, request: dict
+        self,
+        capture_id: str,
+        token: str,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
     ) -> dict:
-        return self._supplier_capture_manager.ingest_page(capture_id, token, request)
+        return self._supplier_capture_manager.ingest_page(
+            capture_id,
+            token,
+            request,
+            tenant_id=self._tenant(tenant_id),
+        )
 
     def pause_supplier_capture(
-        self, capture_id: str, token: str, request: dict
+        self,
+        capture_id: str,
+        token: str,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
     ) -> dict:
         return self._supplier_capture_manager.pause_capture(
             capture_id,
             token,
             reason=request["reason"],
             page_url=request["page_url"],
+            tenant_id=self._tenant(tenant_id),
         )
 
     def _run_supplier_scout(
@@ -1173,10 +1450,14 @@ class DefaultFrontendService:
     ) -> Mapping[str, Any]:
         source = request["_supplier_source"]
         definitions = request["_category_definitions"]
+        tenant = self._tenant(request.get("_tenant_id"))
         captured_snapshot_id = request.get("_inventory_snapshot_id")
         snapshot: dict[str, Any] | None = None
         if captured_snapshot_id:
-            snapshot = self._supplier_store.get_snapshot(str(captured_snapshot_id))
+            snapshot = self._supplier_store.get_snapshot(
+                str(captured_snapshot_id),
+                tenant_id=tenant,
+            )
             if snapshot.get("supplier_id") != source["supplier_id"]:
                 raise ValueError("inventory snapshot belongs to a different supplier")
             _validate_supplier_snapshot_for_run(snapshot)
@@ -1201,7 +1482,11 @@ class DefaultFrontendService:
             )
         identity = snapshot.get("supplier")
         if isinstance(identity, Mapping):
-            self._supplier_store.update_supplier_identity(source["supplier_id"], identity)
+            self._supplier_store.update_supplier_identity(
+                source["supplier_id"],
+                identity,
+                tenant_id=tenant,
+            )
         return run_supplier_scout(
             snapshot,
             category_definitions=definitions,
@@ -1216,8 +1501,17 @@ class DefaultFrontendService:
             progress_callback=progress,
         )
 
-    def submit_supplier_scout_run(self, request: dict) -> dict:
-        source = self._supplier_store.get_supplier(str(request.get("supplier_id") or ""))
+    def submit_supplier_scout_run(
+        self,
+        request: dict,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict:
+        tenant = self._tenant(tenant_id)
+        source = self._supplier_store.get_supplier(
+            str(request.get("supplier_id") or ""),
+            tenant_id=tenant,
+        )
         if source["status"] != "ACTIVE":
             raise ValueError("supplier source is archived")
         definitions = self._category_catalog.active_runtime_definitions()
@@ -1233,30 +1527,127 @@ class DefaultFrontendService:
             raise ValueError(
                 "inventory_snapshot_id is required; import a supplier inventory JSON file first"
             )
-        captured = self._supplier_store.get_snapshot(str(captured_snapshot_id))
+        captured = self._supplier_store.get_snapshot(
+            str(captured_snapshot_id),
+            tenant_id=tenant,
+        )
         if captured.get("supplier_id") != source["supplier_id"]:
             raise ValueError("inventory snapshot belongs to a different supplier")
         _validate_supplier_snapshot_for_run(captured)
         snapshot["_inventory_snapshot_id"] = str(captured_snapshot_id)
         snapshot["selected_category_ids"] = selected
         snapshot["_supplier_source"] = source
+        snapshot["_tenant_id"] = tenant
         snapshot["_category_definitions"] = {
             key: definitions[key] for key in selected
         }
-        return self._supplier_scout_manager.submit(snapshot)
+        return self._submit_manager(
+            self._supplier_scout_manager,
+            snapshot,
+            tenant_id=tenant,
+        )
 
-    def get_supplier_scout_run(self, run_id: str) -> dict | None:
-        return self._supplier_scout_manager.get(run_id)
+    def get_supplier_scout_run(
+        self,
+        run_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict | None:
+        return self._supplier_scout_manager.get(
+            run_id,
+            tenant_id=self._tenant(tenant_id),
+        )
 
 
-def create_app(*, service: FrontendService | None = None) -> FastAPI:
+def create_app(
+    *,
+    service: FrontendService | None = None,
+    api_token: str | None = None,
+    tenant_id: str | None = None,
+) -> FastAPI:
     active_service = service or DefaultFrontendService()
+    service_tenant = getattr(active_service, "_tenant_id", None)
+    active_tenant = _configured_tenant_id(
+        tenant_id if tenant_id is not None else service_tenant
+    )
+    active_api_token = _configured_api_token(api_token)
     app = FastAPI(
         title="Proteus Opportunity Finder API",
         version=__version__,
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
+
+    @app.middleware("http")
+    async def api_boundary(request: Request, call_next):
+        if not request.url.path.startswith("/api/"):
+            return await call_next(request)
+
+        supplied, malformed = _header_api_token(request)
+        if active_api_token is None:
+            if not _is_loopback_client(request):
+                return JSONResponse(
+                    {"detail": "API authentication is not configured for non-loopback clients"},
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            request.state.api_authenticated = False
+        elif malformed or supplied is None or not secrets.compare_digest(
+            supplied, active_api_token
+        ):
+            return JSONResponse(
+                {"detail": "valid API bearer authentication is required"},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        else:
+            request.state.api_authenticated = True
+        # The tenant is selected by server configuration and authenticated
+        # context; X-Proteus-Tenant/X-TradeEye-Owner headers are intentionally
+        # ignored and never establish resource ownership.
+        request.state.tenant_id = active_tenant
+
+        if request.method in {"POST", "PUT", "PATCH"}:
+            limit = MAX_API_BODY_BYTES
+            path = request.url.path
+            if path.endswith("/pages"):
+                limit = MAX_CAPTURE_PAGE_BODY_BYTES
+            elif path.endswith("/runs") or path.endswith("/screening/evaluate"):
+                limit = MAX_RUN_BODY_BYTES
+            raw_length = request.headers.get("content-length")
+            if raw_length is not None:
+                try:
+                    declared_length = int(raw_length)
+                except ValueError:
+                    return JSONResponse(
+                        {"detail": "content-length must be a valid integer"},
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
+                if declared_length < 0 or declared_length > limit:
+                    return JSONResponse(
+                        {"detail": "request body exceeds the endpoint size limit"},
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    )
+            body = await request.body()
+            if len(body) > limit:
+                return JSONResponse(
+                    {"detail": "request body exceeds the endpoint size limit"},
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                )
+        return await call_next(request)
+
+    def tenant_for(http_request: Request) -> str:
+        return str(getattr(http_request.state, "tenant_id", active_tenant))
+
+    def call_for_tenant(
+        method: Callable[..., Any],
+        *args: Any,
+        http_request: Request,
+    ) -> Any:
+        return _tenant_call(
+            method,
+            *args,
+            tenant_id=tenant_for(http_request),
+        )
 
     @app.get("/api/v1/health")
     def health() -> dict:
@@ -1306,12 +1697,28 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         return automatic_mvp_policy()
 
     @app.post("/api/v1/mvp/runs", status_code=status.HTTP_202_ACCEPTED)
-    def submit_mvp_run(request: AutomaticMvpRunRequest) -> dict:
-        return active_service.submit_mvp_run(request.model_dump())
+    def submit_mvp_run(
+        request: AutomaticMvpRunRequest,
+        http_request: Request,
+    ) -> dict:
+        try:
+            return dict(
+                call_for_tenant(
+                    active_service.submit_mvp_run,
+                    request.model_dump(),
+                    http_request=http_request,
+                )
+            )
+        except RunCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
 
     @app.get("/api/v1/mvp/runs/{run_id}")
-    def get_mvp_run(run_id: str) -> dict:
-        value = active_service.get_mvp_run(run_id)
+    def get_mvp_run(run_id: str, http_request: Request) -> dict:
+        value = call_for_tenant(
+            active_service.get_mvp_run,
+            run_id,
+            http_request=http_request,
+        )
         if value is None:
             raise HTTPException(status_code=404, detail="run not found")
         return value
@@ -1327,7 +1734,10 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         return resolved_northway_policy()
 
     @app.post("/api/v1/northway/runs", status_code=status.HTTP_202_ACCEPTED)
-    def submit_northway_run(request: NorthwayMvpRunRequest) -> dict:
+    def submit_northway_run(
+        request: NorthwayMvpRunRequest,
+        http_request: Request,
+    ) -> dict:
         category_id = request.archetype
         active_categories = resolved_northway_policy().get("archetypes", {})
         if category_id not in active_categories:
@@ -1336,7 +1746,15 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
                 detail="archetype must be an active Northway leaf category",
             )
         try:
-            return active_service.submit_northway_run(request.model_dump())
+            return dict(
+                call_for_tenant(
+                    active_service.submit_northway_run,
+                    request.model_dump(),
+                    http_request=http_request,
+                )
+            )
+        except RunCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         except CategoryNotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1344,15 +1762,23 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
             ) from exc
 
     @app.get("/api/v1/northway/runs/{run_id}")
-    def get_northway_run(run_id: str) -> dict:
-        value = active_service.get_northway_run(run_id)
+    def get_northway_run(run_id: str, http_request: Request) -> dict:
+        value = call_for_tenant(
+            active_service.get_northway_run,
+            run_id,
+            http_request=http_request,
+        )
         if value is None:
             raise HTTPException(status_code=404, detail="run not found")
         return value
 
     @app.get("/api/v1/northway/runs/{run_id}/export")
-    def export_northway_run(run_id: str) -> JSONResponse:
-        value = active_service.get_northway_run(run_id)
+    def export_northway_run(run_id: str, http_request: Request) -> JSONResponse:
+        value = call_for_tenant(
+            active_service.get_northway_run,
+            run_id,
+            http_request=http_request,
+        )
         if value is None:
             raise HTTPException(status_code=404, detail="run not found")
         if value.get("status") != "COMPLETED" or not isinstance(value.get("result"), Mapping):
@@ -1365,8 +1791,15 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         )
 
     @app.get("/api/v1/northway/runs/{run_id}/export/compact")
-    def export_compact_northway_run(run_id: str) -> JSONResponse:
-        value = active_service.get_northway_run(run_id)
+    def export_compact_northway_run(
+        run_id: str,
+        http_request: Request,
+    ) -> JSONResponse:
+        value = call_for_tenant(
+            active_service.get_northway_run,
+            run_id,
+            http_request=http_request,
+        )
         if value is None:
             raise HTTPException(status_code=404, detail="run not found")
         if value.get("status") != "COMPLETED" or not isinstance(value.get("result"), Mapping):
@@ -1389,21 +1822,32 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         return resolved_supplier_scout_policy()
 
     @app.get("/api/v1/supplier-scout/suppliers")
-    def list_supplier_scout_suppliers() -> dict:
+    def list_supplier_scout_suppliers(http_request: Request) -> dict:
         getter = getattr(active_service, "list_supplier_scout_suppliers", None)
         if not callable(getter):
             return {"suppliers": []}
-        return dict(getter())
+        result = dict(call_for_tenant(getter, http_request=http_request))
+        # Defensive response filtering also protects legacy service adapters
+        # that still return their local SQLite path.
+        result.pop("database", None)
+        return result
 
     @app.post("/api/v1/supplier-scout/suppliers/inspect")
     def inspect_supplier_scout_supplier(
         request: SupplierScoutInspectRequest,
+        http_request: Request,
     ) -> dict:
         inspector = getattr(active_service, "inspect_supplier_scout_supplier", None)
         if not callable(inspector):
             raise HTTPException(status_code=501, detail="supplier inspection is unavailable")
         try:
-            return dict(inspector(request.model_dump()))
+            return dict(
+                call_for_tenant(
+                    inspector,
+                    request.model_dump(),
+                    http_request=http_request,
+                )
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1416,12 +1860,19 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
     )
     def add_supplier_scout_supplier(
         request: SupplierScoutSupplierRequest,
+        http_request: Request,
     ) -> dict:
         creator = getattr(active_service, "add_supplier_scout_supplier", None)
         if not callable(creator):
             raise HTTPException(status_code=501, detail="supplier storage is unavailable")
         try:
-            return dict(creator(request.model_dump()))
+            return dict(
+                call_for_tenant(
+                    creator,
+                    request.model_dump(),
+                    http_request=http_request,
+                )
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1435,16 +1886,19 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
     def import_supplier_inventory(
         supplier_id: str,
         request: SupplierInventoryImportRequest,
+        http_request: Request,
     ) -> dict:
         importer = getattr(active_service, "import_supplier_inventory", None)
         if not callable(importer):
             raise HTTPException(status_code=501, detail="supplier JSON import is unavailable")
         try:
             return dict(
-                importer(
+                call_for_tenant(
+                    importer,
                     supplier_id,
                     request.document,
                     request.filename,
+                    http_request=http_request,
                 )
             )
         except KeyError as exc:
@@ -1456,12 +1910,19 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
             ) from exc
 
     @app.get("/api/v1/supplier-scout/suppliers/{supplier_id}/snapshots/latest")
-    def latest_supplier_snapshot(supplier_id: str) -> dict:
+    def latest_supplier_snapshot(
+        supplier_id: str,
+        http_request: Request,
+    ) -> dict:
         getter = getattr(active_service, "latest_supplier_snapshot", None)
         if not callable(getter):
             return {"snapshot": None}
         try:
-            snapshot = getter(supplier_id)
+            snapshot = call_for_tenant(
+                getter,
+                supplier_id,
+                http_request=http_request,
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="supplier not found") from exc
         return {
@@ -1472,14 +1933,25 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         "/api/v1/supplier-scout/captures",
         status_code=status.HTTP_201_CREATED,
     )
-    def create_supplier_capture(request: SupplierCaptureCreateRequest) -> dict:
+    def create_supplier_capture(
+        request: SupplierCaptureCreateRequest,
+        http_request: Request,
+    ) -> dict:
         creator = getattr(active_service, "create_supplier_capture", None)
         if not callable(creator):
             raise HTTPException(status_code=501, detail="Edge capture is unavailable")
         try:
-            return dict(creator(request.model_dump()))
+            return dict(
+                call_for_tenant(
+                    creator,
+                    request.model_dump(),
+                    http_request=http_request,
+                )
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="supplier not found") from exc
+        except CaptureCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         except (CaptureConflictError, ValueError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1492,18 +1964,59 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         return dict(getter()) if callable(getter) else load_supplier_collector_profile()
 
     @app.get("/api/v1/supplier-scout/captures/pending")
-    def pending_supplier_capture(shop_host: str) -> dict:
+    def pending_supplier_capture(
+        http_request: Request,
+        shop_host: str = Query(
+            ...,
+            min_length=3,
+            max_length=255,
+            pattern=r"^(?:[A-Za-z0-9-]+\.)+1688\.com$",
+        ),
+    ) -> dict:
         getter = getattr(active_service, "pending_supplier_capture", None)
-        capture = getter(shop_host) if callable(getter) else None
-        return {"capture": dict(capture) if isinstance(capture, Mapping) else None}
+        capture = (
+            call_for_tenant(getter, shop_host, http_request=http_request)
+            if callable(getter)
+            else None
+        )
+        if not isinstance(capture, Mapping):
+            return {"capture": None}
+        # Never return the capture bearer from a discovery endpoint.  The
+        # extension must use the authenticated, ID-bound token handoff below.
+        public_capture = dict(capture)
+        public_capture.pop("capture_token", None)
+        return {"capture": public_capture}
 
     @app.get("/api/v1/supplier-scout/captures/{capture_id}")
-    def get_supplier_capture(capture_id: str) -> dict:
+    def get_supplier_capture(capture_id: str, http_request: Request) -> dict:
         getter = getattr(active_service, "get_supplier_capture", None)
-        capture = getter(capture_id) if callable(getter) else None
+        capture = (
+            call_for_tenant(getter, capture_id, http_request=http_request)
+            if callable(getter)
+            else None
+        )
         if not isinstance(capture, Mapping):
             raise HTTPException(status_code=404, detail="capture not found")
         return dict(capture)
+
+    @app.post("/api/v1/supplier-scout/captures/{capture_id}/token")
+    def get_supplier_capture_token(
+        capture_id: str,
+        http_request: Request,
+    ) -> dict:
+        getter = getattr(active_service, "get_supplier_capture_token", None)
+        if not callable(getter):
+            raise HTTPException(status_code=501, detail="capture token handoff is unavailable")
+        try:
+            return dict(
+                call_for_tenant(
+                    getter,
+                    capture_id,
+                    http_request=http_request,
+                )
+            )
+        except (CaptureNotFoundError, CaptureAuthorizationError, CaptureConflictError, ValueError) as exc:
+            raise capture_mutation_error(exc) from exc
 
     def capture_mutation_error(exc: Exception) -> HTTPException:
         if isinstance(exc, CaptureNotFoundError):
@@ -1521,13 +2034,22 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
     def claim_supplier_capture(
         capture_id: str,
         request: SupplierCaptureClaimRequest,
+        http_request: Request,
         capture_token: str = Header(alias="X-Proteus-Capture-Token"),
     ) -> dict:
         claimer = getattr(active_service, "claim_supplier_capture", None)
         if not callable(claimer):
             raise HTTPException(status_code=501, detail="Edge capture is unavailable")
         try:
-            return dict(claimer(capture_id, capture_token, request.model_dump()))
+            return dict(
+                call_for_tenant(
+                    claimer,
+                    capture_id,
+                    capture_token,
+                    request.model_dump(),
+                    http_request=http_request,
+                )
+            )
         except (CaptureNotFoundError, CaptureAuthorizationError, CaptureConflictError, ValueError) as exc:
             raise capture_mutation_error(exc) from exc
 
@@ -1535,13 +2057,22 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
     def ingest_supplier_capture_page(
         capture_id: str,
         request: SupplierCapturePageRequest,
+        http_request: Request,
         capture_token: str = Header(alias="X-Proteus-Capture-Token"),
     ) -> dict:
         ingester = getattr(active_service, "ingest_supplier_capture_page", None)
         if not callable(ingester):
             raise HTTPException(status_code=501, detail="Edge capture is unavailable")
         try:
-            return dict(ingester(capture_id, capture_token, request.model_dump()))
+            return dict(
+                call_for_tenant(
+                    ingester,
+                    capture_id,
+                    capture_token,
+                    request.model_dump(),
+                    http_request=http_request,
+                )
+            )
         except (CaptureNotFoundError, CaptureAuthorizationError, CaptureConflictError, ValueError) as exc:
             raise capture_mutation_error(exc) from exc
 
@@ -1549,13 +2080,22 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
     def pause_supplier_capture(
         capture_id: str,
         request: SupplierCapturePauseRequest,
+        http_request: Request,
         capture_token: str = Header(alias="X-Proteus-Capture-Token"),
     ) -> dict:
         pauser = getattr(active_service, "pause_supplier_capture", None)
         if not callable(pauser):
             raise HTTPException(status_code=501, detail="Edge capture is unavailable")
         try:
-            return dict(pauser(capture_id, capture_token, request.model_dump()))
+            return dict(
+                call_for_tenant(
+                    pauser,
+                    capture_id,
+                    capture_token,
+                    request.model_dump(),
+                    http_request=http_request,
+                )
+            )
         except (CaptureNotFoundError, CaptureAuthorizationError, CaptureConflictError, ValueError) as exc:
             raise capture_mutation_error(exc) from exc
 
@@ -1563,7 +2103,10 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         "/api/v1/supplier-scout/runs",
         status_code=status.HTTP_202_ACCEPTED,
     )
-    def submit_supplier_scout_run(request: SupplierScoutRunRequest) -> dict:
+    def submit_supplier_scout_run(
+        request: SupplierScoutRunRequest,
+        http_request: Request,
+    ) -> dict:
         policy_categories = resolved_supplier_scout_policy().get("categories", {})
         selected = request.selected_category_ids or list(policy_categories)
         unknown = sorted(set(selected) - set(policy_categories))
@@ -1578,9 +2121,17 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         payload = request.model_dump()
         payload["selected_category_ids"] = selected
         try:
-            return dict(submitter(payload))
+            return dict(
+                call_for_tenant(
+                    submitter,
+                    payload,
+                    http_request=http_request,
+                )
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="supplier not found") from exc
+        except RunCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         except (CategoryNotFoundError, ValueError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1588,16 +2139,28 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
             ) from exc
 
     @app.get("/api/v1/supplier-scout/runs/{run_id}")
-    def get_supplier_scout_run(run_id: str) -> dict:
+    def get_supplier_scout_run(run_id: str, http_request: Request) -> dict:
         getter = getattr(active_service, "get_supplier_scout_run", None)
-        value = getter(run_id) if callable(getter) else None
+        value = (
+            call_for_tenant(getter, run_id, http_request=http_request)
+            if callable(getter)
+            else None
+        )
         if value is None:
             raise HTTPException(status_code=404, detail="run not found")
         return dict(value)
 
-    def completed_supplier_scout_result(run_id: str) -> Mapping[str, Any]:
+    def completed_supplier_scout_result(
+        run_id: str,
+        *,
+        http_request: Request,
+    ) -> Mapping[str, Any]:
         getter = getattr(active_service, "get_supplier_scout_run", None)
-        value = getter(run_id) if callable(getter) else None
+        value = (
+            call_for_tenant(getter, run_id, http_request=http_request)
+            if callable(getter)
+            else None
+        )
         if value is None:
             raise HTTPException(status_code=404, detail="run not found")
         if value.get("status") != "COMPLETED" or not isinstance(value.get("result"), Mapping):
@@ -1605,30 +2168,51 @@ def create_app(*, service: FrontendService | None = None) -> FastAPI:
         return value["result"]
 
     @app.get("/api/v1/supplier-scout/runs/{run_id}/export")
-    def export_supplier_scout_run(run_id: str) -> JSONResponse:
+    def export_supplier_scout_run(
+        run_id: str,
+        http_request: Request,
+    ) -> JSONResponse:
         return JSONResponse(
-            completed_supplier_scout_result(run_id),
+            completed_supplier_scout_result(run_id, http_request=http_request),
             headers={
                 "Content-Disposition": f'attachment; filename="proteus-{run_id}.json"'
             },
         )
 
     @app.get("/api/v1/supplier-scout/runs/{run_id}/export/compact")
-    def export_compact_supplier_scout_run(run_id: str) -> JSONResponse:
+    def export_compact_supplier_scout_run(
+        run_id: str,
+        http_request: Request,
+    ) -> JSONResponse:
         return JSONResponse(
-            compact_supplier_scout_result(completed_supplier_scout_result(run_id)),
+            compact_supplier_scout_result(
+                completed_supplier_scout_result(run_id, http_request=http_request)
+            ),
             headers={
                 "Content-Disposition": f'attachment; filename="proteus-{run_id}-compact.json"'
             },
         )
 
     @app.post("/api/v1/runs", status_code=status.HTTP_202_ACCEPTED)
-    def submit_run(request: ApiRunRequest) -> dict:
-        return active_service.submit_run(request.model_dump())
+    def submit_run(request: ApiRunRequest, http_request: Request) -> dict:
+        try:
+            return dict(
+                call_for_tenant(
+                    active_service.submit_run,
+                    request.model_dump(),
+                    http_request=http_request,
+                )
+            )
+        except RunCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
 
     @app.get("/api/v1/runs/{run_id}")
-    def get_run(run_id: str) -> dict:
-        value = active_service.get_run(run_id)
+    def get_run(run_id: str, http_request: Request) -> dict:
+        value = call_for_tenant(
+            active_service.get_run,
+            run_id,
+            http_request=http_request,
+        )
         if value is None:
             raise HTTPException(status_code=404, detail="run not found")
         return value

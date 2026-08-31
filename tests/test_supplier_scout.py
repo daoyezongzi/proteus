@@ -74,6 +74,23 @@ def test_sqlite_sources_and_snapshots_are_separate_and_immutable(tmp_path: Path)
         store.save_snapshot(source["supplier_id"], captured, snapshot_id=saved["snapshot_id"])
 
 
+def test_sqlite_supplier_sources_and_snapshots_are_tenant_scoped(tmp_path: Path) -> None:
+    store = SupplierScoutStore(tmp_path / "supplier-scout.sqlite3")
+    source = store.add_supplier("租户 A", STORE_URL, tenant_id="tenant_a")
+    saved = store.save_snapshot(
+        source["supplier_id"],
+        snapshot(offer("10001", "租户 A 商品")),
+        tenant_id="tenant_a",
+    )
+
+    assert store.list_suppliers(tenant_id="tenant_a")["suppliers"]
+    assert store.list_suppliers(tenant_id="tenant_b")["suppliers"] == []
+    with pytest.raises(KeyError):
+        store.get_supplier(source["supplier_id"], tenant_id="tenant_b")
+    with pytest.raises(KeyError):
+        store.get_snapshot(saved["snapshot_id"], tenant_id="tenant_b")
+
+
 def test_category_match_uses_chinese_supply_aliases_and_keeps_ambiguity() -> None:
     definitions = builtin_runtime_categories()
 
